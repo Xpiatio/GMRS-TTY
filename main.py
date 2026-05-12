@@ -289,9 +289,18 @@ class STTWorker(QThread):
         self.whisper_model_path = os.path.join(self.MODELS_STT_DIR, whisper_model)
         self.vad_threshold = float(vad_threshold)
         self._running = True
+        self._paused = False
 
     def stop(self):
         self._running = False
+
+    def pause(self):
+        """Suspend transcription (e.g., while the app is transmitting) without
+        tearing down the Whisper/VAD models or audio stream."""
+        self._paused = True
+
+    def resume(self):
+        self._paused = False
 
     def run(self):
         try:
@@ -357,6 +366,7 @@ class STTWorker(QThread):
         rolling = collections.deque(maxlen=self.PRE_BUFFER_CHUNKS)
         collected = []
         in_speech = False
+        was_paused = False
 
         try:
             while self._running:
@@ -365,6 +375,27 @@ class STTWorker(QThread):
                 except Exception as e:
                     self.error.emit(f"Audio read error: {e}")
                     break
+
+                if self._paused:
+                    if not was_paused:
+                        collected = []
+                        in_speech = False
+                        rolling.clear()
+                        try:
+                            vad_iter.reset_states()
+                        except Exception:
+                            pass
+                        self.status.emit("Paused (transmitting)")
+                        was_paused = True
+                    continue
+
+                if was_paused:
+                    try:
+                        vad_iter.reset_states()
+                    except Exception:
+                        pass
+                    self.status.emit("Listening...")
+                    was_paused = False
 
                 chunk = data[:, 0].copy()
 
@@ -1005,6 +1036,7 @@ class MainWindow(QMainWindow):
                 )
                 self.audio_thread.finished.connect(self.on_tts_finished)
                 self.audio_thread.error.connect(self.on_tts_error)
+                self._pause_stt_for_tx()
                 try:
                     self.ptt.key()
                 except Exception as e:
@@ -1016,6 +1048,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             traceback.print_exc()
             self.append_to_chat(f"<i>TTS Error: {str(e)}</i>", color="red")
+            self._resume_stt_after_tx()
             self._set_tx_buttons_enabled(True)
 
     def on_tts_finished(self):
@@ -1023,6 +1056,7 @@ class MainWindow(QMainWindow):
             self.ptt.unkey()
         except Exception:
             pass
+        self._resume_stt_after_tx()
         self._set_tx_buttons_enabled(True)
 
     def on_tts_error(self, error_msg):
@@ -1030,8 +1064,17 @@ class MainWindow(QMainWindow):
             self.ptt.unkey()
         except Exception:
             pass
+        self._resume_stt_after_tx()
         self.append_to_chat(f"<i>TTS Error: {error_msg}</i>", color="red")
         self._set_tx_buttons_enabled(True)
+
+    def _pause_stt_for_tx(self):
+        if self.stt_worker and self.stt_worker.isRunning():
+            self.stt_worker.pause()
+
+    def _resume_stt_after_tx(self):
+        if self.stt_worker and self.stt_worker.isRunning():
+            self.stt_worker.resume()
 
     def append_to_chat(self, text, color="black"):
         """Appends HTML formatted text to the chat display."""

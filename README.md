@@ -8,6 +8,7 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
 
 ### Receive (Rx)
 - Live microphone capture with **Silero VAD** — only transcribes when a human is speaking; ignores static and kerchunks. VAD sensitivity is tunable in Configuration.
+- **Auto-pause during TX** — listening pauses automatically while the app is transmitting so your own TTS isn't transcribed back; resumes immediately after the unkey, with VAD state reset so no in-progress speech bleeds across the boundary.
 - **300–3000 Hz bandpass filter** applied per utterance — matches the narrowband-FM voice band, strips hum and out-of-band hiss before denoising.
 - **Noise reduction** (spectral gating) applied per utterance after bandpass and before transcription.
 - Offline transcription via **faster-whisper** (`small.en` by default, int8 CPU).
