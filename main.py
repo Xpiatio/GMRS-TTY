@@ -167,14 +167,15 @@ class AudioPlayerThread(QThread):
     finished = Signal()
     error = Signal(str)
 
-    def __init__(self, audio_data, sample_rate):
+    def __init__(self, audio_data, sample_rate, device=None):
         super().__init__()
         self.audio_data = audio_data
         self.sample_rate = sample_rate
+        self.device = device if device not in (None, -1) else None
 
     def run(self):
         try:
-            sd.play(self.audio_data, samplerate=self.sample_rate)
+            sd.play(self.audio_data, samplerate=self.sample_rate, device=self.device)
             sd.wait()
             self.finished.emit()
         except Exception as e:
@@ -279,10 +280,13 @@ class STTWorker(QThread):
         "okay", "ok", "yeah", "mm", "hmm",
     })
 
+    MODELS_STT_DIR = os.path.join("Models", "STT")
+
     def __init__(self, input_device=None, whisper_model="small.en", vad_threshold=0.5, parent=None):
         super().__init__(parent)
         self.input_device = input_device if input_device not in (None, -1) else None
         self.whisper_model_name = whisper_model
+        self.whisper_model_path = os.path.join(self.MODELS_STT_DIR, whisper_model)
         self.vad_threshold = float(vad_threshold)
         self._running = True
 
@@ -302,9 +306,18 @@ class STTWorker(QThread):
         if not self._running:
             return
 
+        if not os.path.isdir(self.whisper_model_path):
+            self.error.emit(
+                f"Whisper model not found at '{self.whisper_model_path}'. "
+                f"Run 'python bootstrap_models.py --model {self.whisper_model_name}' on an "
+                f"internet-connected machine, then copy Models/ here. "
+                f"GMRS-TTY does not download models at runtime."
+            )
+            return
+
         try:
-            self.status.emit("Loading Whisper model (first run downloads ~250MB)...")
-            whisper = WhisperModel(self.whisper_model_name, device="cpu", compute_type="int8")
+            self.status.emit(f"Loading Whisper model from {self.whisper_model_path}...")
+            whisper = WhisperModel(self.whisper_model_path, device="cpu", compute_type="int8")
             vad_model = load_silero_vad()
             vad_iter = VADIterator(
                 vad_model,
@@ -421,6 +434,7 @@ class ConfigDialog(QDialog):
         self.location_input = QLineEdit(self.config.get("location", ""))
         self.voice_input = QComboBox()
         self.input_device_input = QComboBox()
+        self.output_device_input = QComboBox()
         self.ptt_mode_input = QComboBox()
         self.ptt_mode_input.addItem("Manual (you press PTT on the radio)", "manual")
         self.ptt_mode_input.addItem("VOX (radio auto-keys on audio)", "vox")
@@ -478,23 +492,32 @@ class ConfigDialog(QDialog):
         voice_row_layout.addWidget(self.test_voice_button)
 
         self.input_device_input.addItem("System Default", -1)
+        self.output_device_input.addItem("System Default", -1)
         try:
             for i, dev in enumerate(sd.query_devices()):
                 if dev.get('max_input_channels', 0) > 0:
                     self.input_device_input.addItem(f"{i}: {dev['name']}", i)
+                if dev.get('max_output_channels', 0) > 0:
+                    self.output_device_input.addItem(f"{i}: {dev['name']}", i)
         except Exception as e:
-            print(f"Could not enumerate input devices: {e}")
+            print(f"Could not enumerate audio devices: {e}")
 
         current_dev = self.config.get("input_device", -1)
         idx = self.input_device_input.findData(current_dev)
         if idx >= 0:
             self.input_device_input.setCurrentIndex(idx)
 
+        current_out = self.config.get("output_device", -1)
+        idx = self.output_device_input.findData(current_out)
+        if idx >= 0:
+            self.output_device_input.setCurrentIndex(idx)
+
         layout.addRow("Callsign:", self.callsign_input)
         layout.addRow("Name:", self.name_input)
         layout.addRow("Location:", self.location_input)
         layout.addRow("Voice Model:", voice_row)
         layout.addRow("Input Device:", self.input_device_input)
+        layout.addRow("Output Device:", self.output_device_input)
         layout.addRow("VAD Threshold:", self.vad_threshold_input)
         layout.addRow("PTT Mode:", self.ptt_mode_input)
         layout.addRow("Serial Port:", self.ptt_serial_port_input)
@@ -513,6 +536,7 @@ class ConfigDialog(QDialog):
             "location": self.location_input.text().strip(),
             "voice": self.voice_input.currentData(),
             "input_device": self.input_device_input.currentData(),
+            "output_device": self.output_device_input.currentData(),
             "vad_threshold": round(self.vad_threshold_input.value(), 2),
             "ptt_mode": self.ptt_mode_input.currentData(),
             "ptt_serial_port": self.ptt_serial_port_input.text().strip(),
@@ -558,7 +582,9 @@ class ConfigDialog(QDialog):
                 self._reset_test_button()
                 return
 
-            self._test_player = AudioPlayerThread(data, voice.config.sample_rate)
+            self._test_player = AudioPlayerThread(
+                data, voice.config.sample_rate, device=self.output_device_input.currentData()
+            )
             self._test_player.finished.connect(self._reset_test_button)
             self._test_player.error.connect(lambda msg: QMessageBox.warning(self, "Test Voice", f"Playback error: {msg}"))
             self._test_player.start()
@@ -686,6 +712,20 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.update_header()
         self.populate_target_dropdown()
+        self._check_bundled_models()
+
+    def _check_bundled_models(self):
+        model_name = self.config.get("whisper_model", "small.en")
+        model_path = os.path.join(STTWorker.MODELS_STT_DIR, model_name)
+        if not os.path.isdir(model_path):
+            self.append_to_chat(
+                f"<i>STT model '{model_name}' not found at <code>{model_path}/</code>. "
+                f"Listening will fail until you run "
+                f"<code>python bootstrap_models.py --model {model_name}</code> "
+                f"on an internet-connected machine and copy the resulting "
+                f"<code>Models/</code> directory here.</i>",
+                color="orange",
+            )
 
     def closeEvent(self, event):
         self.stop_stt()
@@ -960,7 +1000,9 @@ class MainWindow(QMainWindow):
                     full_audio = np.concatenate([
                         full_audio, np.zeros(tail_samples, dtype=full_audio.dtype),
                     ])
-                self.audio_thread = AudioPlayerThread(full_audio, sample_rate)
+                self.audio_thread = AudioPlayerThread(
+                    full_audio, sample_rate, device=self.config.get("output_device", -1)
+                )
                 self.audio_thread.finished.connect(self.on_tts_finished)
                 self.audio_thread.error.connect(self.on_tts_error)
                 try:
@@ -1006,6 +1048,7 @@ class MainWindow(QMainWindow):
             return
         self.stt_worker = STTWorker(
             input_device=self.config.get("input_device", -1),
+            whisper_model=self.config.get("whisper_model", "small.en"),
             vad_threshold=self.config.get("vad_threshold", 0.5),
             parent=self,
         )

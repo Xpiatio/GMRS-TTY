@@ -4,6 +4,8 @@
     "location": "Your City, State",
     "voice": "Voices/en_US-ryan-high.onnx",
     "input_device": -1,
+    "output_device": -1,
+    "whisper_model": "small.en",
     "vad_threshold": 0.5,
     "ptt_mode": "manual",
     "ptt_serial_port": "",

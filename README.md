@@ -35,15 +35,15 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
 
 ### Cross-platform & off-grid
 - Targets Raspberry Pi, Linux, Windows.
-- All STT/TTS/VAD models run locally — no internet required at runtime.
-- Future stages: bundled models for air-gapped install + multi-arch Docker image.
+- All STT/TTS/VAD models run locally — **no internet required at runtime**. The app never attempts a network fetch; STT models are pre-staged via a one-time `bootstrap_models.py` run on a connected machine, after which the entire source tree (including `Models/` and `Voices/`) is portable to air-gapped targets.
+- Future stages: multi-arch Docker image, distribution packaging.
 
 ## Requirements
 
 - Python 3.11+ (3.13 recommended)
 - A working microphone and speaker
 - Linux: PortAudio dev libs (`sudo apt install libportaudio2 portaudio19-dev`)
-- ~2 GB disk for dependencies (torch, CTranslate2, ONNX Runtime) + ~250 MB for the Whisper model on first run
+- ~2 GB disk for dependencies (torch, CTranslate2, ONNX Runtime) plus the STT model (~75 MB for `small.en`, ~150 MB for `medium.en`) fetched once via `bootstrap_models.py`
 
 ## Install
 
@@ -72,6 +72,20 @@ Voices/
 
 Voices: https://github.com/rhasspy/piper/blob/master/VOICES.md
 
+### STT model (faster-whisper)
+
+The Whisper speech-to-text model is **not bundled in the repo**. Fetch it once with the included bootstrap script (requires internet):
+
+```bash
+python bootstrap_models.py                    # default: small.en (~75 MB)
+python bootstrap_models.py --model base.en    # smaller, faster, less accurate
+python bootstrap_models.py --model medium.en  # higher accuracy, slower
+```
+
+This populates `Models/STT/<model_name>/` with the faster-whisper CTranslate2 artifacts. The app loads from there on `Listen` and never attempts network access — if the directory is missing, the chat area shows an explicit warning at startup and listening fails fast with the same instruction.
+
+**For air-gapped installs:** run the bootstrap once on an internet-connected machine, then copy the entire `Models/` directory (alongside the source) to the offline target. Silero VAD and Piper voices ship as local files already, so no other fetches are involved.
+
 ### Configure
 
 ```bash
@@ -94,14 +108,14 @@ python main.py
 
 - **Header** shows your configured callsign, name, and location.
 - **Chat area** — incoming (green `[RX HH:MM:SS]`) and outgoing (blue `[TX to ...]`) messages.
-- **Listen** button — toggles microphone capture and live transcription. First click triggers a Whisper model download (~250 MB) on the very first run, then it's cached.
+- **Listen** button — toggles microphone capture and live transcription. Loads the bundled Whisper model from `Models/STT/<whisper_model>/` (no network); fails fast with a clear instruction if the model directory is missing.
 - **Target dropdown** — pick a callsign from your contacts, or "All" for general transmission.
 - **Message box + Transmit** — type and hit Enter (or click Transmit) to speak the message through Piper.
 - **Pending stations bar** (between chat and input) — yellow pill buttons appear when a new GMRS callsign is detected on RX. Hover for the detected name/location preview; click to open a prefilled "Add Station" dialog.
 
 ### Settings menu
 
-- **Configuration** — edit callsign, name, location, voice model (with Test button for voice preview), input device, VAD threshold (0.10–0.95; lower = more sensitive to weak/quiet signals, higher = stricter gating on noisy channels; default 0.5), and PTT mode. PTT options: **Manual** (you press PTT on the radio yourself), **VOX** (radio auto-keys on detected audio), or **USB FTDI / Serial** (app keys PTT via a USB-serial adapter's RTS or DTR line — when selected, Serial Port and Control Line fields enable). Changes to the input device or VAD threshold restart the listener automatically.
+- **Configuration** — edit callsign, name, location, voice model (with Test button for voice preview), input device, output device (where TTS audio plays — pick a USB sound card / Signalink / Digirig channel to feed your radio directly), VAD threshold (0.10–0.95; lower = more sensitive to weak/quiet signals, higher = stricter gating on noisy channels; default 0.5), and PTT mode. PTT options: **Manual** (you press PTT on the radio yourself), **VOX** (radio auto-keys on detected audio), or **USB FTDI / Serial** (app keys PTT via a USB-serial adapter's RTS or DTR line — when selected, Serial Port and Control Line fields enable). Changes to the input device or VAD threshold restart the listener automatically.
 - **Contacts** — table editor for known callsigns/names/locations.
 
 ## FCC Compliance Notes (GMRS, Part 95)
@@ -119,9 +133,11 @@ You are still responsible for legal operation. This app does not replace a valid
 ```
 GMRS-TTY/
 ├── main.py                 # PySide6 app, STT worker, TTS playback, detection logic
+├── bootstrap_models.py     # One-time fetch of the faster-whisper STT model into Models/STT/
 ├── requirements.txt        # Python dependencies
 ├── config.example.json     # Template — copy to config.json and edit
 ├── Voices/                 # Piper voice models (gitignored; download yourself)
+├── Models/                 # Bundled STT/VAD model artifacts (gitignored; run bootstrap_models.py)
 ├── spec.md                 # Original problem statement
 ├── technical_spec.md       # Detailed technical spec
 ├── implementation_plan.md  # Staged build plan (Stages 1–8)
@@ -135,9 +151,9 @@ Tracked in [implementation_plan.md](implementation_plan.md):
 1. ✅ PySide6 skeleton + config/contacts JSON
 2. ✅ Piper TTS + speaker output + GMRS message formatting
 3. ✅ Silero VAD + faster-whisper STT + noise reduction
-4. ⚠️ Refinement (auto-scroll, device picker, timer reset) — partial
-5. ⏳ Hardware hooks (`pyserial` PTT keying around TTS)
-6. ⏳ Off-grid model bundling (pre-stage Whisper + Silero for air-gapped install)
+4. ✅ Refinement (auto-scroll, input/output device pickers, timer reset)
+5. ✅ Hardware hooks (`pyserial` PTT keying around TTS — Manual / VOX / USB FTDI modes)
+6. ✅ Off-grid model bundling (Whisper via `bootstrap_models.py`; Silero VAD ONNX ships in the wheel)
 7. ⏳ Cross-platform packaging (Windows installer, Linux/Pi tarballs)
 8. ⏳ Multi-arch Docker image (`linux/amd64` + `linux/arm64`)
 
