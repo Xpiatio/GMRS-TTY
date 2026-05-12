@@ -1,0 +1,8 @@
+PySide6
+sounddevice==0.4.6
+soundfile==0.12.1
+piper-tts
+faster-whisper
+silero-vad
+noisereduce
+numpy

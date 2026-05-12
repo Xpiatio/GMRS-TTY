@@ -1,0 +1,8 @@
+While working on an idea of "detecting call signs" during check ins.  It got me thinking of the community who it hard of hearing, deaf or mute. I remember my sister using a TTY for communication over the telephone lines.  I'm wondering if going down this road to allow live transcription of the radio freq from a SDR/HT/Mobile unit into a computer/device with a software (built with Python and PyQt/PySide) that will live transcribe on screen.  It should also be able to text to speech transmit and always add the users call sign and name at the end of the text.
+
+There should be a configuration page that allows the user to enter in their Callsign and their name and their location.  This should be saved to a config file. There should also be a separate screen accessible via a menu to manually add, modify, or remove known callsigns and names. The main page should show the configured call sign, name and location of the user at the top.  Main section of the screen should show incoming message stream, like a chat room style. And a text box at the bottom for new messages with an enter screen.
+When sending messages, add the user's call sign and name to the end of the message if it has been more than 15 minutes since the call sign was last transmitted.
+
+Since we don't have have a radio hooked up yet, I want to be able to trigger my laptops mic to simulate incoming audio from the radio.  When sending a message I want to be able hear the message through my laptop speakers.
+
+We need to follow FCC rules for GMRS.

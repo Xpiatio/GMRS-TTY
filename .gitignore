@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Local per-user state (copy config.example.json to config.json and edit)
+config.json
+contacts.json
+
+# Voice models (download separately — see README)
+Voices/
+
+# Bundled ML models (Stage 6 — air-gapped install)
+Models/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Claude Code local settings
+.claude/settings.local.json

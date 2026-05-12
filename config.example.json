@@ -1,0 +1,7 @@
+{
+    "callsign": "YOUR_CALL",
+    "name": "Your Name",
+    "location": "Your City, State",
+    "voice": "Voices/en_US-ryan-high.onnx",
+    "input_device": -1
+}
