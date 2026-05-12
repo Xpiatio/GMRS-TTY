@@ -94,6 +94,40 @@ def detect_callsigns(text):
     return sorted(found)
 
 
+LETTER_TO_NATO = {
+    "A": "Alpha", "B": "Bravo", "C": "Charlie", "D": "Delta",
+    "E": "Echo", "F": "Foxtrot", "G": "Golf", "H": "Hotel",
+    "I": "India", "J": "Juliet", "K": "Kilo", "L": "Lima",
+    "M": "Mike", "N": "November", "O": "Oscar", "P": "Papa",
+    "Q": "Quebec", "R": "Romeo", "S": "Sierra", "T": "Tango",
+    "U": "Uniform", "V": "Victor", "W": "Whiskey", "X": "X-ray",
+    "Y": "Yankee", "Z": "Zulu",
+}
+
+
+def callsign_to_nato(callsign):
+    """'WSLZ233' -> 'Whiskey Sierra Lima Zulu 2 3 3'. Letters become NATO words,
+    digits stay individual."""
+    parts = []
+    for ch in callsign.upper():
+        if ch in LETTER_TO_NATO:
+            parts.append(LETTER_TO_NATO[ch])
+        elif ch.isdigit():
+            parts.append(ch)
+    return ' '.join(parts)
+
+
+def spell_digits_in_callsigns(text):
+    """Insert spaces between the digits of any GMRS callsign so TTS reads them
+    individually ('233' -> '2 3 3') instead of as 'two hundred thirty-three'."""
+    def repl(m):
+        cs = m.group(1)
+        prefix = re.match(r'^[A-Za-z]+', cs).group(0)
+        digits = cs[len(prefix):]
+        return f"{prefix} {' '.join(digits)}"
+    return CALLSIGN_RE.sub(repl, text)
+
+
 def extract_name_location(text, callsign):
     """Heuristic: name is the first capitalized word after the callsign mention;
     location is the capitalized phrase after 'in/from/near/at' anywhere in the text."""
@@ -510,6 +544,15 @@ class MainWindow(QMainWindow):
 
         main_layout.addLayout(input_layout)
 
+        # 3b. Standalone ID button row (sits under Transmit)
+        id_layout = QHBoxLayout()
+        id_layout.addStretch()
+        self.id_btn = QPushButton("This is", self)
+        self.id_btn.setToolTip("Transmit station ID: This is [callsign]. [name] from [location]")
+        self.id_btn.clicked.connect(self.transmit_id_only)
+        id_layout.addWidget(self.id_btn)
+        main_layout.addLayout(id_layout)
+
         self.statusBar().showMessage("Ready")
 
         # 4. Menus
@@ -568,56 +611,90 @@ class MainWindow(QMainWindow):
             return
 
         target_call = self.target_dropdown.currentData()
-        target_name = self.target_dropdown.currentText().split(" (")[0] # fallback display
 
         my_call = self.config.get("callsign", "N0CALL")
         my_name = self.config.get("name", "Default User")
-        
-        now = datetime.datetime.now()
-        append_id = False
-        # Append ID if this is the first transmission or 15 minutes have passed
-        if self.last_tx_time is None or (now - self.last_tx_time).total_seconds() > 15 * 60:
-            append_id = True
 
-        if target_call and target_call.upper() != "ALL":
-            spoken_text = f"{my_call} {my_name} calling {target_call}. {text}"
+        now = datetime.datetime.now()
+        prefaced = bool(target_call and target_call.upper() != "ALL")
+
+        if prefaced:
+            target_name = next(
+                (c.get("name", "") for c in self.contacts
+                 if c.get("callsign", "").upper() == target_call.upper()),
+                ""
+            ).strip()
+            target_label = f"{target_call} {target_name}" if target_name else target_call
+            # Preface contains callsign + name, so it satisfies FCC ID on its own.
+            spoken_text = f"{my_call} {my_name} calling {target_label}. {text}"
+            self.last_tx_time = now
         else:
             spoken_text = text
-        
-        if append_id:
-            spoken_text += f". This is {my_call} {my_name}."
-            self.last_tx_time = now
+            if self.last_tx_time is None or (now - self.last_tx_time).total_seconds() > 15 * 60:
+                spoken_text += f". This is {my_call} {my_name}."
+                self.last_tx_time = now
 
-        # Append to chat
+        # Append to chat (original form for readability)
         formatted_msg = f"<b>[TX to {target_call}]:</b> {spoken_text}"
         self.append_to_chat(formatted_msg, color="blue")
-        
-        # Clear input box and disable until finished
+
+        # Clear input box; TTS spells out callsign digits ('233' -> '2 3 3').
         self.message_input.clear()
-        self.transmit_btn.setEnabled(False)
+
+        if prefaced:
+            all_idx = self.target_dropdown.findData("All")
+            if all_idx >= 0:
+                self.target_dropdown.setCurrentIndex(all_idx)
+
+        self._synthesize_and_play(spell_digits_in_callsigns(spoken_text))
+
+    def transmit_id_only(self):
+        """Transmit a standalone ID: 'This is [call], [NATO phonetic call]. [name] from [location]'."""
+        my_call = self.config.get("callsign", "N0CALL")
+        my_name = self.config.get("name", "Default User")
+        my_location = self.config.get("location", "").strip()
+        nato_call = callsign_to_nato(my_call)
+
+        if my_location:
+            spoken_text = f"This is {my_call}, {nato_call}. {my_name} from {my_location}."
+        else:
+            spoken_text = f"This is {my_call}, {nato_call}. {my_name}."
+
+        self.last_tx_time = datetime.datetime.now()
+
+        formatted_msg = f"<b>[TX ID]:</b> {spoken_text}"
+        self.append_to_chat(formatted_msg, color="blue")
+
+        self._synthesize_and_play(spell_digits_in_callsigns(spoken_text))
+
+    def _set_tx_buttons_enabled(self, enabled):
+        self.transmit_btn.setEnabled(enabled)
+        self.id_btn.setEnabled(enabled)
+
+    def _synthesize_and_play(self, tts_text):
+        """Render `tts_text` through Piper and play it; manages TX button state."""
+        self._set_tx_buttons_enabled(False)
 
         voice_path = self.config.get("voice", "")
         if not voice_path or not os.path.exists(voice_path):
             self.append_to_chat("<i>Error: No valid Piper voice selected. Please select one in Settings -> Configuration.</i>", color="red")
-            self.transmit_btn.setEnabled(True)
+            self._set_tx_buttons_enabled(True)
             return
 
-        # 1. Load Voice Model (cached for speed)
         if voice_path not in self.voice_cache:
             try:
                 self.voice_cache[voice_path] = PiperVoice.load(voice_path)
             except Exception as e:
                 self.append_to_chat(f"<i>Failed to load voice model: {e}</i>", color="red")
-                self.transmit_btn.setEnabled(True)
+                self._set_tx_buttons_enabled(True)
                 return
 
         voice = self.voice_cache[voice_path]
-        
-        # 2. Synthesize audio sequentially in the main thread (fixes espeak-ng thread crashes)
+
+        # Synthesize sequentially in the main thread (avoids espeak-ng thread crashes).
         try:
-            sentences = re.split(r'(?<=[.!?])\s+', spoken_text)
+            sentences = re.split(r'(?<=[.!?])\s+', tts_text)
             audio_chunks = []
-            
             syn_config = SynthesisConfig(speaker_id=0) if voice.config.num_speakers > 1 else None
 
             for sentence in sentences:
@@ -631,8 +708,8 @@ class MainWindow(QMainWindow):
                 try:
                     with wave.open(temp_wav_path, 'wb') as wav_file:
                         voice.synthesize_wav(sentence, wav_file, syn_config=syn_config)
-                    
-                    data, fs = sf.read(temp_wav_path, dtype='int16')
+
+                    data, _ = sf.read(temp_wav_path, dtype='int16')
                     if len(data) > 0:
                         audio_chunks.append(data)
                     else:
@@ -640,7 +717,7 @@ class MainWindow(QMainWindow):
                 finally:
                     if os.path.exists(temp_wav_path):
                         os.remove(temp_wav_path)
-            
+
             if audio_chunks:
                 full_audio = np.concatenate(audio_chunks)
                 self.audio_thread = AudioPlayerThread(full_audio, voice.config.sample_rate)
@@ -648,19 +725,19 @@ class MainWindow(QMainWindow):
                 self.audio_thread.error.connect(self.on_tts_error)
                 self.audio_thread.start()
             else:
-                self.transmit_btn.setEnabled(True)
+                self._set_tx_buttons_enabled(True)
 
         except Exception as e:
             traceback.print_exc()
             self.append_to_chat(f"<i>TTS Error: {str(e)}</i>", color="red")
-            self.transmit_btn.setEnabled(True)
+            self._set_tx_buttons_enabled(True)
 
     def on_tts_finished(self):
-        self.transmit_btn.setEnabled(True)
+        self._set_tx_buttons_enabled(True)
 
     def on_tts_error(self, error_msg):
         self.append_to_chat(f"<i>TTS Error: {error_msg}</i>", color="red")
-        self.transmit_btn.setEnabled(True)
+        self._set_tx_buttons_enabled(True)
 
     def append_to_chat(self, text, color="black"):
         """Appends HTML formatted text to the chat display."""
