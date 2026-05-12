@@ -143,3 +143,9 @@ Issues, feature requests, and pull requests are welcome. A few ground rules:
 - Match the existing style (no comments unless the *why* is non-obvious; clear names over docstrings).
 - New dependencies should be justified — this project's off-grid goal means every dep must work without internet at runtime.
 - If you add functionality that affects FCC compliance behavior (callsign formatting, ID timing, etc.), call it out explicitly in the PR description.
+
+## License
+
+GMRS-TTY is released under the [MIT License](LICENSE).
+
+Third-party components (Python dependencies, bundled Piper voice models, runtime-downloaded Whisper/Silero models) retain their own licenses — see [NOTICES.md](NOTICES.md) for attribution and terms. Note in particular that the `en_US-libritts-high` voice is **CC BY 4.0** and requires attribution if you redistribute it.
