@@ -607,16 +607,17 @@ class MainWindow(QMainWindow):
     def transmit_message(self):
         """Handles when the user attempts to send a message."""
         text = self.message_input.text().strip()
-        if not text:
-            return
-
         target_call = self.target_dropdown.currentData()
+        prefaced = bool(target_call and target_call.upper() != "ALL")
+
+        # Empty text is only valid when calling a specific station — the preface itself is the call.
+        if not text and not prefaced:
+            return
 
         my_call = self.config.get("callsign", "N0CALL")
         my_name = self.config.get("name", "Default User")
 
         now = datetime.datetime.now()
-        prefaced = bool(target_call and target_call.upper() != "ALL")
 
         if prefaced:
             target_name = next(
@@ -626,7 +627,10 @@ class MainWindow(QMainWindow):
             ).strip()
             target_label = f"{target_call} {target_name}" if target_name else target_call
             # Preface contains callsign + name, so it satisfies FCC ID on its own.
-            spoken_text = f"{my_call} {my_name} calling {target_label}. {text}"
+            if text:
+                spoken_text = f"{my_call} {my_name} calling {target_label}. {text}"
+            else:
+                spoken_text = f"{my_call} {my_name} calling {target_label}."
             self.last_tx_time = now
         else:
             spoken_text = text
@@ -642,9 +646,11 @@ class MainWindow(QMainWindow):
         self.message_input.clear()
 
         if prefaced:
-            all_idx = self.target_dropdown.findData("All")
-            if all_idx >= 0:
-                self.target_dropdown.setCurrentIndex(all_idx)
+            for i in range(self.target_dropdown.count()):
+                data = self.target_dropdown.itemData(i)
+                if data and str(data).upper() == "ALL":
+                    self.target_dropdown.setCurrentIndex(i)
+                    break
 
         self._synthesize_and_play(spell_digits_in_callsigns(spoken_text))
 
