@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QComboBox, QTextEdit, QLineEdit, QPushButton, QDialog,
     QFormLayout, QDialogButtonBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMessageBox
+    QHeaderView, QMessageBox, QDoubleSpinBox
 )
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt, QThread, Signal
@@ -182,6 +182,83 @@ class AudioPlayerThread(QThread):
             self.finished.emit()
 
 
+class PTT:
+    """PTT interface. Modes share lead-in/tail silence padding so the radio's
+    keying ramp or VOX hang time doesn't clip audio."""
+    lead_in_seconds = 0.0
+    tail_seconds = 0.0
+
+    def key(self):
+        pass
+
+    def unkey(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class ManualPTT(PTT):
+    """User keys the radio themselves; app just plays audio."""
+
+
+class VoxPTT(PTT):
+    """Radio's VOX circuit auto-keys on detected audio. Extra trailing silence
+    keeps VOX engaged so the last syllable isn't clipped on dropout."""
+    tail_seconds = 0.15
+
+
+class SerialPTT(PTT):
+    """USB-serial RTS or DTR drives an external transistor on the radio's PTT line.
+    Lead-in/tail give the TX chain time to settle on both sides of the audio."""
+    lead_in_seconds = 0.05
+    tail_seconds = 0.05
+
+    def __init__(self, port, line="RTS"):
+        import serial
+        self.line = (line or "RTS").upper()
+        self.port = serial.Serial(port)
+        self.port.rts = False
+        self.port.dtr = False
+
+    def key(self):
+        if self.line == "DTR":
+            self.port.dtr = True
+        else:
+            self.port.rts = True
+
+    def unkey(self):
+        if self.line == "DTR":
+            self.port.dtr = False
+        else:
+            self.port.rts = False
+
+    def close(self):
+        try:
+            self.unkey()
+            self.port.close()
+        except Exception:
+            pass
+
+
+def make_ptt(config):
+    mode = config.get("ptt_mode", "manual")
+    if mode == "usb_ftdi":
+        port = (config.get("ptt_serial_port") or "").strip()
+        line = config.get("ptt_serial_line", "RTS")
+        if not port:
+            print("PTT: USB FTDI selected but no serial port configured; falling back to manual.")
+            return ManualPTT()
+        try:
+            return SerialPTT(port, line)
+        except Exception as e:
+            print(f"PTT: failed to open serial port {port}: {e}; falling back to manual.")
+            return ManualPTT()
+    if mode == "vox":
+        return VoxPTT()
+    return ManualPTT()
+
+
 class STTWorker(QThread):
     """Captures mic audio, gates on Silero VAD, transcribes speech with faster-whisper."""
     transcribed = Signal(str)
@@ -192,6 +269,8 @@ class STTWorker(QThread):
     CHUNK_SAMPLES = 512  # required by Silero VAD at 16kHz
     PRE_BUFFER_CHUNKS = 10  # ~320ms of pre-speech context
     MIN_SPEECH_DURATION_S = 0.4  # drops kerchunks / blips
+    BANDPASS_LOW_HZ = 300   # narrowband-FM voice floor
+    BANDPASS_HIGH_HZ = 3000  # narrowband-FM voice ceiling
 
     # Common Whisper hallucinations on silence/noise — drop these
     HALLUCINATIONS = frozenset({
@@ -200,10 +279,11 @@ class STTWorker(QThread):
         "okay", "ok", "yeah", "mm", "hmm",
     })
 
-    def __init__(self, input_device=None, whisper_model="small.en", parent=None):
+    def __init__(self, input_device=None, whisper_model="small.en", vad_threshold=0.5, parent=None):
         super().__init__(parent)
         self.input_device = input_device if input_device not in (None, -1) else None
         self.whisper_model_name = whisper_model
+        self.vad_threshold = float(vad_threshold)
         self._running = True
 
     def stop(self):
@@ -214,6 +294,7 @@ class STTWorker(QThread):
             from silero_vad import load_silero_vad, VADIterator
             from faster_whisper import WhisperModel
             import noisereduce as nr
+            from scipy.signal import butter, sosfiltfilt
         except Exception as e:
             self.error.emit(f"STT dependencies missing — run 'pip install -r requirements.txt': {e}")
             return
@@ -228,10 +309,18 @@ class STTWorker(QThread):
             vad_iter = VADIterator(
                 vad_model,
                 sampling_rate=self.SAMPLE_RATE,
-                threshold=0.5,
+                threshold=self.vad_threshold,
                 min_silence_duration_ms=500,
                 speech_pad_ms=200,
             )
+            nyquist = self.SAMPLE_RATE / 2
+            self._bandpass_sos = butter(
+                4,
+                [self.BANDPASS_LOW_HZ / nyquist, self.BANDPASS_HIGH_HZ / nyquist],
+                btype="band",
+                output="sos",
+            )
+            self._sosfiltfilt = sosfiltfilt
         except Exception as e:
             self.error.emit(f"Failed to initialize STT models: {e}")
             return
@@ -296,8 +385,9 @@ class STTWorker(QThread):
 
     def _transcribe(self, audio, whisper, nr_module):
         try:
+            filtered = self._sosfiltfilt(self._bandpass_sos, audio).astype(np.float32)
             denoised = nr_module.reduce_noise(
-                y=audio, sr=self.SAMPLE_RATE, prop_decrease=0.7
+                y=filtered, sr=self.SAMPLE_RATE, prop_decrease=0.7
             ).astype(np.float32)
 
             segments, _ = whisper.transcribe(
@@ -313,11 +403,16 @@ class STTWorker(QThread):
 
 class ConfigDialog(QDialog):
     """Dialog for editing user configuration."""
+
+    TEST_SAMPLE_TEXT = "GMRS-TTY voice test. Radio check, one two three."
+
     def __init__(self, current_config, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Configuration")
         self.setMinimumWidth(300)
         self.config = current_config
+        self._test_voice_cache = {}
+        self._test_player = None
 
         layout = QFormLayout(self)
 
@@ -326,6 +421,38 @@ class ConfigDialog(QDialog):
         self.location_input = QLineEdit(self.config.get("location", ""))
         self.voice_input = QComboBox()
         self.input_device_input = QComboBox()
+        self.ptt_mode_input = QComboBox()
+        self.ptt_mode_input.addItem("Manual (you press PTT on the radio)", "manual")
+        self.ptt_mode_input.addItem("VOX (radio auto-keys on audio)", "vox")
+        self.ptt_mode_input.addItem("USB FTDI / Serial (RTS or DTR)", "usb_ftdi")
+        current_ptt = self.config.get("ptt_mode", "manual")
+        idx = self.ptt_mode_input.findData(current_ptt)
+        if idx >= 0:
+            self.ptt_mode_input.setCurrentIndex(idx)
+
+        self.ptt_serial_port_input = QLineEdit(self.config.get("ptt_serial_port", ""))
+        self.ptt_serial_port_input.setPlaceholderText("/dev/ttyUSB0 or COM3")
+
+        self.ptt_serial_line_input = QComboBox()
+        self.ptt_serial_line_input.addItem("RTS", "RTS")
+        self.ptt_serial_line_input.addItem("DTR", "DTR")
+        current_line = self.config.get("ptt_serial_line", "RTS")
+        idx = self.ptt_serial_line_input.findData(current_line)
+        if idx >= 0:
+            self.ptt_serial_line_input.setCurrentIndex(idx)
+
+        self.ptt_mode_input.currentIndexChanged.connect(self._update_ptt_fields)
+
+        self.vad_threshold_input = QDoubleSpinBox()
+        self.vad_threshold_input.setRange(0.10, 0.95)
+        self.vad_threshold_input.setSingleStep(0.05)
+        self.vad_threshold_input.setDecimals(2)
+        self.vad_threshold_input.setValue(float(self.config.get("vad_threshold", 0.5)))
+        self.vad_threshold_input.setToolTip(
+            "Silero VAD speech probability cutoff. Lower = more sensitive "
+            "(catches quiet/weak signals but more false starts); "
+            "higher = stricter (cleaner gating on noisy channels). Default 0.5."
+        )
 
         voices = glob.glob(os.path.join("Voices", "*.onnx"))
         if not voices:
@@ -339,6 +466,16 @@ class ConfigDialog(QDialog):
             index = self.voice_input.findData(current_voice)
             if index >= 0:
                 self.voice_input.setCurrentIndex(index)
+
+        self.test_voice_button = QPushButton("Test")
+        self.test_voice_button.setToolTip("Play a short sample with the selected voice")
+        self.test_voice_button.clicked.connect(self.test_voice)
+
+        voice_row = QWidget()
+        voice_row_layout = QHBoxLayout(voice_row)
+        voice_row_layout.setContentsMargins(0, 0, 0, 0)
+        voice_row_layout.addWidget(self.voice_input, 1)
+        voice_row_layout.addWidget(self.test_voice_button)
 
         self.input_device_input.addItem("System Default", -1)
         try:
@@ -356,8 +493,13 @@ class ConfigDialog(QDialog):
         layout.addRow("Callsign:", self.callsign_input)
         layout.addRow("Name:", self.name_input)
         layout.addRow("Location:", self.location_input)
-        layout.addRow("Voice Model:", self.voice_input)
+        layout.addRow("Voice Model:", voice_row)
         layout.addRow("Input Device:", self.input_device_input)
+        layout.addRow("VAD Threshold:", self.vad_threshold_input)
+        layout.addRow("PTT Mode:", self.ptt_mode_input)
+        layout.addRow("Serial Port:", self.ptt_serial_port_input)
+        layout.addRow("Control Line:", self.ptt_serial_line_input)
+        self._update_ptt_fields()
 
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
         self.buttons.accepted.connect(self.accept)
@@ -371,7 +513,62 @@ class ConfigDialog(QDialog):
             "location": self.location_input.text().strip(),
             "voice": self.voice_input.currentData(),
             "input_device": self.input_device_input.currentData(),
+            "vad_threshold": round(self.vad_threshold_input.value(), 2),
+            "ptt_mode": self.ptt_mode_input.currentData(),
+            "ptt_serial_port": self.ptt_serial_port_input.text().strip(),
+            "ptt_serial_line": self.ptt_serial_line_input.currentData(),
         }
+
+    def _update_ptt_fields(self):
+        is_serial = self.ptt_mode_input.currentData() == "usb_ftdi"
+        self.ptt_serial_port_input.setEnabled(is_serial)
+        self.ptt_serial_line_input.setEnabled(is_serial)
+
+    def test_voice(self):
+        voice_path = self.voice_input.currentData()
+        if not voice_path or not os.path.exists(voice_path):
+            QMessageBox.warning(self, "Test Voice", "No valid Piper voice selected.")
+            return
+
+        self.test_voice_button.setEnabled(False)
+        self.test_voice_button.setText("Loading…")
+        QApplication.processEvents()
+
+        try:
+            if voice_path not in self._test_voice_cache:
+                self._test_voice_cache[voice_path] = PiperVoice.load(voice_path)
+            voice = self._test_voice_cache[voice_path]
+
+            self.test_voice_button.setText("Speaking…")
+            QApplication.processEvents()
+
+            syn_config = SynthesisConfig(speaker_id=0) if voice.config.num_speakers > 1 else None
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                tmp_path = tmp.name
+            try:
+                with wave.open(tmp_path, 'wb') as wav_file:
+                    voice.synthesize_wav(self.TEST_SAMPLE_TEXT, wav_file, syn_config=syn_config)
+                data, _ = sf.read(tmp_path, dtype='int16')
+            finally:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+
+            if len(data) == 0:
+                QMessageBox.warning(self, "Test Voice", "Voice generated no audio.")
+                self._reset_test_button()
+                return
+
+            self._test_player = AudioPlayerThread(data, voice.config.sample_rate)
+            self._test_player.finished.connect(self._reset_test_button)
+            self._test_player.error.connect(lambda msg: QMessageBox.warning(self, "Test Voice", f"Playback error: {msg}"))
+            self._test_player.start()
+        except Exception as e:
+            QMessageBox.warning(self, "Test Voice", f"Failed: {e}")
+            self._reset_test_button()
+
+    def _reset_test_button(self):
+        self.test_voice_button.setEnabled(True)
+        self.test_voice_button.setText("Test")
 
 
 class ContactsDialog(QDialog):
@@ -484,6 +681,7 @@ class MainWindow(QMainWindow):
         self.voice_cache = {}
         self.stt_worker = None
         self.pending_buttons = {}  # callsign -> QPushButton
+        self.ptt = make_ptt(self.config)
 
         self.init_ui()
         self.update_header()
@@ -494,6 +692,10 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'audio_thread') and self.audio_thread.isRunning():
             self.audio_thread.quit()
             self.audio_thread.wait()
+        try:
+            self.ptt.close()
+        except Exception:
+            pass
         super().closeEvent(event)
 
     def init_ui(self):
@@ -590,12 +792,33 @@ class MainWindow(QMainWindow):
         dlg = ConfigDialog(self.config, self)
         if dlg.exec():
             old_device = self.config.get("input_device", -1)
+            old_threshold = self.config.get("vad_threshold", 0.5)
+            old_ptt = (
+                self.config.get("ptt_mode", "manual"),
+                self.config.get("ptt_serial_port", ""),
+                self.config.get("ptt_serial_line", "RTS"),
+            )
             self.config = dlg.get_config()
             save_json(CONFIG_FILE, self.config)
             self.update_header()
-            if old_device != self.config.get("input_device", -1) and self.listen_btn.isChecked():
+            stt_settings_changed = (
+                old_device != self.config.get("input_device", -1)
+                or old_threshold != self.config.get("vad_threshold", 0.5)
+            )
+            if stt_settings_changed and self.listen_btn.isChecked():
                 self.stop_stt()
                 self.start_stt()
+            new_ptt = (
+                self.config.get("ptt_mode", "manual"),
+                self.config.get("ptt_serial_port", ""),
+                self.config.get("ptt_serial_line", "RTS"),
+            )
+            if new_ptt != old_ptt:
+                try:
+                    self.ptt.close()
+                except Exception:
+                    pass
+                self.ptt = make_ptt(self.config)
 
     def open_contacts_dialog(self):
         dlg = ContactsDialog(self.contacts, self)
@@ -726,9 +949,24 @@ class MainWindow(QMainWindow):
 
             if audio_chunks:
                 full_audio = np.concatenate(audio_chunks)
-                self.audio_thread = AudioPlayerThread(full_audio, voice.config.sample_rate)
+                sample_rate = voice.config.sample_rate
+                lead_samples = int(self.ptt.lead_in_seconds * sample_rate)
+                tail_samples = int(self.ptt.tail_seconds * sample_rate)
+                if lead_samples > 0:
+                    full_audio = np.concatenate([
+                        np.zeros(lead_samples, dtype=full_audio.dtype), full_audio,
+                    ])
+                if tail_samples > 0:
+                    full_audio = np.concatenate([
+                        full_audio, np.zeros(tail_samples, dtype=full_audio.dtype),
+                    ])
+                self.audio_thread = AudioPlayerThread(full_audio, sample_rate)
                 self.audio_thread.finished.connect(self.on_tts_finished)
                 self.audio_thread.error.connect(self.on_tts_error)
+                try:
+                    self.ptt.key()
+                except Exception as e:
+                    self.append_to_chat(f"<i>PTT key failed: {e}</i>", color="red")
                 self.audio_thread.start()
             else:
                 self._set_tx_buttons_enabled(True)
@@ -739,9 +977,17 @@ class MainWindow(QMainWindow):
             self._set_tx_buttons_enabled(True)
 
     def on_tts_finished(self):
+        try:
+            self.ptt.unkey()
+        except Exception:
+            pass
         self._set_tx_buttons_enabled(True)
 
     def on_tts_error(self, error_msg):
+        try:
+            self.ptt.unkey()
+        except Exception:
+            pass
         self.append_to_chat(f"<i>TTS Error: {error_msg}</i>", color="red")
         self._set_tx_buttons_enabled(True)
 
@@ -760,6 +1006,7 @@ class MainWindow(QMainWindow):
             return
         self.stt_worker = STTWorker(
             input_device=self.config.get("input_device", -1),
+            vad_threshold=self.config.get("vad_threshold", 0.5),
             parent=self,
         )
         self.stt_worker.transcribed.connect(self.on_transcription)

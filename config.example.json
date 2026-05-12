@@ -3,5 +3,9 @@
     "name": "Your Name",
     "location": "Your City, State",
     "voice": "Voices/en_US-ryan-high.onnx",
-    "input_device": -1
+    "input_device": -1,
+    "vad_threshold": 0.5,
+    "ptt_mode": "manual",
+    "ptt_serial_port": "",
+    "ptt_serial_line": "RTS"
 }

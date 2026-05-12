@@ -7,13 +7,19 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
 ## Features
 
 ### Receive (Rx)
-- Live microphone capture with **Silero VAD** — only transcribes when a human is speaking; ignores static and kerchunks.
+- Live microphone capture with **Silero VAD** — only transcribes when a human is speaking; ignores static and kerchunks. VAD sensitivity is tunable in Configuration.
+- **300–3000 Hz bandpass filter** applied per utterance — matches the narrowband-FM voice band, strips hum and out-of-band hiss before denoising.
+- **Noise reduction** (spectral gating) applied per utterance after bandpass and before transcription.
 - Offline transcription via **faster-whisper** (`small.en` by default, int8 CPU).
-- **Noise reduction** (spectral gating) applied per utterance before transcription.
 - Drops short blips (<400 ms) and common Whisper hallucinations on silence.
 
 ### Transmit (Tx)
 - Offline TTS via **Piper** with local ONNX voice models.
+- **Voice preview** — the Configuration dialog has a Test button next to the voice dropdown that plays a short sample so you can audition each voice before saving.
+- **PTT keying** — three modes selectable in Configuration:
+  - **Manual** — you key your radio yourself; the app just plays audio.
+  - **VOX** — your radio auto-keys on detected audio; the app appends a short tail of silence so the last syllable survives the VOX hang dropout.
+  - **USB FTDI / Serial** — the app keys PTT through a USB-serial adapter's RTS or DTR line (drives an external transistor / opto on the radio's PTT pin). Adds short lead-in/tail silence so the radio's keying ramp doesn't clip the audio.
 - **FCC formatting** — automatically prepends `[Your call] [Your name] calling [Target]` when targeting a specific station.
 - **15-minute ID rule** — appends your callsign + name when more than 15 minutes have passed since last identification.
 - "All" target is transmitted as-is (no preface).
@@ -95,7 +101,7 @@ python main.py
 
 ### Settings menu
 
-- **Configuration** — edit callsign, name, location, voice model, and input device.
+- **Configuration** — edit callsign, name, location, voice model (with Test button for voice preview), input device, VAD threshold (0.10–0.95; lower = more sensitive to weak/quiet signals, higher = stricter gating on noisy channels; default 0.5), and PTT mode. PTT options: **Manual** (you press PTT on the radio yourself), **VOX** (radio auto-keys on detected audio), or **USB FTDI / Serial** (app keys PTT via a USB-serial adapter's RTS or DTR line — when selected, Serial Port and Control Line fields enable). Changes to the input device or VAD threshold restart the listener automatically.
 - **Contacts** — table editor for known callsigns/names/locations.
 
 ## FCC Compliance Notes (GMRS, Part 95)
