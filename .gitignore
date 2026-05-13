@@ -19,9 +19,6 @@ Voices/
 # Bundled ML models (Stage 6 — air-gapped install)
 Models/
 
-# Per-contact speaker voiceprints (learned locally; never shipped)
-voiceprints/
-
 # Editor / OS
 .vscode/
 .idea/

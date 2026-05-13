@@ -13,11 +13,10 @@ We need to follow FCC rules for GMRS.
 
 The shipped app has grown past this initial statement. The following capabilities are now part of the product (see `technical_spec.md` for the detailed spec and `README.md` for user-facing docs):
 
-- **Fully offline operation** — no runtime network access; STT, VAD, TTS, and speaker models are pre-staged via `bootstrap_models.py` and loaded from `Models/` and `Voices/`. The app never attempts to download anything.
+- **Fully offline operation** — no runtime network access; STT, VAD, and TTS models are pre-staged via `bootstrap_models.py` and loaded from `Models/` and `Voices/`. The app never attempts to download anything.
 - **Voice activity detection (Silero VAD)** — only transcribes when a human is speaking; ignores static and kerchunks. VAD threshold is tunable.
-- **Narrowband-FM audio preprocessing** — 300–3000 Hz bandpass + spectral-gating noise reduction applied per utterance before STT and before speaker embedding.
+- **Narrowband-FM audio preprocessing** — 300–3000 Hz bandpass + spectral-gating noise reduction applied per utterance before STT.
 - **Auto-pause during TX** — STT pauses while the app is transmitting so the TTS isn't transcribed back.
-- **Speaker identification (ECAPA-TDNN)** — each RX utterance is embedded and matched against per-contact voiceprints; RX lines are tagged with the matched callsign + name (or with a session-anonymous "Voice A/B/..." label for unknown speakers). Includes aggressive auto-enrollment with `[undo]`, self-ID-wins-over-centroid anti-poisoning, manual Record/Reset per contact, and configurable confident/tentative thresholds.
 - **PTT control (real hardware)** — Manual / VOX / USB FTDI–Serial (RTS or DTR) modes with lead-in/tail silence padding. The app keys the radio around TTS playback.
 - **Voice preview** in the Configuration dialog.
 - **Output device picker** — separate from the input device so TTS audio can be routed to a USB sound card / Signalink / Digirig channel feeding the radio.

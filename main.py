@@ -16,20 +16,11 @@ import soundfile as sf
 from piper.voice import PiperVoice
 from piper.config import SynthesisConfig
 
-from speakerid import (
-    SpeakerEmbedder,
-    VoiceprintStore,
-    UnknownClusterer,
-    RxUtterance,
-    SpeakerMatch,
-    MIN_EMBED_DURATION_S,
-)
-
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QComboBox, QTextEdit, QTextBrowser, QLineEdit, QPushButton,
+    QLabel, QComboBox, QTextEdit, QLineEdit, QPushButton,
     QDialog, QFormLayout, QDialogButtonBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMessageBox, QDoubleSpinBox, QCheckBox, QInputDialog
+    QHeaderView, QMessageBox, QDoubleSpinBox,
 )
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt, QThread, Signal
@@ -270,9 +261,8 @@ def make_ptt(config):
 
 
 class STTWorker(QThread):
-    """Captures mic audio, gates on Silero VAD, transcribes speech with faster-whisper,
-    and (when enabled) extracts an ECAPA speaker embedding for each utterance."""
-    transcribed = Signal(object)  # RxUtterance
+    """Captures mic audio, gates on Silero VAD, transcribes speech with faster-whisper."""
+    transcribed = Signal(str)
     error = Signal(str)
     status = Signal(str)
 
@@ -293,14 +283,12 @@ class STTWorker(QThread):
     MODELS_STT_DIR = os.path.join("Models", "STT")
 
     def __init__(self, input_device=None, whisper_model="small.en", vad_threshold=0.5,
-                 speaker_id_enabled=True, parent=None):
+                 parent=None):
         super().__init__(parent)
         self.input_device = input_device if input_device not in (None, -1) else None
         self.whisper_model_name = whisper_model
         self.whisper_model_path = os.path.join(self.MODELS_STT_DIR, whisper_model)
         self.vad_threshold = float(vad_threshold)
-        self.speaker_id_enabled = bool(speaker_id_enabled)
-        self._embedder = None
         self._running = True
         self._paused = False
 
@@ -359,14 +347,6 @@ class STTWorker(QThread):
         except Exception as e:
             self.error.emit(f"Failed to initialize STT models: {e}")
             return
-
-        if self.speaker_id_enabled:
-            self.status.emit("Loading speaker model...")
-            embedder = SpeakerEmbedder()
-            if embedder.load():
-                self._embedder = embedder
-            else:
-                self.status.emit(f"Speaker ID unavailable: {embedder.error}")
 
         if not self._running:
             return
@@ -463,14 +443,7 @@ class STTWorker(QThread):
             if not text or normalized in self.HALLUCINATIONS:
                 return
 
-            duration = len(denoised) / self.SAMPLE_RATE
-            embedding = None
-            if self._embedder is not None and duration >= MIN_EMBED_DURATION_S:
-                embedding = self._embedder.embed(denoised, sample_rate=self.SAMPLE_RATE)
-
-            self.transcribed.emit(
-                RxUtterance(text=text, duration_seconds=duration, embedding=embedding)
-            )
+            self.transcribed.emit(text)
         except Exception as e:
             self.error.emit(f"Transcription error: {e}")
 
@@ -529,44 +502,6 @@ class ConfigDialog(QDialog):
             "higher = stricter (cleaner gating on noisy channels). Default 0.5."
         )
 
-        self.speaker_id_input = QCheckBox("Tag RX lines with detected speaker")
-        self.speaker_id_input.setChecked(
-            bool(self.config.get("speaker_id_enabled", True))
-        )
-        self.speaker_id_input.setToolTip(
-            "When enabled, each RX line is tagged with the matched callsign / name, "
-            "or with a session-anonymous label (Voice A, Voice B, ...) for unknown voices. "
-            "Aggressive auto-enrollment: every confident match attaches the new sample "
-            "to the contact's voiceprint, with an [undo] link in the chat. "
-            "Self-IDs (callsign detected in transcript) override centroid matches."
-        )
-
-        self.speaker_match_input = QDoubleSpinBox()
-        self.speaker_match_input.setRange(0.50, 0.95)
-        self.speaker_match_input.setSingleStep(0.05)
-        self.speaker_match_input.setDecimals(2)
-        self.speaker_match_input.setValue(
-            float(self.config.get("speaker_match_threshold", 0.75))
-        )
-        self.speaker_match_input.setToolTip(
-            "Cosine-similarity cutoff for a confident speaker match. "
-            "Above this -> RX line is tagged with the callsign and the embedding is "
-            "auto-enrolled. Default 0.75."
-        )
-
-        self.speaker_tentative_input = QDoubleSpinBox()
-        self.speaker_tentative_input.setRange(0.50, 0.85)
-        self.speaker_tentative_input.setSingleStep(0.05)
-        self.speaker_tentative_input.setDecimals(2)
-        self.speaker_tentative_input.setValue(
-            float(self.config.get("speaker_tentative_threshold", 0.65))
-        )
-        self.speaker_tentative_input.setToolTip(
-            "Cosine-similarity cutoff for a tentative match. Between this and the "
-            "confident threshold the RX tag gets a '?' suffix and nothing is auto-enrolled. "
-            "Below this the speaker falls into the unknown-voice clusterer. Default 0.65."
-        )
-
         voices = glob.glob(os.path.join("Voices", "*.onnx"))
         if not voices:
             self.voice_input.addItem("No voices found in Voices/", "")
@@ -618,9 +553,6 @@ class ConfigDialog(QDialog):
         layout.addRow("Input Device:", self.input_device_input)
         layout.addRow("Output Device:", self.output_device_input)
         layout.addRow("VAD Threshold:", self.vad_threshold_input)
-        layout.addRow("Speaker ID:", self.speaker_id_input)
-        layout.addRow("Match Threshold:", self.speaker_match_input)
-        layout.addRow("Tentative Threshold:", self.speaker_tentative_input)
         layout.addRow("PTT Mode:", self.ptt_mode_input)
         layout.addRow("Serial Port:", self.ptt_serial_port_input)
         layout.addRow("Control Line:", self.ptt_serial_line_input)
@@ -640,9 +572,6 @@ class ConfigDialog(QDialog):
             "input_device": self.input_device_input.currentData(),
             "output_device": self.output_device_input.currentData(),
             "vad_threshold": round(self.vad_threshold_input.value(), 2),
-            "speaker_id_enabled": self.speaker_id_input.isChecked(),
-            "speaker_match_threshold": round(self.speaker_match_input.value(), 2),
-            "speaker_tentative_threshold": round(self.speaker_tentative_input.value(), 2),
             "ptt_mode": self.ptt_mode_input.currentData(),
             "ptt_serial_port": self.ptt_serial_port_input.text().strip(),
             "ptt_serial_line": self.ptt_serial_line_input.currentData(),
@@ -703,25 +632,18 @@ class ConfigDialog(QDialog):
 
 
 class ContactsDialog(QDialog):
-    """Dialog for managing known contacts and their voiceprints."""
+    """Dialog for managing known contacts."""
 
-    SAMPLES_COL = 3
-    ACTIONS_COL = 4
-
-    def __init__(self, current_contacts, voiceprint_store=None, record_fn=None, parent=None):
+    def __init__(self, current_contacts, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Contact Management")
-        self.setMinimumSize(720, 360)
+        self.setMinimumSize(560, 360)
         self.contacts = current_contacts
-        self.voiceprint_store = voiceprint_store
-        self.record_fn = record_fn
 
         layout = QVBoxLayout(self)
 
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(
-            ["Callsign", "Name", "Location", "Voiceprint", "Voice Actions"]
-        )
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["Callsign", "Name", "Location"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table)
 
@@ -748,93 +670,6 @@ class ContactsDialog(QDialog):
             self.table.setItem(row, 0, QTableWidgetItem(contact.get("callsign", "")))
             self.table.setItem(row, 1, QTableWidgetItem(contact.get("name", "")))
             self.table.setItem(row, 2, QTableWidgetItem(contact.get("location", "")))
-            self._install_voice_widgets(row)
-
-    def _install_voice_widgets(self, row):
-        self._refresh_samples_cell(row)
-        actions = QWidget()
-        h = QHBoxLayout(actions)
-        h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(2)
-        record_btn = QPushButton("Record")
-        record_btn.setToolTip("Capture ~5 s through the configured input device "
-                              "(matches the live RX DSP pipeline) and add it to this contact's voiceprint.")
-        reset_btn = QPushButton("Reset")
-        reset_btn.setToolTip("Delete all voiceprint samples for this contact.")
-        record_btn.clicked.connect(self._on_record_clicked)
-        reset_btn.clicked.connect(self._on_reset_clicked)
-        h.addWidget(record_btn)
-        h.addWidget(reset_btn)
-        self.table.setCellWidget(row, self.ACTIONS_COL, actions)
-
-    def _refresh_samples_cell(self, row):
-        cs_item = self.table.item(row, 0)
-        name_item = self.table.item(row, 1)
-        callsign = cs_item.text().strip().upper() if cs_item else ""
-        name = name_item.text().strip() if name_item else ""
-        text = ""
-        if self.voiceprint_store and callsign and callsign != "ALL":
-            n = self.voiceprint_store.sample_count(callsign, name)
-            if n > 0:
-                meta = self.voiceprint_store.meta(callsign, name)
-                last = (meta.get("last_enrolled") or "")[:10]
-                text = f"{n} sample{'s' if n != 1 else ''}"
-                if last:
-                    text += f" · last {last}"
-        samples_item = QTableWidgetItem(text)
-        samples_item.setFlags(samples_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self.table.setItem(row, self.SAMPLES_COL, samples_item)
-
-    def _row_of_action_button(self, button):
-        if button is None:
-            return -1
-        cell = button.parent()
-        for r in range(self.table.rowCount()):
-            if self.table.cellWidget(r, self.ACTIONS_COL) is cell:
-                return r
-        return -1
-
-    def _on_record_clicked(self):
-        row = self._row_of_action_button(self.sender())
-        if row < 0:
-            return
-        cs_item = self.table.item(row, 0)
-        name_item = self.table.item(row, 1)
-        callsign = cs_item.text().strip().upper() if cs_item else ""
-        name = name_item.text().strip() if name_item else ""
-        if not callsign or callsign == "ALL":
-            QMessageBox.warning(self, "Record Voice", "Pick a valid callsign first.")
-            return
-        if self.record_fn is None:
-            QMessageBox.warning(self, "Record Voice", "Voice recording is unavailable.")
-            return
-        if self.record_fn(callsign, name):
-            self._refresh_samples_cell(row)
-
-    def _on_reset_clicked(self):
-        row = self._row_of_action_button(self.sender())
-        if row < 0:
-            return
-        cs_item = self.table.item(row, 0)
-        name_item = self.table.item(row, 1)
-        callsign = cs_item.text().strip().upper() if cs_item else ""
-        name = name_item.text().strip() if name_item else ""
-        if not callsign or callsign == "ALL" or self.voiceprint_store is None:
-            return
-        n = self.voiceprint_store.sample_count(callsign, name)
-        display = f"{callsign} ({name})" if name else callsign
-        if n == 0:
-            QMessageBox.information(self, "Reset Voiceprint",
-                                    f"No voice samples enrolled for {display}.")
-            return
-        reply = QMessageBox.question(
-            self, "Reset Voiceprint",
-            f"Delete all {n} voice sample{'s' if n != 1 else ''} for {display}?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            self.voiceprint_store.reset_contact(callsign, name)
-            self._refresh_samples_cell(row)
 
     def add_row(self):
         row_pos = self.table.rowCount()
@@ -842,7 +677,6 @@ class ContactsDialog(QDialog):
         self.table.setItem(row_pos, 0, QTableWidgetItem("NEW_CALL"))
         self.table.setItem(row_pos, 1, QTableWidgetItem("New Name"))
         self.table.setItem(row_pos, 2, QTableWidgetItem(""))
-        self._install_voice_widgets(row_pos)
 
     def remove_row(self):
         selected = self.table.currentRow()
@@ -910,13 +744,6 @@ class MainWindow(QMainWindow):
         self.pending_buttons = {}  # callsign -> QPushButton
         self.ptt = make_ptt(self.config)
 
-        try:
-            self.voiceprint_store = VoiceprintStore()
-        except Exception as e:
-            print(f"voiceprint store init failed: {e}")
-            self.voiceprint_store = None
-        self.unknown_clusterer = UnknownClusterer()
-
         self.init_ui()
         self.update_header()
         self.populate_target_dropdown()
@@ -959,10 +786,8 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.header_label)
 
         # 2. Main Chat Room (Rx Section)
-        self.chat_display = QTextBrowser(self)
-        self.chat_display.setOpenLinks(False)
-        self.chat_display.setOpenExternalLinks(False)
-        self.chat_display.anchorClicked.connect(self._on_chat_anchor_clicked)
+        self.chat_display = QTextEdit(self)
+        self.chat_display.setReadOnly(True)
         self.chat_display.setStyleSheet("font-size: 14px; padding: 5px;")
         main_layout.addWidget(self.chat_display)
 
@@ -1043,7 +868,6 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             old_device = self.config.get("input_device", -1)
             old_threshold = self.config.get("vad_threshold", 0.5)
-            old_speaker_id = self.config.get("speaker_id_enabled", True)
             old_ptt = (
                 self.config.get("ptt_mode", "manual"),
                 self.config.get("ptt_serial_port", ""),
@@ -1055,7 +879,6 @@ class MainWindow(QMainWindow):
             stt_settings_changed = (
                 old_device != self.config.get("input_device", -1)
                 or old_threshold != self.config.get("vad_threshold", 0.5)
-                or old_speaker_id != self.config.get("speaker_id_enabled", True)
             )
             if stt_settings_changed and self.listen_btn.isChecked():
                 self.stop_stt()
@@ -1073,119 +896,11 @@ class MainWindow(QMainWindow):
                 self.ptt = make_ptt(self.config)
 
     def open_contacts_dialog(self):
-        dlg = ContactsDialog(
-            self.contacts,
-            voiceprint_store=self.voiceprint_store,
-            record_fn=self.record_voice_sample,
-            parent=self,
-        )
+        dlg = ContactsDialog(self.contacts, parent=self)
         if dlg.exec():
             self.contacts = dlg.get_contacts()
             save_json(CONTACTS_FILE, self.contacts)
             self.populate_target_dropdown()
-
-    def record_voice_sample(self, callsign, name):
-        """Manual enrollment path: stop STT (the input device is exclusive on most
-        backends), record ~5 s through the configured input, run the same
-        bandpass+denoise the live pipeline uses so enrollment and recognition see
-        the same conditions, embed, and enroll. Returns True on success.
-
-        `name` distinguishes operators on a shared family callsign — each
-        (callsign, name) gets its own voiceprint bank."""
-        if self.voiceprint_store is None:
-            QMessageBox.warning(self, "Record Voice", "Voiceprint store unavailable.")
-            return False
-
-        duration_s = 5.0
-        sr = 16000
-        input_device = self.config.get("input_device", -1)
-        device = None if input_device in (None, -1) else input_device
-
-        display_label = f"{callsign} ({name})" if name else callsign
-        reply = QMessageBox.question(
-            self,
-            f"Record voice sample: {display_label}",
-            f"Speak clearly for ~{duration_s:.0f} seconds after clicking OK.\n\n"
-            f"For best matching on-air, feed your radio's RX audio into the same "
-            f"input device you use for listening — the sample passes through the "
-            f"same bandpass + denoise pipeline as live transcription.",
-            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
-        )
-        if reply != QMessageBox.StandardButton.Ok:
-            return False
-
-        was_listening = self.stt_worker is not None and self.stt_worker.isRunning()
-        if was_listening:
-            self.stop_stt()
-
-        try:
-            self.statusBar().showMessage(f"Recording {callsign}...")
-            QApplication.processEvents()
-            audio = sd.rec(
-                int(duration_s * sr),
-                samplerate=sr,
-                channels=1,
-                dtype='float32',
-                device=device,
-            )
-            sd.wait()
-            audio = audio[:, 0].copy()
-        except Exception as e:
-            QMessageBox.warning(self, "Record Voice", f"Recording failed: {e}")
-            if was_listening:
-                self._restart_listen()
-            return False
-
-        try:
-            from scipy.signal import butter, sosfiltfilt
-            import noisereduce as nr
-            nyquist = sr / 2
-            sos = butter(
-                4,
-                [STTWorker.BANDPASS_LOW_HZ / nyquist, STTWorker.BANDPASS_HIGH_HZ / nyquist],
-                btype="band",
-                output="sos",
-            )
-            filtered = sosfiltfilt(sos, audio).astype(np.float32)
-            denoised = nr.reduce_noise(
-                y=filtered, sr=sr, prop_decrease=0.7
-            ).astype(np.float32)
-        except Exception as e:
-            QMessageBox.warning(self, "Record Voice", f"Signal processing failed: {e}")
-            if was_listening:
-                self._restart_listen()
-            return False
-
-        try:
-            embedder = SpeakerEmbedder()
-            if not embedder.load():
-                QMessageBox.warning(
-                    self, "Record Voice", f"Speaker model unavailable: {embedder.error}"
-                )
-                return False
-            emb = embedder.embed(denoised, sample_rate=sr)
-            if emb is None:
-                QMessageBox.warning(
-                    self, "Record Voice",
-                    "Could not compute speaker embedding from this sample.",
-                )
-                return False
-            self.voiceprint_store.enroll(callsign, name, emb, source="manual")
-            self.statusBar().showMessage(
-                f"Enrolled voice sample for {display_label}", 5000
-            )
-            return True
-        finally:
-            if was_listening:
-                self._restart_listen()
-
-    def _restart_listen(self):
-        """Re-enter listen mode after a manual recording. Keeps the button state
-        in sync without firing toggle_listening twice."""
-        if not self.listen_btn.isChecked():
-            self.listen_btn.setChecked(True)
-        else:
-            self.start_stt()
 
     def transmit_message(self):
         """Handles when the user attempts to send a message."""
@@ -1378,12 +1093,10 @@ class MainWindow(QMainWindow):
     def start_stt(self):
         if self.stt_worker and self.stt_worker.isRunning():
             return
-        self.unknown_clusterer.reset()
         self.stt_worker = STTWorker(
             input_device=self.config.get("input_device", -1),
             whisper_model=self.config.get("whisper_model", "small.en"),
             vad_threshold=self.config.get("vad_threshold", 0.5),
-            speaker_id_enabled=bool(self.config.get("speaker_id_enabled", True)),
             parent=self,
         )
         self.stt_worker.transcribed.connect(self.on_transcription)
@@ -1408,212 +1121,10 @@ class MainWindow(QMainWindow):
             worker.deleteLater()
         self.listen_btn.setText("Listen")
 
-    def on_transcription(self, payload):
-        # Back-compat: tolerate a plain-string payload from older signal shapes.
-        utt = payload if isinstance(payload, RxUtterance) else RxUtterance(
-            text=str(payload), duration_seconds=0.0, embedding=None
-        )
-
-        speaker_enabled = bool(self.config.get("speaker_id_enabled", True))
-        if not speaker_enabled or self.voiceprint_store is None:
-            ts = datetime.datetime.now().strftime("%H:%M:%S")
-            self.append_to_chat(f"<b>[RX {ts}]:</b> {utt.text}", color="green")
-            self.scan_for_unknown_stations(utt.text)
-            return
-
-        self_id = self._self_id_callsign(utt.text)
-        match = self._identify_speaker(utt, self_id)
-        enrollment = self._auto_enroll(utt, match, self_id)
-        self._render_rx_line(utt, match, enrollment)
-        self.scan_for_unknown_stations(utt.text)
-
-    def _self_id_callsign(self, text):
-        """First known-contact callsign mentioned in the transcript, or None.
-        Used as a ground-truth speaker signal that overrides centroid matching
-        and protects against poisoning a print on a wrong-but-confident match."""
-        known = {
-            c.get("callsign", "").upper()
-            for c in self.contacts
-            if c.get("callsign", "").upper() not in ("", "ALL")
-        }
-        for cs in detect_callsigns(text):
-            if cs in known:
-                return cs
-        return None
-
-    def _identify_speaker(self, utt, self_id):
-        if self_id is not None:
-            cs, nm = self._disambiguate_self_id(self_id, utt.embedding)
-            return SpeakerMatch(
-                label=cs, score=1.0, kind="confident",
-                callsign=cs, name=(nm if nm is not None else ""),
-            )
-        if utt.embedding is None:
-            return SpeakerMatch(label="?", score=0.0, kind="unknown")
-        confident_thr = float(self.config.get("speaker_match_threshold", 0.75))
-        tentative_thr = float(self.config.get("speaker_tentative_threshold", 0.65))
-        best = self.voiceprint_store.best_match(utt.embedding)
-        if best is not None:
-            callsign, name, score = best
-            if score >= confident_thr:
-                return SpeakerMatch(
-                    label=callsign, score=score, kind="confident",
-                    callsign=callsign, name=name,
-                )
-            if score >= tentative_thr:
-                return SpeakerMatch(
-                    label=f"{callsign}?", score=score, kind="tentative",
-                    callsign=callsign, name=name,
-                )
-        cluster_label, cluster_score = self.unknown_clusterer.assign(utt.embedding)
-        return SpeakerMatch(
-            label=cluster_label, score=cluster_score, kind="cluster",
-            cluster_label=cluster_label,
-        )
-
-    def _disambiguate_self_id(self, callsign, embedding):
-        """Decide which family-member operator a self-ID callsign refers to.
-        Returns (callsign, name) when we have an answer, or (callsign, None)
-        when multiple family members share the callsign and we can't tell —
-        callers should treat `name is None` as 'ambiguous' (display falls
-        back to bare callsign; auto-enroll refuses to write)."""
-        matches = [
-            c for c in self.contacts
-            if c.get("callsign", "").upper() == callsign
-            and c.get("callsign", "").upper() != "ALL"
-        ]
-        if len(matches) == 1:
-            return callsign, (matches[0].get("name", "") or "")
-        if not matches:
-            return callsign, ""
-        if self.voiceprint_store is not None and embedding is not None:
-            best = self.voiceprint_store.best_match(embedding, callsign_filter=callsign)
-            if best is not None:
-                confident_thr = float(self.config.get("speaker_match_threshold", 0.75))
-                if best[2] >= confident_thr:
-                    return best[0], (best[1] or "")
-        return callsign, None
-
-    def _auto_enroll(self, utt, match, self_id):
-        """Aggressive enrollment policy. Self-ID wins over centroid match, but
-        only when we can pin the self-ID to a specific family member — otherwise
-        we'd poison the wrong person's print."""
-        if utt.embedding is None or self.voiceprint_store is None:
-            return None
-        if self_id is not None:
-            target_call, target_name = self._disambiguate_self_id(self_id, utt.embedding)
-            if target_name is None:
-                return None
-        elif match.kind == "confident" and match.callsign:
-            target_call = match.callsign
-            target_name = match.name or ""
-        else:
-            return None
-        emb_id = self.voiceprint_store.enroll(
-            target_call, target_name, utt.embedding, source="auto"
-        )
-        return (target_call, target_name, emb_id)
-
-    def _render_rx_line(self, utt, match, enrollment):
-        from urllib.parse import quote
+    def on_transcription(self, text):
         ts = datetime.datetime.now().strftime("%H:%M:%S")
-        if match.kind == "confident":
-            name = match.name or ""
-            tag = f"{match.callsign} {name}".strip() if name else match.callsign
-        elif match.kind == "tentative":
-            name = match.name or ""
-            tag = f"{match.callsign}? {name}?" if name else f"{match.callsign}?"
-        elif match.kind == "cluster":
-            label = match.cluster_label or match.label
-            tag = (
-                f"&middot; <a href='bind:{label}' "
-                f"style='color:#1a73e8; text-decoration:none;'>{label}</a>"
-            )
-        else:
-            tag = "&middot; ?"
-
-        head = f"<b>[RX {ts} {tag}]:</b>"
-        suffix = ""
-        if enrollment is not None:
-            cs, op_name, emb_id = enrollment
-            suffix = (
-                f" <a href='undo:{cs}:{quote(op_name)}:{emb_id}' "
-                f"style='color:#888; font-size:11px; text-decoration:none;'>[undo]</a>"
-            )
-        html = f"<span style='color:green;'>{head} {utt.text}{suffix}</span>"
-        self.chat_display.append(html)
-
-    def _on_chat_anchor_clicked(self, url):
-        from urllib.parse import unquote
-        s = url.toString()
-        if s.startswith("undo:"):
-            # Format: undo:CALLSIGN:NAME_urlencoded:emb_id
-            parts = s.split(":", 3)
-            if len(parts) != 4:
-                return
-            try:
-                _, callsign, name_encoded, emb_id_s = parts
-                op_name = unquote(name_encoded)
-                emb_id = int(emb_id_s)
-            except ValueError:
-                return
-            if self.voiceprint_store and self.voiceprint_store.unenroll(callsign, op_name, emb_id):
-                display = f"{callsign} ({op_name})" if op_name else callsign
-                self.statusBar().showMessage(
-                    f"Removed auto-enrolled voice sample for {display}", 4000
-                )
-            else:
-                self.statusBar().showMessage("Voice sample already removed", 3000)
-        elif s.startswith("bind:"):
-            self._bind_cluster(s[len("bind:"):])
-
-    def _bind_cluster(self, cluster_label):
-        samples = self.unknown_clusterer.samples_for(cluster_label)
-        if not samples:
-            QMessageBox.information(
-                self, "Bind Voice",
-                f"{cluster_label} is no longer available — it may already have been bound.",
-            )
-            return
-        bindable = [
-            c for c in self.contacts
-            if c.get("callsign", "").upper() not in ("", "ALL")
-        ]
-        if not bindable:
-            QMessageBox.warning(
-                self, "Bind Voice",
-                "No contacts to bind to. Add one in Settings -> Contacts first.",
-            )
-            return
-        # Callsigns can repeat in contacts (a family shares one GMRS callsign), so
-        # show the operator name alongside the call to disambiguate at bind time.
-        def _display(c):
-            cs = c.get("callsign", "")
-            name = c.get("name", "")
-            return f"{cs} — {name}" if name else cs
-        options = [_display(c) for c in bindable]
-        choice, ok = QInputDialog.getItem(
-            self, "Bind Voice",
-            f"Attach {cluster_label} to which contact?",
-            options, 0, False,
-        )
-        if not ok or not choice:
-            return
-        try:
-            idx = options.index(choice)
-        except ValueError:
-            return
-        picked = bindable[idx]
-        cs = picked.get("callsign", "")
-        name = picked.get("name", "")
-        self.unknown_clusterer.pop_cluster(cluster_label)
-        if self.voiceprint_store is not None:
-            for sample in samples:
-                self.voiceprint_store.enroll(cs, name, sample, source="manual")
-        display_label = f"{cs} ({name})" if name else cs
-        self.statusBar().showMessage(
-            f"Bound {cluster_label} → {display_label} ({len(samples)} samples)", 5000
-        )
+        self.append_to_chat(f"<b>[RX {ts}]:</b> {text}", color="green")
+        self.scan_for_unknown_stations(text)
 
     def scan_for_unknown_stations(self, text):
         my_call = self.config.get("callsign", "").upper()

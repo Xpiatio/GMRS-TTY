@@ -9,8 +9,5 @@
     "vad_threshold": 0.5,
     "ptt_mode": "manual",
     "ptt_serial_port": "",
-    "ptt_serial_line": "RTS",
-    "speaker_id_enabled": true,
-    "speaker_match_threshold": 0.75,
-    "speaker_tentative_threshold": 0.65
+    "ptt_serial_line": "RTS"
 }

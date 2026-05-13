@@ -34,7 +34,7 @@ Status legend: ✅ complete · ⏳ pending
 *   **Tasks:**
     *   ✅ Auto-scrolling chat view (`QTextBrowser` append).
     *   ✅ 15-minute callsign rule resets on every transmission that contains a callsign (prefaced TX, standalone "This is" button, or auto-ID injection).
-    *   ✅ Hot-reload: Configuration dialog changes to input device / VAD threshold / speaker-ID enable restart the listener automatically; PTT mode/port/line reopen the PTT backend.
+    *   ✅ Hot-reload: Configuration dialog changes to input device or VAD threshold restart the listener automatically; PTT mode/port/line reopen the PTT backend.
     *   ✅ Input and Output device pickers in Configuration (separate, with system-default option).
 
 ## Stage 5: Hardware Hooks Readiness — ✅ complete
@@ -48,33 +48,19 @@ Status legend: ✅ complete · ⏳ pending
 ## Stage 6: Off-Grid Model Bundling — ✅ complete
 *   **Goal:** Eliminate all runtime network dependencies so the application can run on a fresh, air-gapped install (per spec §5.1).
 *   **Implemented (deviation from original plan):**
-    *   ✅ One-shot `bootstrap_models.py` fetches Whisper (`Models/STT/<variant>/`) and ECAPA-TDNN (`Models/Speaker/ecapa-tdnn/`) via `huggingface_hub.snapshot_download` on an internet-connected machine. The resulting `Models/` tree is portable to air-gapped targets.
-    *   ✅ `WhisperModel(...)` loads from the local path; `HF_HUB_OFFLINE=1` is set before SpeechBrain imports so the speaker model never touches the network at runtime.
+    *   ✅ One-shot `bootstrap_models.py` fetches the Whisper model (`Models/STT/<variant>/`) via `huggingface_hub.snapshot_download` on an internet-connected machine. The resulting `Models/` tree is portable to air-gapped targets.
+    *   ✅ `WhisperModel(...)` loads from the local path; the app never touches the network at runtime.
     *   ✅ Silero VAD ships as ONNX inside the `silero-vad` wheel — already local; no separate vendoring needed. Piper voices remain local in `Voices/`.
-    *   ✅ Startup self-check: missing Whisper directory shows a clear chat message at boot; the listener fails fast with an actionable error if a `Listen` is attempted without the model present. Missing speaker model degrades gracefully (listening continues without speaker tagging).
+    *   ✅ Startup self-check: missing Whisper directory shows a clear chat message at boot; the listener fails fast with an actionable error if a `Listen` is attempted without the model present.
     *   ✅ Offline install procedure documented in `README.md` (bootstrap on a connected machine, copy `Models/` to the offline target).
 *   **Not implemented:** vendoring the model binaries directly into the repo (deliberately avoided — they're large and license-heterogeneous; the bootstrap script is the chosen alternative).
-
-## Stage 6.5: Speaker Identification — ✅ complete (added beyond the original plan)
-*   **Goal:** Tag RX lines with the speaker so a noisy multi-station net stays followable for a deaf operator.
-*   **Tasks:**
-    *   ✅ ECAPA-TDNN embedder (SpeechBrain, 192-dim, L2-normalized).
-    *   ✅ Per-operator voiceprint store keyed by `(callsign, name)` — `voiceprints/{CALLSIGN}__{NAME}.npz` per operator with original-case identity recorded in the sidecar `.meta.json`, capped at 50 samples per operator. A single GMRS family callsign therefore yields a separate print per family member instead of one merged centroid.
-    *   ✅ Confident / tentative / cluster / unknown match policy with configurable cosine thresholds (defaults 0.75 / 0.65; cluster threshold 0.70).
-    *   ✅ Aggressive auto-enrollment on confident matches with inline `[undo]` link in the chat — undo encodes the full `(callsign, name, emb_id)` so removal targets the right family member's bank.
-    *   ✅ Self-ID-wins-over-centroid anti-poisoning with family-member disambiguation: when a transcript self-IDs with a callsign shared by multiple contacts, the embedding is voted against the existing prints filtered to that callsign; if no print scores above the confident threshold the line is left un-enrolled rather than guessing the wrong operator.
-    *   ✅ Session-scoped unknown-voice clusterer assigning `Voice A`, `Voice B`, ... labels; clickable cluster labels open a bind-to-contact dialog that lists `CALLSIGN — Name` per contact and enrolls the cluster's samples into the picked operator's per-`(callsign, name)` bank.
-    *   ✅ Manual enrollment via per-row `Record` button in the Contacts dialog (5 s capture through the same bandpass + denoise as live RX), writing into that row's per-operator bank.
-    *   ✅ Per-row Voiceprint column shows sample count + last-enrolled date for the row's specific `(callsign, name)`, so each family member sees their own progress.
-    *   ✅ Legacy single-callsign `voiceprints/{CALLSIGN}.npz` files from earlier versions are loaded as the unnamed operator under that callsign; new enrollments always write to the per-operator path.
-    *   ✅ Pending-stations bar with one-click `+ Add` for callsigns detected in RX but not yet in the contact list. Supports compact, spaced, separator, and NATO-phonetic callsign forms; pre-fills name/location heuristics.
 
 ## Stage 7: Cross-Platform Packaging & Distribution — ⏳ pending
 *   **Goal:** Produce installable artifacts for Windows, Linux, and Raspberry Pi (per spec §5.2).
 *   **Tasks:**
     *   ⏳ Verify `sounddevice` / PortAudio works on Pi (ALSA), Linux desktop (PulseAudio / PipeWire), and Windows (WASAPI). Note device-enumeration quirks per platform in `README.md`.
-    *   ⏳ Resolve platform-specific Python dependency issues (PySide6 wheels on ARM64, CTranslate2 ARM wheels, ONNX Runtime ARM wheels, torch/torchaudio ARM wheels for SpeechBrain). Pin versions in `requirements.txt` to known-good combinations.
-    *   ⏳ Benchmark STT + ECAPA latency on Raspberry Pi 4 / Pi 5 using bundled `small.en` int8. If unusable, fall back to `base.en` or `tiny.en` (already exposed via the `whisper_model` config key) and consider gating speaker ID behind the config toggle by default on Pi.
+    *   ⏳ Resolve platform-specific Python dependency issues (PySide6 wheels on ARM64, CTranslate2 ARM wheels, ONNX Runtime ARM wheels). Pin versions in `requirements.txt` to known-good combinations.
+    *   ⏳ Benchmark STT latency on Raspberry Pi 4 / Pi 5 using bundled `small.en` int8. If unusable, fall back to `base.en` or `tiny.en` (already exposed via the `whisper_model` config key).
     *   ⏳ Package portable artifacts:
         *   Linux/Pi: tarball or `.deb` that bundles a Python venv, all wheels, and the `Models/` and `Voices/` directories.
         *   Windows: PyInstaller (or similar) one-folder distribution including the same bundled models.
@@ -90,8 +76,8 @@ Status legend: ✅ complete · ⏳ pending
         *   Audio I/O: PulseAudio socket mount (`/run/user/$UID/pulse`) or ALSA device passthrough (`--device /dev/snd`).
         *   Display: X11 socket mount (`/tmp/.X11-unix`) plus `DISPLAY` env, with a Wayland note for users on `wlroots`/GNOME.
         *   USB passthrough: `/dev/ttyUSB*` (for serial PTT) and USB sound cards (Signalink/Digirig).
-        *   Persistent volumes: `config.json`, `contacts.json`, `voiceprints/`, and the `Voices/` directory mounted from host so user state survives image upgrades.
-    *   ⏳ Verify air-gapped operation: run the image on a host with networking disabled and confirm full STT/TTS/UI/Speaker-ID functionality end-to-end.
+        *   Persistent volumes: `config.json`, `contacts.json`, and the `Voices/` directory mounted from host so user state survives image upgrades.
+    *   ⏳ Verify air-gapped operation: run the image on a host with networking disabled and confirm full STT/TTS/UI functionality end-to-end.
 
 ## Stage 9: Future Hardware — ⏳ pending
 *   **Goal:** Broaden the radio-interface options past serial PTT.
