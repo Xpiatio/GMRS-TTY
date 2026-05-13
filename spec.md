@@ -6,3 +6,22 @@ When sending messages, add the user's call sign and name to the end of the messa
 Since we don't have have a radio hooked up yet, I want to be able to trigger my laptops mic to simulate incoming audio from the radio.  When sending a message I want to be able hear the message through my laptop speakers.
 
 We need to follow FCC rules for GMRS.
+
+---
+
+## Features built on top of the original brief
+
+The shipped app has grown past this initial statement. The following capabilities are now part of the product (see `technical_spec.md` for the detailed spec and `README.md` for user-facing docs):
+
+- **Fully offline operation** — no runtime network access; STT, VAD, TTS, and speaker models are pre-staged via `bootstrap_models.py` and loaded from `Models/` and `Voices/`. The app never attempts to download anything.
+- **Voice activity detection (Silero VAD)** — only transcribes when a human is speaking; ignores static and kerchunks. VAD threshold is tunable.
+- **Narrowband-FM audio preprocessing** — 300–3000 Hz bandpass + spectral-gating noise reduction applied per utterance before STT and before speaker embedding.
+- **Auto-pause during TX** — STT pauses while the app is transmitting so the TTS isn't transcribed back.
+- **Speaker identification (ECAPA-TDNN)** — each RX utterance is embedded and matched against per-contact voiceprints; RX lines are tagged with the matched callsign + name (or with a session-anonymous "Voice A/B/..." label for unknown speakers). Includes aggressive auto-enrollment with `[undo]`, self-ID-wins-over-centroid anti-poisoning, manual Record/Reset per contact, and configurable confident/tentative thresholds.
+- **PTT control (real hardware)** — Manual / VOX / USB FTDI–Serial (RTS or DTR) modes with lead-in/tail silence padding. The app keys the radio around TTS playback.
+- **Voice preview** in the Configuration dialog.
+- **Output device picker** — separate from the input device so TTS audio can be routed to a USB sound card / Signalink / Digirig channel feeding the radio.
+- **NATO phonetic & digit readout for callsigns** — TTS spells callsign digits one at a time; the standalone ID button reads the call letters in NATO phonetic ("Whiskey Sierra Lima Zulu 2 3 3").
+- **Standalone "This is" ID button** — one-click station ID that also resets the 15-minute ID timer.
+- **Pending stations bar** — one-click `+ Add` pills for callsigns detected on RX that aren't yet in your contact list. Supports compact (`WSLZ233`), spaced (`W S L Z 2 3 3`), separator (`WSLZ-233`, `WSLZ.233`), and NATO-phonetic forms.
+- **Cross-platform target list** — Raspberry Pi, Linux desktop, Windows. Multi-arch Docker image planned.

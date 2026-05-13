@@ -51,6 +51,7 @@ class SpeakerMatch:
     score: float        # cosine similarity to the chosen centroid (or 0.0)
     kind: str           # "confident" | "tentative" | "cluster" | "unknown"
     callsign: Optional[str] = None  # set when kind in {"confident","tentative"}
+    name: Optional[str] = None  # operator name (distinguishes family members on shared callsigns)
     cluster_label: Optional[str] = None  # set when kind == "cluster"
 
 
@@ -125,12 +126,18 @@ class SpeakerEmbedder:
 
 
 class VoiceprintStore:
-    """Per-callsign embedding bank backed by voiceprints/{CALLSIGN}.npz files.
+    """Per-operator embedding bank backed by voiceprints/{KEY}.npz files.
 
-    Each file holds an embeddings array of shape (N, EMBED_DIM) and a parallel
-    ids array of shape (N,) — ids are monotonic per-callsign so we can unenroll
-    a specific sample (used by the auto-enroll undo ring). A sidecar
-    .meta.json records last-enrolled / source for the Contacts dialog."""
+    A single GMRS callsign can be shared by every member of a family, so the
+    operator identity is `(callsign, name)` rather than callsign alone. The
+    on-disk key is `{CALLSIGN}__{NAME_SAFE}` (or bare `{CALLSIGN}` when the
+    name is empty, which also matches the pre-multi-operator filename layout);
+    the original-case (callsign, name) is recorded in the sidecar .meta.json
+    so the chat tag and Contacts dialog show the operator the user typed.
+
+    Each .npz holds an embeddings array of shape (N, EMBED_DIM) and a parallel
+    ids array of shape (N,) — ids are monotonic per-operator so we can unenroll
+    a specific sample (used by the auto-enroll undo ring)."""
 
     def __init__(self, directory: str = VOICEPRINTS_DIR):
         self.dir = directory
@@ -139,15 +146,37 @@ class VoiceprintStore:
         self._ids: dict[str, np.ndarray] = {}
         self._next_id: dict[str, int] = {}
         self._centroids: dict[str, np.ndarray] = {}
+        # key -> (callsign, name) in original case for display
+        self._identity: dict[str, tuple[str, str]] = {}
         self._meta: dict = {}
         self._lock = threading.Lock()
         self._load_all()
 
+    @staticmethod
+    def _key(callsign: str, name: str) -> str:
+        cs = (callsign or "").upper().strip()
+        nm = (name or "").strip()
+        if not nm:
+            return cs
+        safe = "".join(ch if ch.isalnum() else "_" for ch in nm).upper()
+        return f"{cs}__{safe}"
+
+    @staticmethod
+    def _parse_legacy_key(key: str) -> tuple[str, str]:
+        """Best-effort (callsign, name) from a filename-derived key for .npz
+        files that predate meta-tracked identities."""
+        if "__" in key:
+            cs, _safe = key.split("__", 1)
+            # We can't recover original case; leave name empty so callers see
+            # this as a generic entry until it's re-enrolled with a real name.
+            return cs.upper(), ""
+        return key.upper(), ""
+
     def _meta_path(self) -> str:
         return os.path.join(self.dir, ".meta.json")
 
-    def _file_path(self, callsign: str) -> str:
-        return os.path.join(self.dir, f"{callsign.upper()}.npz")
+    def _file_path(self, key: str) -> str:
+        return os.path.join(self.dir, f"{key}.npz")
 
     def _load_all(self):
         try:
@@ -163,36 +192,42 @@ class VoiceprintStore:
             entries = os.listdir(self.dir)
         except FileNotFoundError:
             return
-        for name in entries:
-            if not name.endswith(".npz") or name.startswith("."):
+        for fname in entries:
+            if not fname.endswith(".npz") or fname.startswith("."):
                 continue
-            callsign = name[: -len(".npz")].upper()
+            key = fname[: -len(".npz")]
             try:
-                data = np.load(self._file_path(callsign))
+                data = np.load(self._file_path(key))
                 emb = data["embeddings"].astype(np.float32)
                 ids = data["ids"].astype(np.int64)
                 if emb.ndim != 2 or emb.shape[1] != EMBED_DIM or len(emb) != len(ids):
-                    print(f"voiceprints: {name} shape mismatch, skipping")
+                    print(f"voiceprints: {fname} shape mismatch, skipping")
                     continue
-                self._embeddings[callsign] = emb
-                self._ids[callsign] = ids
-                self._next_id[callsign] = int(ids.max()) + 1 if len(ids) else 1
-                self._recompute_centroid(callsign)
+                self._embeddings[key] = emb
+                self._ids[key] = ids
+                self._next_id[key] = int(ids.max()) + 1 if len(ids) else 1
+                self._recompute_centroid(key)
+                meta_entry = self._meta.get(key, {})
+                cs = meta_entry.get("callsign")
+                nm = meta_entry.get("name")
+                if cs is None or nm is None:
+                    cs, nm = self._parse_legacy_key(key)
+                self._identity[key] = (cs, nm)
             except Exception as e:
-                print(f"voiceprints: failed to load {name}: {e}")
+                print(f"voiceprints: failed to load {fname}: {e}")
 
-    def _recompute_centroid(self, callsign: str):
-        emb = self._embeddings.get(callsign)
+    def _recompute_centroid(self, key: str):
+        emb = self._embeddings.get(key)
         if emb is None or len(emb) == 0:
-            self._centroids.pop(callsign, None)
+            self._centroids.pop(key, None)
             return
-        self._centroids[callsign] = _l2_normalize(emb.mean(axis=0))
+        self._centroids[key] = _l2_normalize(emb.mean(axis=0))
 
-    def _save_callsign(self, callsign: str):
+    def _save_key(self, key: str):
         np.savez(
-            self._file_path(callsign),
-            embeddings=self._embeddings[callsign],
-            ids=self._ids[callsign],
+            self._file_path(key),
+            embeddings=self._embeddings[key],
+            ids=self._ids[key],
         )
 
     def _save_meta(self):
@@ -202,60 +237,67 @@ class VoiceprintStore:
         except Exception as e:
             print(f"voiceprints: meta save failed: {e}")
 
-    def enroll(self, callsign: str, embedding: np.ndarray, source: str = "auto") -> int:
-        cs = callsign.upper()
+    def enroll(self, callsign: str, name: str, embedding: np.ndarray,
+               source: str = "auto") -> int:
+        key = self._key(callsign, name)
+        cs = (callsign or "").upper().strip()
+        nm = (name or "").strip()
         v = _l2_normalize(embedding.astype(np.float32)).reshape(1, EMBED_DIM)
         with self._lock:
-            if cs not in self._embeddings:
-                self._embeddings[cs] = np.zeros((0, EMBED_DIM), dtype=np.float32)
-                self._ids[cs] = np.zeros((0,), dtype=np.int64)
-                self._next_id[cs] = 1
-            emb_id = self._next_id[cs]
-            self._next_id[cs] += 1
-            self._embeddings[cs] = np.concatenate([self._embeddings[cs], v])
-            self._ids[cs] = np.concatenate(
-                [self._ids[cs], np.array([emb_id], dtype=np.int64)]
+            if key not in self._embeddings:
+                self._embeddings[key] = np.zeros((0, EMBED_DIM), dtype=np.float32)
+                self._ids[key] = np.zeros((0,), dtype=np.int64)
+                self._next_id[key] = 1
+            emb_id = self._next_id[key]
+            self._next_id[key] += 1
+            self._embeddings[key] = np.concatenate([self._embeddings[key], v])
+            self._ids[key] = np.concatenate(
+                [self._ids[key], np.array([emb_id], dtype=np.int64)]
             )
-            if len(self._embeddings[cs]) > MAX_SAMPLES_PER_CONTACT:
-                excess = len(self._embeddings[cs]) - MAX_SAMPLES_PER_CONTACT
-                self._embeddings[cs] = self._embeddings[cs][excess:]
-                self._ids[cs] = self._ids[cs][excess:]
-            self._recompute_centroid(cs)
-            self._meta[cs] = {
-                "n_samples": int(len(self._embeddings[cs])),
+            if len(self._embeddings[key]) > MAX_SAMPLES_PER_CONTACT:
+                excess = len(self._embeddings[key]) - MAX_SAMPLES_PER_CONTACT
+                self._embeddings[key] = self._embeddings[key][excess:]
+                self._ids[key] = self._ids[key][excess:]
+            self._recompute_centroid(key)
+            self._identity[key] = (cs, nm)
+            self._meta[key] = {
+                "callsign": cs,
+                "name": nm,
+                "n_samples": int(len(self._embeddings[key])),
                 "last_enrolled": datetime.datetime.now().isoformat(timespec="seconds"),
                 "source": source,
             }
-            self._save_callsign(cs)
+            self._save_key(key)
             self._save_meta()
         return emb_id
 
-    def unenroll(self, callsign: str, emb_id: int) -> bool:
-        cs = callsign.upper()
+    def unenroll(self, callsign: str, name: str, emb_id: int) -> bool:
+        key = self._key(callsign, name)
         with self._lock:
-            if cs not in self._ids:
+            if key not in self._ids:
                 return False
-            mask = self._ids[cs] != emb_id
+            mask = self._ids[key] != emb_id
             if mask.all():
                 return False
-            self._embeddings[cs] = self._embeddings[cs][mask]
-            self._ids[cs] = self._ids[cs][mask]
-            self._recompute_centroid(cs)
-            if cs in self._meta:
-                self._meta[cs]["n_samples"] = int(len(self._embeddings[cs]))
-            self._save_callsign(cs)
+            self._embeddings[key] = self._embeddings[key][mask]
+            self._ids[key] = self._ids[key][mask]
+            self._recompute_centroid(key)
+            if key in self._meta:
+                self._meta[key]["n_samples"] = int(len(self._embeddings[key]))
+            self._save_key(key)
             self._save_meta()
             return True
 
-    def reset_contact(self, callsign: str):
-        cs = callsign.upper()
+    def reset_contact(self, callsign: str, name: str):
+        key = self._key(callsign, name)
         with self._lock:
-            self._embeddings.pop(cs, None)
-            self._ids.pop(cs, None)
-            self._next_id.pop(cs, None)
-            self._centroids.pop(cs, None)
-            self._meta.pop(cs, None)
-            path = self._file_path(cs)
+            self._embeddings.pop(key, None)
+            self._ids.pop(key, None)
+            self._next_id.pop(key, None)
+            self._centroids.pop(key, None)
+            self._identity.pop(key, None)
+            self._meta.pop(key, None)
+            path = self._file_path(key)
             if os.path.exists(path):
                 try:
                     os.remove(path)
@@ -263,30 +305,46 @@ class VoiceprintStore:
                     pass
             self._save_meta()
 
-    def best_match(self, embedding: np.ndarray) -> Optional[tuple[str, float]]:
+    def best_match(
+        self, embedding: np.ndarray, callsign_filter: Optional[str] = None,
+    ) -> Optional[tuple[str, str, float]]:
+        """Return (callsign, name, score) of the closest matching operator.
+
+        When `callsign_filter` is set, only prints whose callsign equals the
+        filter are considered — used to disambiguate which family member is on
+        the air when a transcript self-IDs with a shared callsign."""
         if embedding is None:
             return None
         q = _l2_normalize(embedding.astype(np.float32))
-        best_cs = None
+        filter_cs = (callsign_filter or "").upper().strip() if callsign_filter else None
+        best_key = None
         best_score = -1.0
         with self._lock:
-            for cs, centroid in self._centroids.items():
+            for key, centroid in self._centroids.items():
+                if filter_cs is not None:
+                    ident = self._identity.get(key)
+                    if ident is None or ident[0] != filter_cs:
+                        continue
                 score = float(np.dot(q, centroid))
                 if score > best_score:
                     best_score = score
-                    best_cs = cs
-        if best_cs is None:
-            return None
-        return best_cs, best_score
+                    best_key = key
+            if best_key is None:
+                return None
+            cs, nm = self._identity.get(best_key, (best_key, ""))
+        return cs, nm, best_score
 
-    def sample_count(self, callsign: str) -> int:
-        return int(len(self._embeddings.get(callsign.upper(), [])))
+    def sample_count(self, callsign: str, name: str) -> int:
+        key = self._key(callsign, name)
+        return int(len(self._embeddings.get(key, [])))
 
-    def meta(self, callsign: str) -> dict:
-        return dict(self._meta.get(callsign.upper(), {}))
+    def meta(self, callsign: str, name: str) -> dict:
+        key = self._key(callsign, name)
+        return dict(self._meta.get(key, {}))
 
-    def known_callsigns(self) -> list[str]:
-        return sorted(self._embeddings.keys())
+    def known_speakers(self) -> list[tuple[str, str]]:
+        with self._lock:
+            return sorted(self._identity.values())
 
 
 class UnknownClusterer:

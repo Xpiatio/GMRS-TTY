@@ -23,18 +23,21 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
   - **USB FTDI / Serial** — the app keys PTT through a USB-serial adapter's RTS or DTR line (drives an external transistor / opto on the radio's PTT pin). Adds short lead-in/tail silence so the radio's keying ramp doesn't clip the audio.
 - **FCC formatting** — automatically prepends `[Your call] [Your name] calling [Target]` when targeting a specific station.
 - **15-minute ID rule** — appends your callsign + name when more than 15 minutes have passed since last identification.
+- **Standalone "This is" ID button** — one-click station identification: `This is [CALL], [NATO phonetic CALL]. [name] from [location].` Resets the 15-minute ID timer.
+- **Spoken-callsign formatting** — TTS reads callsign digits one at a time (`WSLZ 2 3 3` rather than "two hundred thirty-three") so the receiver hears them as letters and digits, not numbers.
 - "All" target is transmitted as-is (no preface).
 
 ### Speaker identification
-- Each RX utterance is embedded with **ECAPA-TDNN** (SpeechBrain) and matched against per-contact voiceprints — RX lines are tagged with the matched callsign + name:
+- Each RX utterance is embedded with **ECAPA-TDNN** (SpeechBrain) and matched against per-operator voiceprints — RX lines are tagged with the matched callsign + name:
   - `[RX 14:32:01 WSLZ233 Jennifer]: copy that` — confident match (score ≥ 0.75 by default).
   - `[RX 14:32:01 WSLZ233? Jennifer?]: copy that` — tentative match (between the tentative and confident thresholds).
-  - `[RX 14:32:01 · Voice A]: copy that` — unknown voice; clustered into session-anonymous labels (Voice A, Voice B, …) so the conversation stays followable until someone IDs. Click the cluster label to bind it to a contact.
+  - `[RX 14:32:01 · Voice A]: copy that` — unknown voice; clustered into session-anonymous labels (Voice A, Voice B, …) so the conversation stays followable until someone IDs. Click the cluster label to bind it to a contact; the picker shows `CALLSIGN — Name` for every contact so you can pick the right family member when a callsign is shared.
   - `[RX 14:32:01 · ?]: copy that` — utterance too short (< 1.5 s) to embed reliably.
-- **Aggressive auto-enrollment** — every confident match attaches the new utterance to the contact's voiceprint, so it learns over time. Each auto-enrolled line carries an inline `[undo]` link in the chat. **Self-ID takes priority**: when the transcript contains a callsign that maps to a known contact, that callsign wins over the centroid match, so a wrong-but-confident match can't poison the print.
-- **Manual enrollment** — Contacts dialog has a Record button per row that captures ~5 s through the configured input device. Recording passes through the same bandpass + denoise as live transcription so enrollment and recognition see matched conditions.
+- **Per-operator voiceprints** — a single GMRS callsign is shared by everyone on a family license, so each `(callsign, name)` pair gets its own voiceprint bank. Jennifer's and Benjamin's `WSLZ233` prints stay separate, and the chat tag reflects who is actually speaking rather than just which radio is keyed.
+- **Aggressive auto-enrollment** — every confident match attaches the new utterance to the matched operator's voiceprint, so it learns over time. Each auto-enrolled line carries an inline `[undo]` link in the chat. **Self-ID takes priority**: when the transcript contains a callsign that maps to a known contact, that callsign wins over the centroid match. When multiple family members share that callsign, the embedding is voted against the existing family-member prints to pick the right one; if no family-member print scores above the confident threshold the line is left un-enrolled so a wrong guess can't poison a print.
+- **Manual enrollment** — Contacts dialog has a Record button per row that captures ~5 s through the configured input device. Recording passes through the same bandpass + denoise as live transcription so enrollment and recognition see matched conditions. Sample counts and last-enrolled dates in the Voiceprint column reflect that operator's bank specifically.
 - Match and tentative thresholds, plus an enable toggle, live in Configuration.
-- Voiceprints are stored offline in `voiceprints/{CALLSIGN}.npz` (per-contact, gitignored).
+- Voiceprints are stored offline in `voiceprints/{CALLSIGN}__{NAME}.npz` (per-operator, gitignored). Legacy single-callsign files (`{CALLSIGN}.npz`) from earlier versions are still read on load and treated as the unnamed operator under that callsign; new enrollments always write to the per-operator path.
 
 ### Contact discovery
 - Detects GMRS callsigns in incoming transcriptions:
@@ -129,6 +132,7 @@ python main.py
 - **Listen** button — toggles microphone capture and live transcription. Loads the bundled Whisper model from `Models/STT/<whisper_model>/` (no network); fails fast with a clear instruction if the model directory is missing.
 - **Target dropdown** — pick a callsign from your contacts, or "All" for general transmission.
 - **Message box + Transmit** — type and hit Enter (or click Transmit) to speak the message through Piper.
+- **"This is" button** — sits under the Transmit row; sends a standalone station ID without needing to type anything.
 - **Pending stations bar** (between chat and input) — yellow pill buttons appear when a new GMRS callsign is detected on RX. Hover for the detected name/location preview; click to open a prefilled "Add Station" dialog.
 
 ### Settings menu
