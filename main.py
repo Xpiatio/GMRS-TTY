@@ -768,13 +768,15 @@ class ContactsDialog(QDialog):
         self.table.setCellWidget(row, self.ACTIONS_COL, actions)
 
     def _refresh_samples_cell(self, row):
-        item = self.table.item(row, 0)
-        callsign = item.text().strip().upper() if item else ""
+        cs_item = self.table.item(row, 0)
+        name_item = self.table.item(row, 1)
+        callsign = cs_item.text().strip().upper() if cs_item else ""
+        name = name_item.text().strip() if name_item else ""
         text = ""
         if self.voiceprint_store and callsign and callsign != "ALL":
-            n = self.voiceprint_store.sample_count(callsign)
+            n = self.voiceprint_store.sample_count(callsign, name)
             if n > 0:
-                meta = self.voiceprint_store.meta(callsign)
+                meta = self.voiceprint_store.meta(callsign, name)
                 last = (meta.get("last_enrolled") or "")[:10]
                 text = f"{n} sample{'s' if n != 1 else ''}"
                 if last:
@@ -796,37 +798,42 @@ class ContactsDialog(QDialog):
         row = self._row_of_action_button(self.sender())
         if row < 0:
             return
-        item = self.table.item(row, 0)
-        callsign = item.text().strip().upper() if item else ""
+        cs_item = self.table.item(row, 0)
+        name_item = self.table.item(row, 1)
+        callsign = cs_item.text().strip().upper() if cs_item else ""
+        name = name_item.text().strip() if name_item else ""
         if not callsign or callsign == "ALL":
             QMessageBox.warning(self, "Record Voice", "Pick a valid callsign first.")
             return
         if self.record_fn is None:
             QMessageBox.warning(self, "Record Voice", "Voice recording is unavailable.")
             return
-        if self.record_fn(callsign):
+        if self.record_fn(callsign, name):
             self._refresh_samples_cell(row)
 
     def _on_reset_clicked(self):
         row = self._row_of_action_button(self.sender())
         if row < 0:
             return
-        item = self.table.item(row, 0)
-        callsign = item.text().strip().upper() if item else ""
+        cs_item = self.table.item(row, 0)
+        name_item = self.table.item(row, 1)
+        callsign = cs_item.text().strip().upper() if cs_item else ""
+        name = name_item.text().strip() if name_item else ""
         if not callsign or callsign == "ALL" or self.voiceprint_store is None:
             return
-        n = self.voiceprint_store.sample_count(callsign)
+        n = self.voiceprint_store.sample_count(callsign, name)
+        display = f"{callsign} ({name})" if name else callsign
         if n == 0:
             QMessageBox.information(self, "Reset Voiceprint",
-                                    f"No voice samples enrolled for {callsign}.")
+                                    f"No voice samples enrolled for {display}.")
             return
         reply = QMessageBox.question(
             self, "Reset Voiceprint",
-            f"Delete all {n} voice sample{'s' if n != 1 else ''} for {callsign}?",
+            f"Delete all {n} voice sample{'s' if n != 1 else ''} for {display}?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            self.voiceprint_store.reset_contact(callsign)
+            self.voiceprint_store.reset_contact(callsign, name)
             self._refresh_samples_cell(row)
 
     def add_row(self):
@@ -1077,11 +1084,14 @@ class MainWindow(QMainWindow):
             save_json(CONTACTS_FILE, self.contacts)
             self.populate_target_dropdown()
 
-    def record_voice_sample(self, callsign):
+    def record_voice_sample(self, callsign, name):
         """Manual enrollment path: stop STT (the input device is exclusive on most
         backends), record ~5 s through the configured input, run the same
         bandpass+denoise the live pipeline uses so enrollment and recognition see
-        the same conditions, embed, and enroll. Returns True on success."""
+        the same conditions, embed, and enroll. Returns True on success.
+
+        `name` distinguishes operators on a shared family callsign — each
+        (callsign, name) gets its own voiceprint bank."""
         if self.voiceprint_store is None:
             QMessageBox.warning(self, "Record Voice", "Voiceprint store unavailable.")
             return False
@@ -1091,9 +1101,10 @@ class MainWindow(QMainWindow):
         input_device = self.config.get("input_device", -1)
         device = None if input_device in (None, -1) else input_device
 
+        display_label = f"{callsign} ({name})" if name else callsign
         reply = QMessageBox.question(
             self,
-            f"Record voice sample: {callsign}",
+            f"Record voice sample: {display_label}",
             f"Speak clearly for ~{duration_s:.0f} seconds after clicking OK.\n\n"
             f"For best matching on-air, feed your radio's RX audio into the same "
             f"input device you use for listening — the sample passes through the "
@@ -1159,9 +1170,9 @@ class MainWindow(QMainWindow):
                     "Could not compute speaker embedding from this sample.",
                 )
                 return False
-            self.voiceprint_store.enroll(callsign, emb, source="manual")
+            self.voiceprint_store.enroll(callsign, name, emb, source="manual")
             self.statusBar().showMessage(
-                f"Enrolled voice sample for {callsign}", 5000
+                f"Enrolled voice sample for {display_label}", 5000
             )
             return True
         finally:
@@ -1432,8 +1443,10 @@ class MainWindow(QMainWindow):
 
     def _identify_speaker(self, utt, self_id):
         if self_id is not None:
+            cs, nm = self._disambiguate_self_id(self_id, utt.embedding)
             return SpeakerMatch(
-                label=self_id, score=1.0, kind="confident", callsign=self_id
+                label=cs, score=1.0, kind="confident",
+                callsign=cs, name=(nm if nm is not None else ""),
             )
         if utt.embedding is None:
             return SpeakerMatch(label="?", score=0.0, kind="unknown")
@@ -1441,14 +1454,16 @@ class MainWindow(QMainWindow):
         tentative_thr = float(self.config.get("speaker_tentative_threshold", 0.65))
         best = self.voiceprint_store.best_match(utt.embedding)
         if best is not None:
-            callsign, score = best
+            callsign, name, score = best
             if score >= confident_thr:
                 return SpeakerMatch(
-                    label=callsign, score=score, kind="confident", callsign=callsign
+                    label=callsign, score=score, kind="confident",
+                    callsign=callsign, name=name,
                 )
             if score >= tentative_thr:
                 return SpeakerMatch(
-                    label=f"{callsign}?", score=score, kind="tentative", callsign=callsign
+                    label=f"{callsign}?", score=score, kind="tentative",
+                    callsign=callsign, name=name,
                 )
         cluster_label, cluster_score = self.unknown_clusterer.assign(utt.embedding)
         return SpeakerMatch(
@@ -1456,32 +1471,57 @@ class MainWindow(QMainWindow):
             cluster_label=cluster_label,
         )
 
+    def _disambiguate_self_id(self, callsign, embedding):
+        """Decide which family-member operator a self-ID callsign refers to.
+        Returns (callsign, name) when we have an answer, or (callsign, None)
+        when multiple family members share the callsign and we can't tell —
+        callers should treat `name is None` as 'ambiguous' (display falls
+        back to bare callsign; auto-enroll refuses to write)."""
+        matches = [
+            c for c in self.contacts
+            if c.get("callsign", "").upper() == callsign
+            and c.get("callsign", "").upper() != "ALL"
+        ]
+        if len(matches) == 1:
+            return callsign, (matches[0].get("name", "") or "")
+        if not matches:
+            return callsign, ""
+        if self.voiceprint_store is not None and embedding is not None:
+            best = self.voiceprint_store.best_match(embedding, callsign_filter=callsign)
+            if best is not None:
+                confident_thr = float(self.config.get("speaker_match_threshold", 0.75))
+                if best[2] >= confident_thr:
+                    return best[0], (best[1] or "")
+        return callsign, None
+
     def _auto_enroll(self, utt, match, self_id):
-        """Aggressive enrollment policy. Self-ID wins over centroid match."""
+        """Aggressive enrollment policy. Self-ID wins over centroid match, but
+        only when we can pin the self-ID to a specific family member — otherwise
+        we'd poison the wrong person's print."""
         if utt.embedding is None or self.voiceprint_store is None:
             return None
-        target = self_id if self_id is not None else (
-            match.callsign if match.kind == "confident" else None
-        )
-        if not target:
+        if self_id is not None:
+            target_call, target_name = self._disambiguate_self_id(self_id, utt.embedding)
+            if target_name is None:
+                return None
+        elif match.kind == "confident" and match.callsign:
+            target_call = match.callsign
+            target_name = match.name or ""
+        else:
             return None
-        emb_id = self.voiceprint_store.enroll(target, utt.embedding, source="auto")
-        return (target, emb_id)
-
-    def _contact_name(self, callsign):
-        cs = (callsign or "").upper()
-        for c in self.contacts:
-            if c.get("callsign", "").upper() == cs:
-                return c.get("name", "") or ""
-        return ""
+        emb_id = self.voiceprint_store.enroll(
+            target_call, target_name, utt.embedding, source="auto"
+        )
+        return (target_call, target_name, emb_id)
 
     def _render_rx_line(self, utt, match, enrollment):
+        from urllib.parse import quote
         ts = datetime.datetime.now().strftime("%H:%M:%S")
         if match.kind == "confident":
-            name = self._contact_name(match.callsign)
+            name = match.name or ""
             tag = f"{match.callsign} {name}".strip() if name else match.callsign
         elif match.kind == "tentative":
-            name = self._contact_name(match.callsign)
+            name = match.name or ""
             tag = f"{match.callsign}? {name}?" if name else f"{match.callsign}?"
         elif match.kind == "cluster":
             label = match.cluster_label or match.label
@@ -1495,25 +1535,32 @@ class MainWindow(QMainWindow):
         head = f"<b>[RX {ts} {tag}]:</b>"
         suffix = ""
         if enrollment is not None:
-            cs, emb_id = enrollment
+            cs, op_name, emb_id = enrollment
             suffix = (
-                f" <a href='undo:{cs}:{emb_id}' "
+                f" <a href='undo:{cs}:{quote(op_name)}:{emb_id}' "
                 f"style='color:#888; font-size:11px; text-decoration:none;'>[undo]</a>"
             )
         html = f"<span style='color:green;'>{head} {utt.text}{suffix}</span>"
         self.chat_display.append(html)
 
     def _on_chat_anchor_clicked(self, url):
+        from urllib.parse import unquote
         s = url.toString()
         if s.startswith("undo:"):
+            # Format: undo:CALLSIGN:NAME_urlencoded:emb_id
+            parts = s.split(":", 3)
+            if len(parts) != 4:
+                return
             try:
-                _, callsign, emb_id_s = s.split(":", 2)
+                _, callsign, name_encoded, emb_id_s = parts
+                op_name = unquote(name_encoded)
                 emb_id = int(emb_id_s)
             except ValueError:
                 return
-            if self.voiceprint_store and self.voiceprint_store.unenroll(callsign, emb_id):
+            if self.voiceprint_store and self.voiceprint_store.unenroll(callsign, op_name, emb_id):
+                display = f"{callsign} ({op_name})" if op_name else callsign
                 self.statusBar().showMessage(
-                    f"Removed auto-enrolled voice sample for {callsign}", 4000
+                    f"Removed auto-enrolled voice sample for {display}", 4000
                 )
             else:
                 self.statusBar().showMessage("Voice sample already removed", 3000)
@@ -1528,29 +1575,44 @@ class MainWindow(QMainWindow):
                 f"{cluster_label} is no longer available — it may already have been bound.",
             )
             return
-        callsigns = [
-            c["callsign"] for c in self.contacts
+        bindable = [
+            c for c in self.contacts
             if c.get("callsign", "").upper() not in ("", "ALL")
         ]
-        if not callsigns:
+        if not bindable:
             QMessageBox.warning(
                 self, "Bind Voice",
                 "No contacts to bind to. Add one in Settings -> Contacts first.",
             )
             return
-        cs, ok = QInputDialog.getItem(
+        # Callsigns can repeat in contacts (a family shares one GMRS callsign), so
+        # show the operator name alongside the call to disambiguate at bind time.
+        def _display(c):
+            cs = c.get("callsign", "")
+            name = c.get("name", "")
+            return f"{cs} — {name}" if name else cs
+        options = [_display(c) for c in bindable]
+        choice, ok = QInputDialog.getItem(
             self, "Bind Voice",
             f"Attach {cluster_label} to which contact?",
-            callsigns, 0, False,
+            options, 0, False,
         )
-        if not ok or not cs:
+        if not ok or not choice:
             return
+        try:
+            idx = options.index(choice)
+        except ValueError:
+            return
+        picked = bindable[idx]
+        cs = picked.get("callsign", "")
+        name = picked.get("name", "")
         self.unknown_clusterer.pop_cluster(cluster_label)
         if self.voiceprint_store is not None:
             for sample in samples:
-                self.voiceprint_store.enroll(cs, sample, source="manual")
+                self.voiceprint_store.enroll(cs, name, sample, source="manual")
+        display_label = f"{cs} ({name})" if name else cs
         self.statusBar().showMessage(
-            f"Bound {cluster_label} → {cs} ({len(samples)} samples)", 5000
+            f"Bound {cluster_label} → {display_label} ({len(samples)} samples)", 5000
         )
 
     def scan_for_unknown_stations(self, text):
