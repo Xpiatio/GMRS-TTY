@@ -57,7 +57,11 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
 - Linux: PortAudio dev libs (`sudo apt install libportaudio2 portaudio19-dev`)
 - ~2 GB disk for dependencies (torch, torchaudio, CTranslate2, ONNX Runtime, SpeechBrain) plus the STT model (~75 MB for `small.en`, ~150 MB for `medium.en`) and the ECAPA-TDNN speaker model (~80 MB) fetched once via `bootstrap_models.py`
 
-## Install
+## Getting Started
+
+Five steps from a fresh clone to a working radio session: install dependencies, drop in a Piper voice, bootstrap the STT + speaker models on an internet-connected machine, set your callsign, and run.
+
+### 1. Install
 
 ```bash
 git clone <repo-url> GMRS-TTY
@@ -70,7 +74,7 @@ source .venv/bin/activate              # Linux/macOS
 pip install -r requirements.txt
 ```
 
-### Voice models (Piper)
+### 2. Voice models (Piper)
 
 Download one or more Piper ONNX voices and their accompanying `.json` config files into a `Voices/` directory at the project root:
 
@@ -84,7 +88,7 @@ Voices/
 
 Voices: https://github.com/rhasspy/piper/blob/master/VOICES.md
 
-### STT and speaker models (faster-whisper + ECAPA-TDNN)
+### 3. STT and speaker models (faster-whisper + ECAPA-TDNN)
 
 Neither model is bundled in the repo. Fetch both in a single run (requires internet):
 
@@ -100,7 +104,7 @@ This populates `Models/STT/<model_name>/` (faster-whisper CTranslate2 artifacts)
 
 **For air-gapped installs:** run the bootstrap once on an internet-connected machine, then copy the entire `Models/` directory (alongside the source) to the offline target. Silero VAD and Piper voices ship as local files already, so no other fetches are involved.
 
-### Configure
+### 4. Configure
 
 ```bash
 cp config.example.json config.json
@@ -109,7 +113,7 @@ $EDITOR config.json    # set your callsign, name, location, and preferred voice
 
 The `input_device` field is `-1` (system default) by default; the Configuration dialog in the app provides a dropdown of available input devices once you're running.
 
-## Run
+### 5. Run
 
 ```bash
 source .venv/bin/activate
