@@ -7,3 +7,5 @@ silero-vad>=5.0
 noisereduce
 numpy
 pyserial
+speechbrain>=1.0
+torchaudio
