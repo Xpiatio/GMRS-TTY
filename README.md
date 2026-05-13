@@ -27,18 +27,6 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
 - **Spoken-callsign formatting** — TTS reads callsign digits one at a time (`WSLZ 2 3 3` rather than "two hundred thirty-three") so the receiver hears them as letters and digits, not numbers.
 - "All" target is transmitted as-is (no preface).
 
-### Speaker identification
-- Each RX utterance is embedded with **ECAPA-TDNN** (SpeechBrain) and matched against per-operator voiceprints — RX lines are tagged with the matched callsign + name:
-  - `[RX 14:32:01 WSLZ233 Jennifer]: copy that` — confident match (score ≥ 0.75 by default).
-  - `[RX 14:32:01 WSLZ233? Jennifer?]: copy that` — tentative match (between the tentative and confident thresholds).
-  - `[RX 14:32:01 · Voice A]: copy that` — unknown voice; clustered into session-anonymous labels (Voice A, Voice B, …) so the conversation stays followable until someone IDs. Click the cluster label to bind it to a contact; the picker shows `CALLSIGN — Name` for every contact so you can pick the right family member when a callsign is shared.
-  - `[RX 14:32:01 · ?]: copy that` — utterance too short (< 1.5 s) to embed reliably.
-- **Per-operator voiceprints** — a single GMRS callsign is shared by everyone on a family license, so each `(callsign, name)` pair gets its own voiceprint bank. Jennifer's and Benjamin's `WSLZ233` prints stay separate, and the chat tag reflects who is actually speaking rather than just which radio is keyed.
-- **Aggressive auto-enrollment** — every confident match attaches the new utterance to the matched operator's voiceprint, so it learns over time. Each auto-enrolled line carries an inline `[undo]` link in the chat. **Self-ID takes priority**: when the transcript contains a callsign that maps to a known contact, that callsign wins over the centroid match. When multiple family members share that callsign, the embedding is voted against the existing family-member prints to pick the right one; if no family-member print scores above the confident threshold the line is left un-enrolled so a wrong guess can't poison a print.
-- **Manual enrollment** — Contacts dialog has a Record button per row that captures ~5 s through the configured input device. Recording passes through the same bandpass + denoise as live transcription so enrollment and recognition see matched conditions. Sample counts and last-enrolled dates in the Voiceprint column reflect that operator's bank specifically.
-- Match and tentative thresholds, plus an enable toggle, live in Configuration.
-- Voiceprints are stored offline in `voiceprints/{CALLSIGN}__{NAME}.npz` (per-operator, gitignored). Legacy single-callsign files (`{CALLSIGN}.npz`) from earlier versions are still read on load and treated as the unnamed operator under that callsign; new enrollments always write to the per-operator path.
-
 ### Contact discovery
 - Detects GMRS callsigns in incoming transcriptions:
   - Compact form: `WSLZ233`
@@ -50,7 +38,7 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
 
 ### Cross-platform & off-grid
 - Targets Raspberry Pi, Linux, Windows.
-- All STT/TTS/VAD/speaker models run locally — **no internet required at runtime**. The app never attempts a network fetch; STT and speaker models are pre-staged via a one-time `bootstrap_models.py` run on a connected machine, after which the entire source tree (including `Models/` and `Voices/`) is portable to air-gapped targets.
+- All STT/TTS/VAD models run locally — **no internet required at runtime**. The app never attempts a network fetch; the Whisper model is pre-staged via a one-time `bootstrap_models.py` run on a connected machine, after which the entire source tree (including `Models/` and `Voices/`) is portable to air-gapped targets.
 - Future stages: multi-arch Docker image, distribution packaging.
 
 ## Requirements
@@ -58,11 +46,11 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
 - Python 3.11+ (3.13 recommended)
 - A working microphone and speaker
 - Linux: PortAudio dev libs (`sudo apt install libportaudio2 portaudio19-dev`)
-- ~2 GB disk for dependencies (torch, torchaudio, CTranslate2, ONNX Runtime, SpeechBrain) plus the STT model (~75 MB for `small.en`, ~150 MB for `medium.en`) and the ECAPA-TDNN speaker model (~80 MB) fetched once via `bootstrap_models.py`
+- ~1 GB disk for dependencies (CTranslate2, ONNX Runtime, PySide6) plus the STT model (~75 MB for `small.en`, ~150 MB for `medium.en`) fetched once via `bootstrap_models.py`
 
 ## Getting Started
 
-Five steps from a fresh clone to a working radio session: install dependencies, drop in a Piper voice, bootstrap the STT + speaker models on an internet-connected machine, set your callsign, and run.
+Five steps from a fresh clone to a working radio session: install dependencies, drop in a Piper voice, bootstrap the STT model on an internet-connected machine, set your callsign, and run.
 
 ### 1. Install
 
@@ -91,19 +79,17 @@ Voices/
 
 Voices: https://github.com/rhasspy/piper/blob/master/VOICES.md
 
-### 3. STT and speaker models (faster-whisper + ECAPA-TDNN)
+### 3. STT model (faster-whisper)
 
-Neither model is bundled in the repo. Fetch both in a single run (requires internet):
+The Whisper model is not bundled in the repo. Fetch it once on an internet-connected machine:
 
 ```bash
-python bootstrap_models.py                          # default: small.en + ecapa-voxceleb
-python bootstrap_models.py --model base.en          # smaller Whisper, faster, less accurate
-python bootstrap_models.py --model medium.en        # higher accuracy, slower
-python bootstrap_models.py --skip-speaker           # STT only
-python bootstrap_models.py --skip-whisper           # speaker only
+python bootstrap_models.py                  # default: small.en
+python bootstrap_models.py --model base.en  # smaller, faster, less accurate
+python bootstrap_models.py --model medium.en  # higher accuracy, slower
 ```
 
-This populates `Models/STT/<model_name>/` (faster-whisper CTranslate2 artifacts) and `Models/Speaker/ecapa-tdnn/` (SpeechBrain ECAPA-TDNN). The app loads both from there on `Listen` and never attempts network access — if either directory is missing, listening continues with the missing capability disabled and a warning is logged.
+This populates `Models/STT/<model_name>/` (faster-whisper CTranslate2 artifacts). The app loads it from there on `Listen` and never attempts network access — if the directory is missing, listening fails fast with an instruction to run the bootstrap.
 
 **For air-gapped installs:** run the bootstrap once on an internet-connected machine, then copy the entire `Models/` directory (alongside the source) to the offline target. Silero VAD and Piper voices ship as local files already, so no other fetches are involved.
 
@@ -137,8 +123,8 @@ python main.py
 
 ### Settings menu
 
-- **Configuration** — edit callsign, name, location, voice model (with Test button for voice preview), input device, output device (where TTS audio plays — pick a USB sound card / Signalink / Digirig channel to feed your radio directly), VAD threshold (0.10–0.95; lower = more sensitive to weak/quiet signals, higher = stricter gating on noisy channels; default 0.5), speaker ID (enable toggle plus confident-match and tentative thresholds — default 0.75 / 0.65), and PTT mode. PTT options: **Manual** (you press PTT on the radio yourself), **VOX** (radio auto-keys on detected audio), or **USB FTDI / Serial** (app keys PTT via a USB-serial adapter's RTS or DTR line — when selected, Serial Port and Control Line fields enable). Changes to the input device, VAD threshold, or speaker-ID toggle restart the listener automatically.
-- **Contacts** — table editor for known callsigns/names/locations, with a **Voiceprint** column (sample count + last-enrolled date) and per-row **Record** / **Reset** buttons for manual voiceprint enrollment.
+- **Configuration** — edit callsign, name, location, voice model (with Test button for voice preview), input device, output device (where TTS audio plays — pick a USB sound card / Signalink / Digirig channel to feed your radio directly), VAD threshold (0.10–0.95; lower = more sensitive to weak/quiet signals, higher = stricter gating on noisy channels; default 0.5), and PTT mode. PTT options: **Manual** (you press PTT on the radio yourself), **VOX** (radio auto-keys on detected audio), or **USB FTDI / Serial** (app keys PTT via a USB-serial adapter's RTS or DTR line — when selected, Serial Port and Control Line fields enable). Changes to the input device or VAD threshold restart the listener automatically.
+- **Contacts** — table editor for known callsigns/names/locations.
 
 ## FCC Compliance Notes (GMRS, Part 95)
 
@@ -155,13 +141,11 @@ You are still responsible for legal operation. This app does not replace a valid
 ```
 GMRS-TTY/
 ├── main.py                 # PySide6 app, STT worker, TTS playback, detection logic
-├── speakerid.py            # ECAPA-TDNN embedder, per-contact voiceprint store, unknown-voice clusterer
-├── bootstrap_models.py     # One-time fetch of the faster-whisper STT + ECAPA speaker models into Models/
+├── bootstrap_models.py     # One-time fetch of the faster-whisper STT model into Models/
 ├── requirements.txt        # Python dependencies
 ├── config.example.json     # Template — copy to config.json and edit
 ├── Voices/                 # Piper voice models (gitignored; download yourself)
-├── Models/                 # Bundled STT/VAD/speaker model artifacts (gitignored; run bootstrap_models.py)
-├── voiceprints/            # Per-contact speaker embeddings (gitignored; learned at runtime)
+├── Models/                 # Bundled STT model artifacts (gitignored; run bootstrap_models.py)
 ├── spec.md                 # Original problem statement
 ├── technical_spec.md       # Detailed technical spec
 ├── implementation_plan.md  # Staged build plan (Stages 1–8)
