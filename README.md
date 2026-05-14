@@ -126,6 +126,7 @@ python main.py
 - **Header** shows your configured callsign, name, and location.
 - **Chat area** — incoming (green `[RX HH:MM:SS]`) and outgoing (blue `[TX to ...]`) messages.
 - **Listen** button — toggles microphone capture and live transcription. Loads the bundled Whisper model from `Models/STT/<whisper_model>/` (no network); fails fast with a clear instruction if the model directory is missing.
+- **Input level meter** (right of Listen) — a thin bar that shows real-time peak amplitude of the captured audio. Use it to verify your radio / cable / input device is actually wired up: if it stays at zero while you transmit into the radio, the app isn't getting audio. Stays at zero when Listen is off.
 - **Target dropdown** — pick a callsign from your contacts, or "All" for general transmission. Entries are sorted alphabetically by callsign (ties broken by operator name); the "All" open-call entry is pinned at the top.
 - **Message box + Transmit** — type and hit Enter (or click Transmit) to speak the message through Piper.
 - **"This is" button** — sits under the Transmit row; sends a standalone station ID without needing to type anything.
