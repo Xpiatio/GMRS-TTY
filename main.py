@@ -186,6 +186,26 @@ def sort_contacts(contacts):
         return (1, cs, nm)
     return sorted(contacts, key=key)
 
+
+def sort_contacts_by_suffix(contacts):
+    """Return `contacts` sorted by the trailing digits of each callsign — the
+    last 3 numbers of a GMRS callsign. 'ALL' stays pinned at index 0; entries
+    without trailing digits sort to the end. The trailing-digit key is taken
+    as the last 3 digits left-padded to 3 chars, so legacy 4-digit and modern
+    3-digit suffixes interleave consistently."""
+    def key(c):
+        cs = (c.get("callsign", "") or "").upper()
+        nm = (c.get("name", "") or "").upper()
+        if cs == "ALL":
+            return (0, "", "", "")
+        m = re.search(r'(\d+)$', cs)
+        if not m:
+            return (2, cs, nm, "")
+        last3 = m.group(1)[-3:].zfill(3)
+        return (1, last3, cs, nm)
+    return sorted(contacts, key=key)
+
+
 class AudioPlayerThread(QThread):
     finished = Signal()
     error = Signal(str)
@@ -741,9 +761,22 @@ class ContactsDialog(QDialog):
         self.add_btn.clicked.connect(self.add_row)
         self.remove_btn = QPushButton("Remove Selected")
         self.remove_btn.clicked.connect(self.remove_row)
+        self.sort_suffix_btn = QPushButton("Sort by &Suffix")
+        self.sort_suffix_btn.setToolTip(
+            "Reorder the table by the last 3 digits of each callsign. "
+            "'ALL' stays at the top. View-only — clicking OK still saves "
+            "the list alphabetically."
+        )
+        self.sort_suffix_btn.setAccessibleName("Sort contacts by callsign suffix")
+        self.sort_suffix_btn.setAccessibleDescription(
+            "Reorder the contacts table by the trailing digits of each callsign. "
+            "Does not change how the list is saved."
+        )
+        self.sort_suffix_btn.clicked.connect(self.sort_by_suffix)
 
         btn_layout.addWidget(self.add_btn)
         btn_layout.addWidget(self.remove_btn)
+        btn_layout.addWidget(self.sort_suffix_btn)
         layout.addLayout(btn_layout)
 
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
@@ -769,6 +802,22 @@ class ContactsDialog(QDialog):
         selected = self.table.currentRow()
         if selected >= 0:
             self.table.removeRow(selected)
+
+    def sort_by_suffix(self):
+        """Reorder the table by the last 3 digits of each callsign. View-only —
+        clicking OK still triggers the alphabetical save sort."""
+        rows = []
+        for row in range(self.table.rowCount()):
+            call_item = self.table.item(row, 0)
+            name_item = self.table.item(row, 1)
+            loc_item = self.table.item(row, 2)
+            rows.append({
+                "callsign": call_item.text().strip() if call_item else "",
+                "name": name_item.text().strip() if name_item else "",
+                "location": loc_item.text().strip() if loc_item else "",
+            })
+        self.contacts = sort_contacts_by_suffix(rows)
+        self.populate_table()
 
     def get_contacts(self):
         contacts = []
