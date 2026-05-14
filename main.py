@@ -603,6 +603,17 @@ class ConfigDialog(QDialog):
             "higher = stricter (cleaner gating on noisy channels). Default 0.5."
         )
 
+        self.time_format_input = QComboBox()
+        self.time_format_input.addItem("24-hour (14:32:15)", "24h")
+        self.time_format_input.addItem("12-hour (2:32:15 PM)", "12h")
+        current_time_format = self.config.get("time_format", "24h")
+        idx = self.time_format_input.findData(current_time_format)
+        if idx >= 0:
+            self.time_format_input.setCurrentIndex(idx)
+        self.time_format_input.setToolTip(
+            "Clock format for RX timestamps in the conversation log."
+        )
+
         voices = glob.glob(os.path.join("Voices", "*.onnx"))
         if not voices:
             self.voice_input.addItem("No voices found in Voices/", "")
@@ -660,6 +671,7 @@ class ConfigDialog(QDialog):
         layout.addRow("&Input Device:", self.input_device_input)
         layout.addRow("&Output Device:", self.output_device_input)
         layout.addRow("VA&D Threshold:", self.vad_threshold_input)
+        layout.addRow("Time &Format:", self.time_format_input)
         layout.addRow("&PTT Mode:", self.ptt_mode_input)
         layout.addRow("&Serial Port:", self.ptt_serial_port_input)
         layout.addRow("Control Lin&e:", self.ptt_serial_line_input)
@@ -679,6 +691,7 @@ class ConfigDialog(QDialog):
             "input_device": self.input_device_input.currentData(),
             "output_device": self.output_device_input.currentData(),
             "vad_threshold": round(self.vad_threshold_input.value(), 2),
+            "time_format": self.time_format_input.currentData(),
             "ptt_mode": self.ptt_mode_input.currentData(),
             "ptt_serial_port": self.ptt_serial_port_input.text().strip(),
             "ptt_serial_line": self.ptt_serial_line_input.currentData(),
@@ -1307,8 +1320,19 @@ class MainWindow(QMainWindow):
             "Start or stop transcribing incoming radio audio. Currently stopped."
         )
 
+    def _format_timestamp(self, now=None):
+        """Render an HH:MM:SS clock string honoring the configured time_format
+        (24h default, 12h with AM/PM)."""
+        if now is None:
+            now = datetime.datetime.now()
+        if self.config.get("time_format", "24h") == "12h":
+            h12 = now.hour % 12 or 12
+            suffix = "AM" if now.hour < 12 else "PM"
+            return f"{h12}:{now.minute:02d}:{now.second:02d} {suffix}"
+        return now.strftime("%H:%M:%S")
+
     def on_transcription(self, text):
-        ts = datetime.datetime.now().strftime("%H:%M:%S")
+        ts = self._format_timestamp()
         self.append_to_chat(f"<b>[RX {ts}]:</b> {text}", color=COLOR_RX)
         self.scan_for_unknown_stations(text)
 
