@@ -32,6 +32,17 @@ The application will feature a user-friendly interface divided into Configuratio
 - **PTT**: Mode dropdown (Manual / VOX / USB FTDI). Serial Port and Control Line (RTS or DTR) fields enable only when USB FTDI is selected.
 - **Hot-reload**: Changes to input device or VAD threshold restart the listener automatically. Changes to PTT mode/port/line reopen the PTT backend.
 
+### 2.5 Accessibility (WCAG 2.1 AA)
+The application is built for users with disabilities. The UI is held to **WCAG 2.1 Level AA** — the practical baseline that DOJ and Section 508 reference for software ADA compliance. The requirements below are normative for this project: a PR that regresses any of them should be rejected.
+- **Color contrast (WCAG 1.4.3)**: text colors meet ≥4.5:1 against the chat background; UI borders (1.4.11) meet ≥3:1. The chat palette is defined as module-level constants in `main.py` (`COLOR_RX`, `COLOR_TX`, `COLOR_ERROR`, `COLOR_WARN`, `PILL_*`) so contrast can be audited in one place.
+- **Color not the sole cue (WCAG 1.4.1)**: every RX line is prefixed `[RX HH:MM:SS]:`, every TX line `[TX to …]:` or `[TX ID]:`, every error line carries an "Error:" / "Failed:" / "Warning:" word; color is supplemental, not load-bearing.
+- **Full keyboard operation (WCAG 2.1.1)**: every action is reachable by keyboard. Tab order is explicit (`setTabOrder`) — Listen → target → message → Transmit → This is. Mnemonics underline a unique letter per actionable label (Alt+L Listen, Alt+T Transmit, Alt+I This is, Alt+S Settings → Alt+C Configuration / Alt+N Contacts); none collide. Global shortcuts via `QShortcut` cover the same actions for users on platforms where Alt navigation is awkward (Ctrl+L, Ctrl+Return/Enter, Ctrl+I, Ctrl+, , Ctrl+B).
+- **Programmatic name / role / state (WCAG 4.1.2)**: every non-decorative widget has an `accessibleName` and (where helpful) `accessibleDescription` so screen readers (NVDA, JAWS, Orca, VoiceOver) report meaningful semantics through Qt's accessibility bridge. Stateful widgets (Listen toggle) update their description on state change.
+- **Resize text / scale (WCAG 1.4.4)**: stylesheets do not specify pixel `font-size`. The header bold uses `QFont` relative to the app font (`pointSize + 2`), so the OS font-scale setting carries through. The main window has a 720×520 minimum that comfortably accommodates 150 %–200 % font scale without clipping.
+- **Visible focus (WCAG 2.4.7)**: the Fusion style's focus indicator is preserved — no `outline: none` or `:focus { … }` overrides that strip it.
+- **Predictable interaction (WCAG 3.2)**: tooltips on every actionable control surface the keyboard shortcut, so discovery is hint-rich without requiring a manual.
+- **Status messages**: transient feedback uses `QStatusBar.showMessage`, which Qt's accessibility tree exposes to screen readers without forcing focus. The chat log is a transcript-by-design rather than a live-announcement region; users review it on demand.
+
 ## 3. Core Components
 
 ### 3.1 Audio Processing (Simulation Mode)
