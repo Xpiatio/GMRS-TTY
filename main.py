@@ -275,6 +275,21 @@ class TTSSynthesisThread(QThread):
             self.error.emit(str(e))
 
 
+class DeviceQueryThread(QThread):
+    """Enumerates PortAudio devices off the GUI thread. sd.query_devices()
+    can take hundreds of ms on ALSA/PulseAudio systems, which freezes the
+    Configuration dialog (and starves the open STT InputStream) if run
+    synchronously."""
+    devices_ready = Signal(list)
+
+    def run(self):
+        try:
+            devices = list(sd.query_devices())
+        except Exception:
+            devices = []
+        self.devices_ready.emit(devices)
+
+
 class PTT:
     """PTT interface. Modes share lead-in/tail silence padding so the radio's
     keying ramp or VOX hang time doesn't clip audio."""
@@ -425,8 +440,14 @@ class STTWorker(QThread):
         try:
             if self.whisper is None or self.vad_model is None:
                 self.status.emit(f"Loading Whisper model from {self.whisper_model_path}...")
+                # Leave at least one core free for the Qt event loop. faster-whisper's
+                # default cpu_threads=0 means "use all cores", which saturates the CPU
+                # during inference and starves the GUI — opening menus or even simple
+                # dialogs visibly stalls while a transcription is running.
+                cpu_threads = max(1, (os.cpu_count() or 2) - 1)
                 self.whisper = WhisperModel(
-                    self.whisper_model_path, device="cpu", compute_type="int8"
+                    self.whisper_model_path, device="cpu", compute_type="int8",
+                    cpu_threads=cpu_threads,
                 )
                 self.vad_model = load_silero_vad()
             whisper = self.whisper
@@ -641,26 +662,18 @@ class ConfigDialog(QDialog):
         voice_row_layout.addWidget(self.voice_input, 1)
         voice_row_layout.addWidget(self.test_voice_button)
 
-        self.input_device_input.addItem("System Default", -1)
-        self.output_device_input.addItem("System Default", -1)
-        try:
-            for i, dev in enumerate(sd.query_devices()):
-                if dev.get('max_input_channels', 0) > 0:
-                    self.input_device_input.addItem(f"{i}: {dev['name']}", i)
-                if dev.get('max_output_channels', 0) > 0:
-                    self.output_device_input.addItem(f"{i}: {dev['name']}", i)
-        except Exception as e:
-            print(f"Could not enumerate audio devices: {e}")
-
-        current_dev = self.config.get("input_device", -1)
-        idx = self.input_device_input.findData(current_dev)
-        if idx >= 0:
-            self.input_device_input.setCurrentIndex(idx)
-
-        current_out = self.config.get("output_device", -1)
-        idx = self.output_device_input.findData(current_out)
-        if idx >= 0:
-            self.output_device_input.setCurrentIndex(idx)
+        # Device enumeration happens on a background thread; PortAudio's
+        # query_devices() can block hundreds of ms on ALSA/PulseAudio and
+        # contend with the live STT InputStream. Until it finishes we show
+        # a placeholder and disable OK so the user can't save a half-loaded
+        # configuration.
+        self.input_device_input.addItem("Loading devices…", -1)
+        self.input_device_input.setEnabled(False)
+        self.output_device_input.addItem("Loading devices…", -1)
+        self.output_device_input.setEnabled(False)
+        self._device_thread = DeviceQueryThread(self)
+        self._device_thread.devices_ready.connect(self._on_devices_ready)
+        self._device_thread.start()
 
         # Mnemonics on every field — Alt+letter jumps focus to the input via
         # QFormLayout's automatic buddy linking. Letters are unique within this dialog.
@@ -680,7 +693,32 @@ class ConfigDialog(QDialog):
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
+        # OK stays disabled until DeviceQueryThread finishes so the user
+        # can't save a config with the "Loading devices…" placeholder.
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
         layout.addWidget(self.buttons)
+
+    def _on_devices_ready(self, devices):
+        self.input_device_input.clear()
+        self.output_device_input.clear()
+        self.input_device_input.addItem("System Default", -1)
+        self.output_device_input.addItem("System Default", -1)
+        for i, dev in enumerate(devices):
+            if dev.get('max_input_channels', 0) > 0:
+                self.input_device_input.addItem(f"{i}: {dev['name']}", i)
+            if dev.get('max_output_channels', 0) > 0:
+                self.output_device_input.addItem(f"{i}: {dev['name']}", i)
+        current_dev = self.config.get("input_device", -1)
+        idx = self.input_device_input.findData(current_dev)
+        if idx >= 0:
+            self.input_device_input.setCurrentIndex(idx)
+        current_out = self.config.get("output_device", -1)
+        idx = self.output_device_input.findData(current_out)
+        if idx >= 0:
+            self.output_device_input.setCurrentIndex(idx)
+        self.input_device_input.setEnabled(True)
+        self.output_device_input.setEnabled(True)
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)
 
     def get_config(self):
         return {
@@ -1340,13 +1378,10 @@ class MainWindow(QMainWindow):
         my_call = self.config.get("callsign", "").upper()
         known = {c.get("callsign", "").upper() for c in self.contacts}
         detected = detect_callsigns(text)
-        print(f"[scan] text={text!r} detected={detected} my_call={my_call} known={known}", file=sys.stderr)
         for cs in detected:
             if cs == my_call or cs in known or cs in self.pending_buttons:
-                print(f"[scan] skipping {cs} (own/known/pending)", file=sys.stderr)
                 continue
             name, location = extract_name_location(text, cs)
-            print(f"[scan] adding pending {cs} name={name!r} location={location!r}", file=sys.stderr)
             self.add_pending_station(cs, name, location)
 
     def add_pending_station(self, callsign, name, location):
