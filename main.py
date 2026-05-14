@@ -174,6 +174,21 @@ def save_json(filepath, data):
     except Exception as e:
         print(f"Error saving {filepath}: {e}")
 
+
+def sort_contacts(contacts):
+    """Return `contacts` sorted alphabetically by callsign (case-insensitive),
+    with the special 'ALL' open-call entry pinned at index 0 and ties broken
+    by operator name so shared family callsigns get a stable order."""
+    def key(c):
+        cs = (c.get("callsign", "") or "").upper()
+        nm = (c.get("name", "") or "").upper()
+        # ALL is the open-call shortcut, not a real station; keep it first
+        # regardless of where it would sort alphabetically.
+        if cs == "ALL":
+            return (0, "", "")
+        return (1, cs, nm)
+    return sorted(contacts, key=key)
+
 class AudioPlayerThread(QThread):
     finished = Signal()
     error = Signal(str)
@@ -757,7 +772,7 @@ class MainWindow(QMainWindow):
 
         # State Initialization
         self.config = load_json(CONFIG_FILE, {"callsign": "N0CALL", "name": "Default", "location": "Unknown"})
-        self.contacts = load_json(CONTACTS_FILE, [{"callsign": "All", "name": "Everyone"}])
+        self.contacts = sort_contacts(load_json(CONTACTS_FILE, [{"callsign": "All", "name": "Everyone"}]))
         self.last_tx_time = None
 
         self.voice_cache = {}
@@ -970,7 +985,7 @@ class MainWindow(QMainWindow):
     def open_contacts_dialog(self):
         dlg = ContactsDialog(self.contacts, parent=self)
         if dlg.exec():
-            self.contacts = dlg.get_contacts()
+            self.contacts = sort_contacts(dlg.get_contacts())
             save_json(CONTACTS_FILE, self.contacts)
             self.populate_target_dropdown()
 
@@ -1263,6 +1278,7 @@ class MainWindow(QMainWindow):
                     break
             else:
                 self.contacts.append(contact)
+            self.contacts = sort_contacts(self.contacts)
             save_json(CONTACTS_FILE, self.contacts)
             self.populate_target_dropdown()
         btn = self.pending_buttons.pop(callsign, None)

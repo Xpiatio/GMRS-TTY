@@ -126,7 +126,7 @@ python main.py
 - **Header** shows your configured callsign, name, and location.
 - **Chat area** — incoming (green `[RX HH:MM:SS]`) and outgoing (blue `[TX to ...]`) messages.
 - **Listen** button — toggles microphone capture and live transcription. Loads the bundled Whisper model from `Models/STT/<whisper_model>/` (no network); fails fast with a clear instruction if the model directory is missing.
-- **Target dropdown** — pick a callsign from your contacts, or "All" for general transmission.
+- **Target dropdown** — pick a callsign from your contacts, or "All" for general transmission. Entries are sorted alphabetically by callsign (ties broken by operator name); the "All" open-call entry is pinned at the top.
 - **Message box + Transmit** — type and hit Enter (or click Transmit) to speak the message through Piper.
 - **"This is" button** — sits under the Transmit row; sends a standalone station ID without needing to type anything.
 - **Pending stations bar** (between chat and input) — yellow pill buttons appear when a new GMRS callsign is detected on RX. Hover for the detected name/location preview; click to open a prefilled "Add Station" dialog.
@@ -134,7 +134,7 @@ python main.py
 ### Settings menu
 
 - **Configuration** (Alt+S, Alt+C — or Ctrl+,) — edit callsign, name, location, voice model (with Test button for voice preview), input device, output device (where TTS audio plays — pick a USB sound card / Signalink / Digirig channel to feed your radio directly), VAD threshold (0.10–0.95; lower = more sensitive to weak/quiet signals, higher = stricter gating on noisy channels; default 0.5), and PTT mode. PTT options: **Manual** (you press PTT on the radio yourself), **VOX** (radio auto-keys on detected audio), or **USB FTDI / Serial** (app keys PTT via a USB-serial adapter's RTS or DTR line — when selected, Serial Port and Control Line fields enable). Changes to the input device or VAD threshold restart the listener automatically.
-- **Contacts** (Alt+S, Alt+N — or Ctrl+B) — table editor for known callsigns/names/locations.
+- **Contacts** (Alt+S, Alt+N — or Ctrl+B) — table editor for known callsigns/names/locations. The list is sorted alphabetically by callsign whenever it loads or you save changes.
 
 ## FCC Compliance Notes (GMRS, Part 95)
 
