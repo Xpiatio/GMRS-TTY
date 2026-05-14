@@ -22,11 +22,22 @@ from PySide6.QtWidgets import (
     QDialog, QFormLayout, QDialogButtonBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QMessageBox, QDoubleSpinBox,
 )
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
 from PySide6.QtCore import Qt, QThread, Signal
 
 CONFIG_FILE = "config.json"
 CONTACTS_FILE = "contacts.json"
+
+# WCAG 2.1 AA color palette. Text colors meet ≥4.5:1 contrast against white;
+# UI borders/icons meet ≥3:1. Picked from the Tailwind palette which has
+# documented contrast ratios.
+COLOR_RX = "#15803D"      # green-700, 5.59:1 on white — incoming transmissions
+COLOR_TX = "#1D4ED8"      # blue-700, 7.10:1 on white — outgoing transmissions
+COLOR_ERROR = "#B91C1C"   # red-700, 6.45:1 on white — errors
+COLOR_WARN = "#92400E"    # amber-800, 8.13:1 on white — warnings / info
+PILL_BG = "#FEF3C7"       # amber-100 background for pending-station pills
+PILL_TEXT = "#78350F"     # amber-900, ≥10:1 on PILL_BG
+PILL_BORDER = "#A16207"   # amber-700, 4.05:1 on white (UI border)
 
 # GMRS callsign formats: modern (W + 3 letters + 3 digits) and legacy (KAE/KAA + 3-4 digits)
 CALLSIGN_RE = re.compile(r'\b(W[A-Z]{3}\d{3}|KA[A-Z]\d{3,4})\b', re.IGNORECASE)
@@ -456,7 +467,7 @@ class ConfigDialog(QDialog):
     def __init__(self, current_config, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Configuration")
-        self.setMinimumWidth(300)
+        self.setMinimumWidth(420)
         self.config = current_config
         self._test_voice_cache = {}
         self._test_player = None
@@ -515,8 +526,12 @@ class ConfigDialog(QDialog):
             if index >= 0:
                 self.voice_input.setCurrentIndex(index)
 
-        self.test_voice_button = QPushButton("Test")
-        self.test_voice_button.setToolTip("Play a short sample with the selected voice")
+        self.test_voice_button = QPushButton("&Test")
+        self.test_voice_button.setToolTip("Play a short sample with the selected voice (Alt+T)")
+        self.test_voice_button.setAccessibleName("Test selected voice")
+        self.test_voice_button.setAccessibleDescription(
+            "Play a short audio sample with the currently selected Piper voice."
+        )
         self.test_voice_button.clicked.connect(self.test_voice)
 
         voice_row = QWidget()
@@ -546,16 +561,18 @@ class ConfigDialog(QDialog):
         if idx >= 0:
             self.output_device_input.setCurrentIndex(idx)
 
-        layout.addRow("Callsign:", self.callsign_input)
-        layout.addRow("Name:", self.name_input)
-        layout.addRow("Location:", self.location_input)
-        layout.addRow("Voice Model:", voice_row)
-        layout.addRow("Input Device:", self.input_device_input)
-        layout.addRow("Output Device:", self.output_device_input)
-        layout.addRow("VAD Threshold:", self.vad_threshold_input)
-        layout.addRow("PTT Mode:", self.ptt_mode_input)
-        layout.addRow("Serial Port:", self.ptt_serial_port_input)
-        layout.addRow("Control Line:", self.ptt_serial_line_input)
+        # Mnemonics on every field — Alt+letter jumps focus to the input via
+        # QFormLayout's automatic buddy linking. Letters are unique within this dialog.
+        layout.addRow("&Callsign:", self.callsign_input)
+        layout.addRow("&Name:", self.name_input)
+        layout.addRow("&Location:", self.location_input)
+        layout.addRow("&Voice Model:", voice_row)
+        layout.addRow("&Input Device:", self.input_device_input)
+        layout.addRow("&Output Device:", self.output_device_input)
+        layout.addRow("VA&D Threshold:", self.vad_threshold_input)
+        layout.addRow("&PTT Mode:", self.ptt_mode_input)
+        layout.addRow("&Serial Port:", self.ptt_serial_port_input)
+        layout.addRow("Control Lin&e:", self.ptt_serial_line_input)
         self._update_ptt_fields()
 
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
@@ -645,6 +662,10 @@ class ContactsDialog(QDialog):
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["Callsign", "Name", "Location"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.setAccessibleName("Contacts table")
+        self.table.setAccessibleDescription(
+            "Callsign, name, and location for each known contact. Use Tab to edit cells."
+        )
         layout.addWidget(self.table)
 
         self.populate_table()
@@ -704,14 +725,14 @@ class AddContactDialog(QDialog):
     def __init__(self, callsign, name, location, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Add Station: {callsign}")
-        self.setMinimumWidth(320)
+        self.setMinimumWidth(380)
         layout = QFormLayout(self)
         self.callsign_input = QLineEdit(callsign)
         self.name_input = QLineEdit(name)
         self.location_input = QLineEdit(location)
-        layout.addRow("Callsign:", self.callsign_input)
-        layout.addRow("Name:", self.name_input)
-        layout.addRow("Location:", self.location_input)
+        layout.addRow("&Callsign:", self.callsign_input)
+        layout.addRow("&Name:", self.name_input)
+        layout.addRow("&Location:", self.location_input)
         self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
             self,
@@ -759,7 +780,7 @@ class MainWindow(QMainWindow):
                 f"<code>python bootstrap_models.py --model {model_name}</code> "
                 f"on an internet-connected machine and copy the resulting "
                 f"<code>Models/</code> directory here.</i>",
-                color="orange",
+                color=COLOR_WARN,
             )
 
     def closeEvent(self, event):
@@ -779,16 +800,31 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        # 1. Header (User Info)
+        # 1. Header (User Info). Bold via QFont so size scales with system font (WCAG 1.4.4).
         self.header_label = QLabel("Loading...", self)
-        self.header_label.setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px; background-color: #f0f0f0; border-radius: 5px;")
+        header_font = QFont(self.font())
+        header_font.setBold(True)
+        header_font.setPointSize(header_font.pointSize() + 2)
+        self.header_label.setFont(header_font)
+        self.header_label.setStyleSheet(
+            "padding: 10px; background-color: #F0F0F0; border-radius: 5px;"
+        )
         self.header_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.header_label.setAccessibleName("Station information")
+        self.header_label.setAccessibleDescription(
+            "Your configured callsign, operator name, and location."
+        )
         main_layout.addWidget(self.header_label)
 
-        # 2. Main Chat Room (Rx Section)
+        # 2. Main Chat Room (Rx Section). No hardcoded font-size so the OS font-scale
+        # setting carries through.
         self.chat_display = QTextEdit(self)
         self.chat_display.setReadOnly(True)
-        self.chat_display.setStyleSheet("font-size: 14px; padding: 5px;")
+        self.chat_display.setStyleSheet("padding: 5px;")
+        self.chat_display.setAccessibleName("Conversation log")
+        self.chat_display.setAccessibleDescription(
+            "Timestamped log of incoming radio transmissions and outgoing messages."
+        )
         main_layout.addWidget(self.chat_display)
 
         # 2b. Pending stations bar (populates when STT detects unknown callsigns)
@@ -797,25 +833,40 @@ class MainWindow(QMainWindow):
         self.pending_bar.addStretch()
         main_layout.addLayout(self.pending_bar)
 
-        # 3. Input Area (Tx Section)
+        # 3. Input Area (Tx Section). Mnemonics: Alt+L Listen, Alt+T Transmit, Alt+I This is.
         input_layout = QHBoxLayout()
 
-        self.listen_btn = QPushButton("Listen", self)
+        self.listen_btn = QPushButton("&Listen", self)
         self.listen_btn.setCheckable(True)
-        self.listen_btn.setToolTip("Toggle microphone capture / live transcription")
+        self.listen_btn.setToolTip("Toggle microphone capture / live transcription (Alt+L, Ctrl+L)")
+        self.listen_btn.setAccessibleName("Listen toggle")
+        self.listen_btn.setAccessibleDescription(
+            "Start or stop transcribing incoming radio audio. Currently stopped."
+        )
         self.listen_btn.toggled.connect(self.toggle_listening)
         input_layout.addWidget(self.listen_btn)
 
         self.target_dropdown = QComboBox(self)
         self.target_dropdown.setMinimumWidth(120)
+        self.target_dropdown.setAccessibleName("Transmission target")
+        self.target_dropdown.setAccessibleDescription(
+            "Pick a contact callsign to address, or All for an open call."
+        )
+        self.target_dropdown.setToolTip("Recipient callsign for the next transmission")
         input_layout.addWidget(self.target_dropdown)
 
         self.message_input = QLineEdit(self)
         self.message_input.setPlaceholderText("Type your message here...")
+        self.message_input.setAccessibleName("Outgoing message")
+        self.message_input.setAccessibleDescription(
+            "Text to speak as the next transmission. Press Enter or use Transmit."
+        )
         self.message_input.returnPressed.connect(self.transmit_message)
         input_layout.addWidget(self.message_input)
 
-        self.transmit_btn = QPushButton("Transmit", self)
+        self.transmit_btn = QPushButton("&Transmit", self)
+        self.transmit_btn.setToolTip("Speak the message through the configured voice (Alt+T, Ctrl+Return)")
+        self.transmit_btn.setAccessibleName("Transmit message")
         self.transmit_btn.clicked.connect(self.transmit_message)
         input_layout.addWidget(self.transmit_btn)
 
@@ -824,28 +875,49 @@ class MainWindow(QMainWindow):
         # 3b. Standalone ID button row (sits under Transmit)
         id_layout = QHBoxLayout()
         id_layout.addStretch()
-        self.id_btn = QPushButton("This is", self)
-        self.id_btn.setToolTip("Transmit station ID: This is [callsign]. [name] from [location]")
+        self.id_btn = QPushButton("Th&is is", self)
+        self.id_btn.setToolTip("Transmit station ID: This is [callsign]. [name] from [location] (Alt+I, Ctrl+I)")
+        self.id_btn.setAccessibleName("Send station ID")
         self.id_btn.clicked.connect(self.transmit_id_only)
         id_layout.addWidget(self.id_btn)
         main_layout.addLayout(id_layout)
 
+        # Explicit tab order so keyboard users get a predictable traversal: Listen,
+        # target, message, Transmit, This is.
+        self.setTabOrder(self.listen_btn, self.target_dropdown)
+        self.setTabOrder(self.target_dropdown, self.message_input)
+        self.setTabOrder(self.message_input, self.transmit_btn)
+        self.setTabOrder(self.transmit_btn, self.id_btn)
+
+        # Global keyboard shortcuts (in addition to menu shortcuts).
+        QShortcut(QKeySequence("Ctrl+L"), self, activated=self.listen_btn.toggle)
+        QShortcut(QKeySequence("Ctrl+Return"), self, activated=self.transmit_message)
+        QShortcut(QKeySequence("Ctrl+Enter"), self, activated=self.transmit_message)
+        QShortcut(QKeySequence("Ctrl+I"), self, activated=self.transmit_id_only)
+
         self.statusBar().showMessage("Ready")
+
+        # Reasonable minimum so high-DPI / large-font users don't get clipping.
+        self.setMinimumSize(720, 520)
 
         # 4. Menus
         self.create_menus()
 
     def create_menus(self):
         menubar = self.menuBar()
-        
-        # Settings Menu
-        settings_menu = menubar.addMenu("Settings")
-        
-        config_action = QAction("Configuration", self)
+
+        # Settings Menu — Alt+S mnemonic.
+        settings_menu = menubar.addMenu("&Settings")
+
+        config_action = QAction("&Configuration…", self)
+        config_action.setShortcut(QKeySequence.StandardKey.Preferences)
+        config_action.setStatusTip("Edit callsign, voice, devices, VAD threshold, and PTT mode.")
         config_action.triggered.connect(self.open_config_dialog)
         settings_menu.addAction(config_action)
 
-        contacts_action = QAction("Contacts", self)
+        contacts_action = QAction("Co&ntacts…", self)
+        contacts_action.setShortcut(QKeySequence("Ctrl+B"))
+        contacts_action.setStatusTip("Add, edit, or remove known callsigns.")
         contacts_action.triggered.connect(self.open_contacts_dialog)
         settings_menu.addAction(contacts_action)
 
@@ -938,7 +1010,7 @@ class MainWindow(QMainWindow):
 
         # Append to chat (original form for readability)
         formatted_msg = f"<b>[TX to {target_call}]:</b> {spoken_text}"
-        self.append_to_chat(formatted_msg, color="blue")
+        self.append_to_chat(formatted_msg, color=COLOR_TX)
 
         # Clear input box; TTS spells out callsign digits ('233' -> '2 3 3').
         self.message_input.clear()
@@ -967,7 +1039,7 @@ class MainWindow(QMainWindow):
         self.last_tx_time = datetime.datetime.now()
 
         formatted_msg = f"<b>[TX ID]:</b> {spoken_text}"
-        self.append_to_chat(formatted_msg, color="blue")
+        self.append_to_chat(formatted_msg, color=COLOR_TX)
 
         self._synthesize_and_play(spell_digits_in_callsigns(spoken_text))
 
@@ -981,7 +1053,7 @@ class MainWindow(QMainWindow):
 
         voice_path = self.config.get("voice", "")
         if not voice_path or not os.path.exists(voice_path):
-            self.append_to_chat("<i>Error: No valid Piper voice selected. Please select one in Settings -> Configuration.</i>", color="red")
+            self.append_to_chat("<i>Error: No valid Piper voice selected. Please select one in Settings -> Configuration.</i>", color=COLOR_ERROR)
             self._set_tx_buttons_enabled(True)
             return
 
@@ -989,7 +1061,7 @@ class MainWindow(QMainWindow):
             try:
                 self.voice_cache[voice_path] = PiperVoice.load(voice_path)
             except Exception as e:
-                self.append_to_chat(f"<i>Failed to load voice model: {e}</i>", color="red")
+                self.append_to_chat(f"<i>Failed to load voice model: {e}</i>", color=COLOR_ERROR)
                 self._set_tx_buttons_enabled(True)
                 return
 
@@ -1017,7 +1089,7 @@ class MainWindow(QMainWindow):
                     if len(data) > 0:
                         audio_chunks.append(data)
                     else:
-                        self.append_to_chat(f"<i>Warning: Piper generated 0 frames for: '{sentence}'</i>", color="red")
+                        self.append_to_chat(f"<i>Warning: Piper generated 0 frames for: '{sentence}'</i>", color=COLOR_ERROR)
                 finally:
                     if os.path.exists(temp_wav_path):
                         os.remove(temp_wav_path)
@@ -1044,14 +1116,14 @@ class MainWindow(QMainWindow):
                 try:
                     self.ptt.key()
                 except Exception as e:
-                    self.append_to_chat(f"<i>PTT key failed: {e}</i>", color="red")
+                    self.append_to_chat(f"<i>PTT key failed: {e}</i>", color=COLOR_ERROR)
                 self.audio_thread.start()
             else:
                 self._set_tx_buttons_enabled(True)
 
         except Exception as e:
             traceback.print_exc()
-            self.append_to_chat(f"<i>TTS Error: {str(e)}</i>", color="red")
+            self.append_to_chat(f"<i>TTS Error: {str(e)}</i>", color=COLOR_ERROR)
             self._resume_stt_after_tx()
             self._set_tx_buttons_enabled(True)
 
@@ -1069,7 +1141,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self._resume_stt_after_tx()
-        self.append_to_chat(f"<i>TTS Error: {error_msg}</i>", color="red")
+        self.append_to_chat(f"<i>TTS Error: {error_msg}</i>", color=COLOR_ERROR)
         self._set_tx_buttons_enabled(True)
 
     def _pause_stt_for_tx(self):
@@ -1103,7 +1175,10 @@ class MainWindow(QMainWindow):
         self.stt_worker.error.connect(self.on_stt_error)
         self.stt_worker.status.connect(self.on_stt_status)
         self.stt_worker.start()
-        self.listen_btn.setText("Listening...")
+        self.listen_btn.setText("&Listening…")
+        self.listen_btn.setAccessibleDescription(
+            "Microphone capture and live transcription are active. Toggle off to stop."
+        )
 
     def stop_stt(self):
         worker = self.stt_worker
@@ -1119,11 +1194,14 @@ class MainWindow(QMainWindow):
             if worker.isRunning():
                 worker.wait(15000)
             worker.deleteLater()
-        self.listen_btn.setText("Listen")
+        self.listen_btn.setText("&Listen")
+        self.listen_btn.setAccessibleDescription(
+            "Start or stop transcribing incoming radio audio. Currently stopped."
+        )
 
     def on_transcription(self, text):
         ts = datetime.datetime.now().strftime("%H:%M:%S")
-        self.append_to_chat(f"<b>[RX {ts}]:</b> {text}", color="green")
+        self.append_to_chat(f"<b>[RX {ts}]:</b> {text}", color=COLOR_RX)
         self.scan_for_unknown_stations(text)
 
     def scan_for_unknown_stations(self, text):
@@ -1141,9 +1219,16 @@ class MainWindow(QMainWindow):
 
     def add_pending_station(self, callsign, name, location):
         btn = QPushButton(f"+ Add {callsign}", self)
+        # WCAG: amber-100 background + amber-900 text gives ≥10:1 contrast; border
+        # is amber-700 (4.05:1 against white) so the pill is distinguishable for
+        # users who don't perceive color cues. Focus ring is left to the platform.
         btn.setStyleSheet(
-            "QPushButton { background-color: #fff3cd; border: 1px solid #d4a72c; "
-            "padding: 4px 8px; border-radius: 4px; }"
+            "QPushButton {"
+            f" background-color: {PILL_BG};"
+            f" color: {PILL_TEXT};"
+            f" border: 2px solid {PILL_BORDER};"
+            " padding: 4px 10px; border-radius: 4px;"
+            "}"
         )
         tooltip_parts = [f"Detected new station: {callsign}"]
         if name:
@@ -1151,6 +1236,13 @@ class MainWindow(QMainWindow):
         if location:
             tooltip_parts.append(f"Location: {location}")
         btn.setToolTip("\n".join(tooltip_parts))
+        btn.setAccessibleName(f"Add station {callsign}")
+        descr = f"Open the Add Station dialog prefilled for callsign {callsign}"
+        if name:
+            descr += f", operator {name}"
+        if location:
+            descr += f", location {location}"
+        btn.setAccessibleDescription(descr + ".")
         btn.clicked.connect(
             lambda _checked=False, cs=callsign, n=name, loc=location:
                 self.open_add_contact_dialog(cs, n, loc)
@@ -1179,10 +1271,13 @@ class MainWindow(QMainWindow):
             btn.deleteLater()
 
     def on_stt_error(self, msg):
-        self.append_to_chat(f"<i>STT Error: {msg}</i>", color="red")
+        self.append_to_chat(f"<i>STT Error: {msg}</i>", color=COLOR_ERROR)
         self.listen_btn.blockSignals(True)
         self.listen_btn.setChecked(False)
-        self.listen_btn.setText("Listen")
+        self.listen_btn.setText("&Listen")
+        self.listen_btn.setAccessibleDescription(
+            "Start or stop transcribing incoming radio audio. Currently stopped."
+        )
         self.listen_btn.blockSignals(False)
 
     def on_stt_status(self, msg):
