@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QComboBox, QTextEdit, QLineEdit, QPushButton,
     QDialog, QFormLayout, QDialogButtonBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMessageBox, QDoubleSpinBox,
+    QHeaderView, QMessageBox, QDoubleSpinBox, QProgressBar,
 )
 from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
 from PySide6.QtCore import Qt, QThread, Signal
@@ -372,6 +372,10 @@ class STTWorker(QThread):
     transcribed = Signal(str)
     error = Signal(str)
     status = Signal(str)
+    # Peak amplitude per captured chunk on a 0-100 scale, emitted live so
+    # the UI can show a level meter — useful for confirming the mic / radio
+    # audio is actually reaching the app during hardware setup.
+    audio_level = Signal(int)
 
     SAMPLE_RATE = 16000
     CHUNK_SAMPLES = 512  # required by Silero VAD at 16kHz
@@ -498,6 +502,13 @@ class STTWorker(QThread):
                 except Exception as e:
                     self.error.emit(f"Audio read error: {e}")
                     break
+
+                # Emit input level before any pause/VAD gating so a stuck or
+                # disconnected mic shows up as a flat-zero meter regardless of
+                # transmit state. Peak (not RMS) matches what users expect
+                # from a VU-style indicator and reacts fast to short syllables.
+                peak = float(np.max(np.abs(data[:, 0]))) if data.size else 0.0
+                self.audio_level.emit(min(100, int(peak * 100)))
 
                 if self._paused:
                     if not was_paused:
@@ -1019,6 +1030,26 @@ class MainWindow(QMainWindow):
         self.listen_btn.toggled.connect(self.toggle_listening)
         input_layout.addWidget(self.listen_btn)
 
+        # Live mic-input level meter. Sits next to Listen so the user can
+        # confirm at a glance that audio is reaching the app — the most
+        # common hardware-troubleshooting question is "is my cable / device
+        # actually wired up?"
+        self.audio_level_meter = QProgressBar(self)
+        self.audio_level_meter.setRange(0, 100)
+        self.audio_level_meter.setValue(0)
+        self.audio_level_meter.setTextVisible(False)
+        self.audio_level_meter.setFixedWidth(80)
+        self.audio_level_meter.setToolTip(
+            "Microphone input level. Moves when audio is reaching the app — "
+            "use this to verify your radio / cable / input device is wired up."
+        )
+        self.audio_level_meter.setAccessibleName("Microphone input level")
+        self.audio_level_meter.setAccessibleDescription(
+            "Real-time peak amplitude of the captured audio. Stays at zero "
+            "when Listen is off or no audio is arriving."
+        )
+        input_layout.addWidget(self.audio_level_meter)
+
         self.target_dropdown = QComboBox(self)
         self.target_dropdown.setMinimumWidth(120)
         self.target_dropdown.setAccessibleName("Transmission target")
@@ -1327,6 +1358,7 @@ class MainWindow(QMainWindow):
         self.stt_worker.transcribed.connect(self.on_transcription)
         self.stt_worker.error.connect(self.on_stt_error)
         self.stt_worker.status.connect(self.on_stt_status)
+        self.stt_worker.audio_level.connect(self.audio_level_meter.setValue)
         self.stt_worker.start()
         self.listen_btn.setText("&Listening…")
         self.listen_btn.setAccessibleDescription(
@@ -1341,6 +1373,7 @@ class MainWindow(QMainWindow):
                 worker.transcribed.disconnect(self.on_transcription)
                 worker.error.disconnect(self.on_stt_error)
                 worker.status.disconnect(self.on_stt_status)
+                worker.audio_level.disconnect(self.audio_level_meter.setValue)
             except (TypeError, RuntimeError):
                 pass
             worker.stop()
@@ -1353,6 +1386,7 @@ class MainWindow(QMainWindow):
                 self._stt_vad_model = worker.vad_model
                 self._stt_whisper_model_name = worker.whisper_model_name
             worker.deleteLater()
+        self.audio_level_meter.setValue(0)
         self.listen_btn.setText("&Listen")
         self.listen_btn.setAccessibleDescription(
             "Start or stop transcribing incoming radio audio. Currently stopped."
