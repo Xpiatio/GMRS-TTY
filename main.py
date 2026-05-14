@@ -4,10 +4,7 @@ import os
 import glob
 import datetime
 import re
-import wave
-import io
 import traceback
-import tempfile
 import collections
 
 import numpy as np
@@ -209,6 +206,55 @@ class AudioPlayerThread(QThread):
             self.finished.emit()
 
 
+class TTSSynthesisThread(QThread):
+    """Renders Piper synthesis off the GUI thread and emits the assembled
+    int16 PCM buffer (with PTT lead-in/tail silence already padded in).
+    Only one instance runs at a time — espeak-ng's global state is not safe
+    under concurrent synthesis."""
+    ready = Signal(object, int)  # (np.ndarray int16 or None, sample_rate)
+    error = Signal(str)
+
+    def __init__(self, voice, text, lead_seconds, tail_seconds, parent=None):
+        super().__init__(parent)
+        self.voice = voice
+        self.text = text
+        self.lead_seconds = lead_seconds
+        self.tail_seconds = tail_seconds
+
+    def run(self):
+        try:
+            syn_config = (
+                SynthesisConfig(speaker_id=0)
+                if self.voice.config.num_speakers > 1 else None
+            )
+            sample_rate = self.voice.config.sample_rate
+
+            chunks = []
+            for chunk in self.voice.synthesize(self.text, syn_config=syn_config):
+                arr = chunk.audio_int16_array
+                if len(arr) > 0:
+                    chunks.append(arr)
+
+            if not chunks:
+                self.ready.emit(None, sample_rate)
+                return
+
+            lead_samples = int(self.lead_seconds * sample_rate)
+            tail_samples = int(self.tail_seconds * sample_rate)
+            total = lead_samples + sum(len(c) for c in chunks) + tail_samples
+            # np.zeros so lead and tail regions are already silence; no
+            # extra concatenates to splice them in.
+            audio = np.zeros(total, dtype=np.int16)
+            pos = lead_samples
+            for c in chunks:
+                n = len(c)
+                audio[pos:pos + n] = c
+                pos += n
+            self.ready.emit(audio, sample_rate)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class PTT:
     """PTT interface. Modes share lead-in/tail silence padding so the radio's
     keying ramp or VOX hang time doesn't clip audio."""
@@ -309,7 +355,7 @@ class STTWorker(QThread):
     MODELS_STT_DIR = os.path.join("Models", "STT")
 
     def __init__(self, input_device=None, whisper_model="small.en", vad_threshold=0.5,
-                 parent=None):
+                 whisper=None, vad_model=None, parent=None):
         super().__init__(parent)
         self.input_device = input_device if input_device not in (None, -1) else None
         self.whisper_model_name = whisper_model
@@ -317,6 +363,11 @@ class STTWorker(QThread):
         self.vad_threshold = float(vad_threshold)
         self._running = True
         self._paused = False
+        # Public so MainWindow can hoist them out after the worker stops and
+        # hand them back to the next worker — avoids re-loading on every
+        # Listen toggle. Either both are None (need to load) or both are set.
+        self.whisper = whisper
+        self.vad_model = vad_model
 
     def stop(self):
         self._running = False
@@ -352,11 +403,15 @@ class STTWorker(QThread):
             return
 
         try:
-            self.status.emit(f"Loading Whisper model from {self.whisper_model_path}...")
-            whisper = WhisperModel(self.whisper_model_path, device="cpu", compute_type="int8")
-            vad_model = load_silero_vad()
+            if self.whisper is None or self.vad_model is None:
+                self.status.emit(f"Loading Whisper model from {self.whisper_model_path}...")
+                self.whisper = WhisperModel(
+                    self.whisper_model_path, device="cpu", compute_type="int8"
+                )
+                self.vad_model = load_silero_vad()
+            whisper = self.whisper
             vad_iter = VADIterator(
-                vad_model,
+                self.vad_model,
                 sampling_rate=self.SAMPLE_RATE,
                 threshold=self.vad_threshold,
                 min_silence_duration_ms=500,
@@ -633,20 +688,16 @@ class ConfigDialog(QDialog):
             QApplication.processEvents()
 
             syn_config = SynthesisConfig(speaker_id=0) if voice.config.num_speakers > 1 else None
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                tmp_path = tmp.name
-            try:
-                with wave.open(tmp_path, 'wb') as wav_file:
-                    voice.synthesize_wav(self.TEST_SAMPLE_TEXT, wav_file, syn_config=syn_config)
-                data, _ = sf.read(tmp_path, dtype='int16')
-            finally:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-
-            if len(data) == 0:
+            chunks = [
+                c.audio_int16_array
+                for c in voice.synthesize(self.TEST_SAMPLE_TEXT, syn_config=syn_config)
+                if len(c.audio_int16_array) > 0
+            ]
+            if not chunks:
                 QMessageBox.warning(self, "Test Voice", "Voice generated no audio.")
                 self._reset_test_button()
                 return
+            data = chunks[0] if len(chunks) == 1 else np.concatenate(chunks)
 
             self._test_player = AudioPlayerThread(
                 data, voice.config.sample_rate, device=self.output_device_input.currentData()
@@ -777,6 +828,11 @@ class MainWindow(QMainWindow):
 
         self.voice_cache = {}
         self.stt_worker = None
+        # Reused across Listen toggles so we don't pay the ~1–3s Whisper
+        # load on every restart. Invalidated when whisper_model changes.
+        self._stt_whisper = None
+        self._stt_vad_model = None
+        self._stt_whisper_model_name = None
         self.pending_buttons = {}  # callsign -> QPushButton
         self.ptt = make_ptt(self.config)
 
@@ -800,9 +856,11 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self.stop_stt()
-        if hasattr(self, 'audio_thread') and self.audio_thread.isRunning():
-            self.audio_thread.quit()
-            self.audio_thread.wait()
+        for attr in ('tts_thread', 'audio_thread'):
+            thread = getattr(self, attr, None)
+            if thread is not None and thread.isRunning():
+                thread.quit()
+                thread.wait()
         try:
             self.ptt.close()
         except Exception:
@@ -1063,7 +1121,8 @@ class MainWindow(QMainWindow):
         self.id_btn.setEnabled(enabled)
 
     def _synthesize_and_play(self, tts_text):
-        """Render `tts_text` through Piper and play it; manages TX button state."""
+        """Kick off Piper synthesis on a background thread and hand the result
+        to the player when ready. Manages TX button state across both stages."""
         self._set_tx_buttons_enabled(False)
 
         voice_path = self.config.get("voice", "")
@@ -1082,65 +1141,38 @@ class MainWindow(QMainWindow):
 
         voice = self.voice_cache[voice_path]
 
-        # Synthesize sequentially in the main thread (avoids espeak-ng thread crashes).
-        try:
-            sentences = re.split(r'(?<=[.!?])\s+', tts_text)
-            audio_chunks = []
-            syn_config = SynthesisConfig(speaker_id=0) if voice.config.num_speakers > 1 else None
+        self.tts_thread = TTSSynthesisThread(
+            voice, tts_text,
+            self.ptt.lead_in_seconds, self.ptt.tail_seconds,
+            parent=self,
+        )
+        self.tts_thread.ready.connect(self._on_tts_synthesized)
+        self.tts_thread.error.connect(self._on_tts_synthesis_error)
+        self.tts_thread.start()
 
-            for sentence in sentences:
-                sentence = sentence.strip()
-                if not sentence:
-                    continue
-
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                    temp_wav_path = tmp.name
-
-                try:
-                    with wave.open(temp_wav_path, 'wb') as wav_file:
-                        voice.synthesize_wav(sentence, wav_file, syn_config=syn_config)
-
-                    data, _ = sf.read(temp_wav_path, dtype='int16')
-                    if len(data) > 0:
-                        audio_chunks.append(data)
-                    else:
-                        self.append_to_chat(f"<i>Warning: Piper generated 0 frames for: '{sentence}'</i>", color=COLOR_ERROR)
-                finally:
-                    if os.path.exists(temp_wav_path):
-                        os.remove(temp_wav_path)
-
-            if audio_chunks:
-                full_audio = np.concatenate(audio_chunks)
-                sample_rate = voice.config.sample_rate
-                lead_samples = int(self.ptt.lead_in_seconds * sample_rate)
-                tail_samples = int(self.ptt.tail_seconds * sample_rate)
-                if lead_samples > 0:
-                    full_audio = np.concatenate([
-                        np.zeros(lead_samples, dtype=full_audio.dtype), full_audio,
-                    ])
-                if tail_samples > 0:
-                    full_audio = np.concatenate([
-                        full_audio, np.zeros(tail_samples, dtype=full_audio.dtype),
-                    ])
-                self.audio_thread = AudioPlayerThread(
-                    full_audio, sample_rate, device=self.config.get("output_device", -1)
-                )
-                self.audio_thread.finished.connect(self.on_tts_finished)
-                self.audio_thread.error.connect(self.on_tts_error)
-                self._pause_stt_for_tx()
-                try:
-                    self.ptt.key()
-                except Exception as e:
-                    self.append_to_chat(f"<i>PTT key failed: {e}</i>", color=COLOR_ERROR)
-                self.audio_thread.start()
-            else:
-                self._set_tx_buttons_enabled(True)
-
-        except Exception as e:
-            traceback.print_exc()
-            self.append_to_chat(f"<i>TTS Error: {str(e)}</i>", color=COLOR_ERROR)
-            self._resume_stt_after_tx()
+    def _on_tts_synthesized(self, audio, sample_rate):
+        if audio is None or len(audio) == 0:
+            self.append_to_chat("<i>Warning: Piper generated no audio.</i>", color=COLOR_ERROR)
             self._set_tx_buttons_enabled(True)
+            return
+
+        self.audio_thread = AudioPlayerThread(
+            audio, sample_rate, device=self.config.get("output_device", -1)
+        )
+        self.audio_thread.finished.connect(self.on_tts_finished)
+        self.audio_thread.error.connect(self.on_tts_error)
+        self._pause_stt_for_tx()
+        try:
+            self.ptt.key()
+        except Exception as e:
+            self.append_to_chat(f"<i>PTT key failed: {e}</i>", color=COLOR_ERROR)
+        self.audio_thread.start()
+
+    def _on_tts_synthesis_error(self, msg):
+        traceback.print_exc()
+        self.append_to_chat(f"<i>TTS Error: {msg}</i>", color=COLOR_ERROR)
+        self._resume_stt_after_tx()
+        self._set_tx_buttons_enabled(True)
 
     def on_tts_finished(self):
         try:
@@ -1180,10 +1212,16 @@ class MainWindow(QMainWindow):
     def start_stt(self):
         if self.stt_worker and self.stt_worker.isRunning():
             return
+        desired_model = self.config.get("whisper_model", "small.en")
+        if desired_model != self._stt_whisper_model_name:
+            self._stt_whisper = None
+            self._stt_vad_model = None
         self.stt_worker = STTWorker(
             input_device=self.config.get("input_device", -1),
-            whisper_model=self.config.get("whisper_model", "small.en"),
+            whisper_model=desired_model,
             vad_threshold=self.config.get("vad_threshold", 0.5),
+            whisper=self._stt_whisper,
+            vad_model=self._stt_vad_model,
             parent=self,
         )
         self.stt_worker.transcribed.connect(self.on_transcription)
@@ -1208,6 +1246,12 @@ class MainWindow(QMainWindow):
             worker.stop()
             if worker.isRunning():
                 worker.wait(15000)
+            # Hoist loaded models out before the worker is destroyed so the
+            # next start_stt can skip the multi-second model load.
+            if worker.whisper is not None and worker.vad_model is not None:
+                self._stt_whisper = worker.whisper
+                self._stt_vad_model = worker.vad_model
+                self._stt_whisper_model_name = worker.whisper_model_name
             worker.deleteLater()
         self.listen_btn.setText("&Listen")
         self.listen_btn.setAccessibleDescription(
