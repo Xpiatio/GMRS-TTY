@@ -14,7 +14,7 @@ The application will feature a user-friendly interface divided into Configuratio
 
 ### 2.2 Main Dashboard
 - **Header**: Clearly displays the currently configured Callsign, Name, and Location for user reference.
-- **Target Selection**: A dropdown menu used to select the intended recipient for an outgoing message. The default value is "All". It is populated automatically from the application's contact records and manually entered contacts.
+- **Target Selection**: A dropdown menu used to select the intended recipient for an outgoing message. The default value is "All". It is populated automatically from the application's contact records and manually entered contacts. Entries are sorted alphabetically by callsign (case-insensitive, ties broken by operator name); the "All" open-call entry is pinned at index 0.
 - **Rx Section (Incoming)**: A large, scrollable "chat room" style text area displaying live transcriptions of incoming radio transmissions, each line timestamped (`[RX HH:MM:SS]: ...`).
 - **Pending Stations Bar**: A horizontal strip between the chat area and the input row. When the STT detects a new GMRS callsign in incoming transcriptions that is not yet in the contact list, a yellow pill button appears (`+ Add {CALLSIGN}`) with a tooltip showing the detected name/location heuristics. Clicking it opens a prefilled "Add Station" dialog.
 - **Tx Section (Outgoing)**: A `Listen` toggle, the Target Selection dropdown, a text input box, and a `Transmit` button. Pressing Enter in the input box transmits.
@@ -23,6 +23,7 @@ The application will feature a user-friendly interface divided into Configuratio
 
 ### 2.3 Contact Management Screen
 - **Functionality**: A separate screen accessible via a menu that allows the user to manually add, remove, or modify entries for known callsigns and names.
+- **Ordering**: Contacts are sorted alphabetically by callsign on load and on every save (Contacts-dialog OK and Add-Station-pill OK). "ALL" is pinned at the top regardless of alphabetical position. Within a shared callsign, rows are ordered by operator name. The table itself does not re-sort while the user is editing a row; the sort runs when the dialog is accepted so editing stays stable.
 - **Persistence**: Contact data is saved to `contacts.json`.
 
 ### 2.4 Configuration Dialog
