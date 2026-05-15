@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QProgressBar,
-    QPushButton, QTextEdit, QVBoxLayout, QWidget,
+    QPushButton, QVBoxLayout, QWidget,
 )
 
 from gmrs_tty.audio.playback import AudioPlayerThread
@@ -17,7 +17,7 @@ from gmrs_tty.constants import (
     PILL_BG, PILL_BORDER, PILL_TEXT,
 )
 from gmrs_tty.fcc.id_rule import format_outgoing_message, format_standalone_id
-from gmrs_tty.persistence.contacts import sort_contacts
+from gmrs_tty.persistence.contacts import index_contacts_by_callsign, sort_contacts
 from gmrs_tty.persistence.json_store import load_json, save_json
 from gmrs_tty.ptt import make_ptt
 from gmrs_tty.stt.worker import STTWorker
@@ -25,6 +25,7 @@ from gmrs_tty.text.callsigns import detect_callsigns, spell_digits_in_callsigns
 from gmrs_tty.text.metadata import extract_name_location
 from gmrs_tty.text.shorthand import expand_tty_abbreviations
 from gmrs_tty.tts.synthesizer import TTSSynthesisThread
+from gmrs_tty.ui.chat_display import ChatDisplay
 from gmrs_tty.ui.config_dialog import ConfigDialog
 from gmrs_tty.ui.contacts_dialog import AddContactDialog, ContactsDialog
 
@@ -53,6 +54,7 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.update_header()
         self.populate_target_dropdown()
+        self._refresh_callsign_index()
         self._check_bundled_models()
 
     def _check_bundled_models(self):
@@ -105,12 +107,12 @@ class MainWindow(QMainWindow):
 
         # 2. Main Chat Room (Rx Section). No hardcoded font-size so the OS font-scale
         # setting carries through.
-        self.chat_display = QTextEdit(self)
-        self.chat_display.setReadOnly(True)
+        self.chat_display = ChatDisplay(self)
         self.chat_display.setStyleSheet("padding: 5px;")
         self.chat_display.setAccessibleName("Conversation log")
         self.chat_display.setAccessibleDescription(
-            "Timestamped log of incoming radio transmissions and outgoing messages."
+            "Timestamped log of incoming radio transmissions and outgoing messages. "
+            "Known callsigns are highlighted; hover for the operator names linked to each one."
         )
         main_layout.addWidget(self.chat_display)
 
@@ -236,9 +238,18 @@ class MainWindow(QMainWindow):
         self.header_label.setText(f"Station: {call} | Operator: {name} | Location: {loc}")
 
     def populate_target_dropdown(self):
-        """Fills the target selection combo box with current contacts."""
+        """Fills the target selection combo box with current contacts.
+
+        'All (Everyone)' is hard-coded as the first entry regardless of
+        contacts.json — it's a UI primitive (broadcast / no preface), not a
+        person, so the user can never lose the open-call option by deleting
+        all their contacts. Any stray 'All' rows in contacts.json are skipped
+        so the entry never duplicates."""
         self.target_dropdown.clear()
+        self.target_dropdown.addItem("All (Everyone)", userData="All")
         for contact in self.contacts:
+            if (contact.get("callsign", "") or "").upper() == "ALL":
+                continue
             display_text = f"{contact['callsign']} ({contact['name']})"
             self.target_dropdown.addItem(display_text, userData=contact['callsign'])
 
@@ -280,6 +291,7 @@ class MainWindow(QMainWindow):
             self.contacts = sort_contacts(dlg.get_contacts())
             save_json(CONTACTS_FILE, self.contacts)
             self.populate_target_dropdown()
+            self._refresh_callsign_index()
 
     def transmit_message(self):
         """Handles when the user attempts to send a message."""
@@ -426,7 +438,15 @@ class MainWindow(QMainWindow):
 
     def append_to_chat(self, text, color="black"):
         """Appends HTML formatted text to the chat display."""
-        self.chat_display.append(f"<span style='color:{color};'>{text}</span>")
+        self.chat_display.append_message(text, color=color)
+
+    def _refresh_callsign_index(self):
+        """Recompute the known-callsign lookup and push it to the chat widget.
+        Past chat lines are re-scanned so newly-added contacts get retroactive
+        pill highlighting."""
+        index = index_contacts_by_callsign(self.contacts)
+        self.chat_display.set_callsign_index(index)
+        self.chat_display.rescan_all_blocks()
 
     def toggle_listening(self, on):
         if on:
@@ -561,6 +581,7 @@ class MainWindow(QMainWindow):
             self.contacts = sort_contacts(self.contacts)
             save_json(CONTACTS_FILE, self.contacts)
             self.populate_target_dropdown()
+            self._refresh_callsign_index()
         btn = self.pending_buttons.pop(callsign, None)
         if btn is not None:
             btn.setParent(None)
