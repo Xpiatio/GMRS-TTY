@@ -4,6 +4,8 @@ import os
 import glob
 import datetime
 import re
+import shutil
+import subprocess
 import traceback
 import collections
 
@@ -478,13 +480,7 @@ class STTWorker(QThread):
             return
 
         try:
-            stream = sd.InputStream(
-                samplerate=self.SAMPLE_RATE,
-                channels=1,
-                dtype='float32',
-                device=self.input_device,
-            )
-            stream.start()
+            read_chunk, close_input = self._open_input_source()
         except Exception as e:
             self.error.emit(f"Failed to open input device: {e}")
             return
@@ -498,7 +494,7 @@ class STTWorker(QThread):
         try:
             while self._running:
                 try:
-                    data, _ = stream.read(self.CHUNK_SAMPLES)
+                    chunk = read_chunk()
                 except Exception as e:
                     self.error.emit(f"Audio read error: {e}")
                     break
@@ -507,7 +503,7 @@ class STTWorker(QThread):
                 # disconnected mic shows up as a flat-zero meter regardless of
                 # transmit state. Peak (not RMS) matches what users expect
                 # from a VU-style indicator and reacts fast to short syllables.
-                peak = float(np.max(np.abs(data[:, 0]))) if data.size else 0.0
+                peak = float(np.max(np.abs(chunk))) if chunk.size else 0.0
                 self.audio_level.emit(min(100, int(peak * 100)))
 
                 if self._paused:
@@ -531,8 +527,6 @@ class STTWorker(QThread):
                     self.status.emit("Listening...")
                     was_paused = False
 
-                chunk = data[:, 0].copy()
-
                 try:
                     speech_dict = vad_iter(chunk, return_seconds=False)
                 except Exception as e:
@@ -555,11 +549,74 @@ class STTWorker(QThread):
                 rolling.append(chunk)
         finally:
             try:
+                close_input()
+            except Exception:
+                pass
+            self.status.emit("Stopped listening")
+
+    def _open_input_source(self):
+        """Return (read_chunk, close) for the active capture path.
+
+        Prefers `parec` (PulseAudio/PipeWire) over sounddevice on Linux when
+        the user has selected the system default device. PortAudio's
+        PipeWire-via-ALSA bridge can silently deliver flat-zero buffers on
+        PipeWire 1.4 — only the first stream after PortAudio init returns
+        audio, and long-lived streams degenerate to silence with no error.
+        parec talks to PipeWire's PulseAudio protocol directly and is
+        reliable across stream restarts. Falls back to sounddevice when
+        parec isn't on PATH or when a specific PortAudio device is configured.
+        """
+        bytes_per_chunk = self.CHUNK_SAMPLES * 2  # int16 little-endian
+        parec_bin = shutil.which("parec") if self.input_device is None else None
+        if parec_bin:
+            proc = subprocess.Popen(
+                [parec_bin, "--raw", "--format=s16le",
+                 f"--rate={self.SAMPLE_RATE}", "--channels=1"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+
+            def read_chunk():
+                buf = proc.stdout.read(bytes_per_chunk)
+                while len(buf) < bytes_per_chunk:
+                    more = proc.stdout.read(bytes_per_chunk - len(buf))
+                    if not more:
+                        raise IOError("parec stdout closed unexpectedly")
+                    buf = buf + more
+                return np.frombuffer(buf, dtype=np.int16).astype(np.float32) / 32768.0
+
+            def close():
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=2)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+
+            return read_chunk, close
+
+        stream = sd.InputStream(
+            samplerate=self.SAMPLE_RATE,
+            channels=1,
+            dtype='float32',
+            device=self.input_device,
+        )
+        stream.start()
+
+        def read_chunk():
+            data, _ = stream.read(self.CHUNK_SAMPLES)
+            return data[:, 0].copy()
+
+        def close():
+            try:
                 stream.stop()
                 stream.close()
             except Exception:
                 pass
-            self.status.emit("Stopped listening")
+
+        return read_chunk, close
 
     def _transcribe(self, audio, whisper, nr_module):
         try:

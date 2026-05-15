@@ -55,7 +55,7 @@ This application exists for users with disabilities, so accessibility is a hard 
 
 - Python 3.11+ (3.13 recommended)
 - A working microphone and speaker
-- Linux: PortAudio dev libs (`sudo apt install libportaudio2 portaudio19-dev`)
+- Linux: PortAudio dev libs (`sudo apt install libportaudio2 portaudio19-dev`). On PipeWire systems, also install `pulseaudio-utils` for the `parec` binary (`sudo apt install pulseaudio-utils`) — the app prefers it for mic capture because PortAudio's PipeWire-via-ALSA bridge can silently deliver flat-zero audio on PipeWire 1.4. If `parec` is missing the app falls back to PortAudio.
 - ~1 GB disk for dependencies (CTranslate2, ONNX Runtime, PySide6) plus the STT model (~75 MB for `small.en`, ~150 MB for `medium.en`) fetched once via `bootstrap_models.py`
 
 ## Getting Started
