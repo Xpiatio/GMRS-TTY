@@ -207,6 +207,10 @@ Tracked in [implementation_plan.md](implementation_plan.md):
 6. ✅ Off-grid model bundling (Whisper via `bootstrap_models.py`; Silero VAD ONNX ships in the wheel)
 7. ⏳ Cross-platform packaging (Windows installer, Linux/Pi tarballs)
 8. ⏳ Multi-arch Docker image (`linux/amd64` + `linux/arm64`)
+9. ⏳ Future hardware (Bluetooth HT/mobile audio, hamlib CAT/CI-V rig control)
+10. ⏳ TTY-to-radio-vernacular translation at TTS time (expand `GA`/`SK`/`73`/Q-signals to spoken form on TX)
+11. ⏳ AI-summarized session journal (on-device summaries via `ollama` + Gemma 3n E2B, with a date-stamped history viewer)
+12. ⏳ Quick / common messages (one-click preset phrases like "Radio check", "Standing by", "QSY to channel {N}", editable per-user)
 
 ## Contributing
 
