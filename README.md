@@ -28,11 +28,12 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
 - "All" target is transmitted as-is (no preface).
 
 ### Contact discovery
-- Detects GMRS callsigns in incoming transcriptions:
+- Detects callsigns in incoming transcriptions across formats:
+  - GMRS modern (`WSLZ233`), GMRS legacy (`KAE1234`), and US amateur (`K1ABC`, `KD9XYZ`, `W1AW`).
   - Compact form: `WSLZ233`
   - Spaced: `W S L Z 2 3 3`
   - With separators: `W.S.L.Z.233`, `WSLZ-233`, `WSLZ, 233`
-  - NATO phonetic: `Whiskey Sierra Lima Zulu Two Three Three`
+  - NATO phonetic: `Whiskey Sierra Lima Zulu Two Three Three` (also `X-ray` / `X ray`).
 - Unknown stations appear as one-click `+ Add` pills below the chat with the detected name/location pre-filled.
 - Manual contact management dialog (callsign, name, location).
 
