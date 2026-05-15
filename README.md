@@ -154,9 +154,23 @@ You are still responsible for legal operation. This app does not replace a valid
 
 ```
 GMRS-TTY/
-├── main.py                 # PySide6 app, STT worker, TTS playback, detection logic
+├── main.py                 # Thin entry-point shim → gmrs_tty.app:main
 ├── bootstrap_models.py     # One-time fetch of the faster-whisper STT model into Models/
-├── requirements.txt        # Python dependencies
+├── gmrs_tty/               # Application package
+│   ├── app.py              # QApplication wiring
+│   ├── constants.py        # WCAG palette, pill colors, config/contacts paths
+│   ├── audio/              # capture (parec/PortAudio), DSP (bandpass + denoise), VAD, playback
+│   ├── fcc/                # Part 95 ID-rule formatting (15-min timer, preface, standalone ID)
+│   ├── persistence/        # JSON store + contact sort/sort-by-suffix
+│   ├── ptt/                # PTT base + Manual / VOX / Serial implementations + factory
+│   ├── stt/                # WhisperTranscriber + STTWorker orchestrator
+│   ├── text/               # callsign detection, NATO/phonetics, TTY shorthand, name/location heuristics
+│   ├── tts/                # Piper TTSSynthesisThread
+│   └── ui/                 # MainWindow, ConfigDialog, ContactsDialog, AddContactDialog, DeviceQueryThread
+├── tests/                  # pytest suites covering pure logic (text/, fcc/, persistence/, ptt/)
+├── requirements.txt        # Runtime Python dependencies
+├── requirements-dev.txt    # pytest + pytest-cov for the test suite
+├── pyproject.toml          # pytest configuration
 ├── config.example.json     # Template — copy to config.json and edit
 ├── Voices/                 # Piper voice models (gitignored; download yourself)
 ├── Models/                 # Bundled STT model artifacts (gitignored; run bootstrap_models.py)
@@ -165,6 +179,20 @@ GMRS-TTY/
 ├── implementation_plan.md  # Staged build plan (Stages 1–8)
 └── README.md
 ```
+
+## Tests
+
+The pure-logic surface (callsign detection, NATO phonetics, TTY shorthand
+expansion, FCC ID-rule formatting, contacts sorting, PTT factory) is
+covered by a pytest suite that runs without Qt or audio hardware:
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+UI flows (Listen toggle, Transmit, Configuration / Contacts dialogs) are
+not yet automated — verify them by running the app after changes.
 
 ## Roadmap
 
