@@ -37,6 +37,7 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
   - With separators: `W.S.L.Z.233`, `WSLZ-233`, `WSLZ, 233`
   - NATO phonetic: `Whiskey Sierra Lima Zulu Two Three Three` (also `X-ray` / `X ray`).
 - Unknown stations appear as one-click `+ Add` pills below the chat with the detected name/location pre-filled.
+- **Known callsigns are pill-highlighted in the chat** — any callsign that matches an entry in Contacts is rendered with the amber pill palette (bold, amber background) wherever it appears in RX or TX lines. Hovering reveals every name (and location, when present) sharing that callsign, so family-shared GMRS calls expose all of their operators at a glance. New contacts retroactively re-highlight earlier transmissions.
 - Manual contact management dialog (callsign, name, location).
 
 ### Cross-platform & off-grid
@@ -127,7 +128,7 @@ python main.py
 ### Main window
 
 - **Header** shows your configured callsign, name, and location.
-- **Chat area** — incoming (green `[RX HH:MM:SS]`) and outgoing (blue `[TX to ...]`) messages.
+- **Chat area** — incoming (green `[RX HH:MM:SS]`) and outgoing (blue `[TX to ...]`) messages. Callsigns that match a saved contact are styled with an amber, bold pill; hover any pill to see every operator name (and location, if recorded) associated with that callsign.
 - **Listen** button — toggles microphone capture and live transcription. Loads the bundled Whisper model from `Models/STT/<whisper_model>/` (no network); fails fast with a clear instruction if the model directory is missing.
 - **Input level meter** (right of Listen) — a thin bar that shows real-time peak amplitude of the captured audio. Use it to verify your radio / cable / input device is actually wired up: if it stays at zero while you transmit into the radio, the app isn't getting audio. Stays at zero when Listen is off.
 - **Target dropdown** — pick a callsign from your contacts, or "All" for general transmission. Entries are sorted alphabetically by callsign (ties broken by operator name); the "All" open-call entry is pinned at the top.

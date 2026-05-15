@@ -1,4 +1,70 @@
-from gmrs_tty.persistence.contacts import sort_contacts, sort_contacts_by_suffix
+from gmrs_tty.persistence.contacts import (
+    format_callsign_tooltip,
+    index_contacts_by_callsign,
+    sort_contacts,
+    sort_contacts_by_suffix,
+)
+
+
+class TestIndexContactsByCallsign:
+    def test_indexes_by_uppercased_callsign(self):
+        rows = [
+            {"callsign": "wslz100", "name": "Alice"},
+            {"callsign": "WSLZ100", "name": "Bob"},
+            {"callsign": "KAE1234", "name": "Carol"},
+        ]
+        idx = index_contacts_by_callsign(rows)
+        assert set(idx) == {"WSLZ100", "KAE1234"}
+        assert [c["name"] for c in idx["WSLZ100"]] == ["Alice", "Bob"]
+
+    def test_skips_all_and_empty(self):
+        rows = [
+            {"callsign": "ALL", "name": "Everyone"},
+            {"callsign": "", "name": "Empty"},
+            {"name": "Missing key"},
+            {"callsign": None, "name": "None"},
+            {"callsign": "WSLZ100", "name": "Real"},
+        ]
+        idx = index_contacts_by_callsign(rows)
+        assert set(idx) == {"WSLZ100"}
+
+    def test_empty_input(self):
+        assert index_contacts_by_callsign([]) == {}
+        assert index_contacts_by_callsign(None) == {}
+
+
+class TestFormatCallsignTooltip:
+    def test_single_entry_with_location(self):
+        tip = format_callsign_tooltip(
+            "WSLZ100", [{"name": "Alice", "location": "Hill Top"}]
+        )
+        assert tip == "WSLZ100\n  • Alice — Hill Top"
+
+    def test_single_entry_without_location(self):
+        tip = format_callsign_tooltip("WSLZ100", [{"name": "Alice"}])
+        assert tip == "WSLZ100\n  • Alice"
+
+    def test_multiple_entries_listed_in_order(self):
+        tip = format_callsign_tooltip(
+            "WSLZ100",
+            [
+                {"name": "Alice", "location": "Hill Top"},
+                {"name": "Bob", "location": ""},
+            ],
+        )
+        assert tip == "WSLZ100\n  • Alice — Hill Top\n  • Bob"
+
+    def test_uppercases_callsign_header(self):
+        tip = format_callsign_tooltip("wslz100", [{"name": "Alice"}])
+        assert tip.startswith("WSLZ100\n")
+
+    def test_missing_name_falls_back(self):
+        tip = format_callsign_tooltip("WSLZ100", [{"name": "", "location": "Hill"}])
+        assert "(no name)" in tip
+
+    def test_empty_returns_empty_string(self):
+        assert format_callsign_tooltip("WSLZ100", []) == ""
+        assert format_callsign_tooltip("WSLZ100", None) == ""
 
 
 class TestSortContacts:

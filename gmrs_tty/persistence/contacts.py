@@ -1,6 +1,34 @@
 import re
 
 
+def index_contacts_by_callsign(contacts):
+    """Return {UPPERCASED_CALLSIGN: [contact, …]} for use as a fast lookup.
+    Skips empty callsigns and the 'ALL' open-call shortcut. Preserves input
+    order within each bucket so duplicates render in the order they're stored."""
+    index = {}
+    for c in contacts or []:
+        cs = (c.get("callsign", "") or "").upper()
+        if not cs or cs == "ALL":
+            continue
+        index.setdefault(cs, []).append(c)
+    return index
+
+
+def format_callsign_tooltip(callsign, contacts):
+    """Render a multi-line tooltip body listing every name/location entry that
+    shares `callsign`. Returns '' when no entries are supplied so callers can
+    treat it as falsy."""
+    entries = list(contacts or [])
+    if not entries:
+        return ""
+    lines = [callsign.upper()]
+    for c in entries:
+        name = (c.get("name", "") or "").strip() or "(no name)"
+        loc = (c.get("location", "") or "").strip()
+        lines.append(f"  • {name} — {loc}" if loc else f"  • {name}")
+    return "\n".join(lines)
+
+
 def sort_contacts(contacts):
     """Return `contacts` sorted alphabetically by callsign (case-insensitive),
     with the special 'ALL' open-call entry pinned at index 0 and ties broken
