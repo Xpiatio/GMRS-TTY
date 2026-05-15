@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QComboBox, QTextEdit, QLineEdit, QPushButton,
     QDialog, QFormLayout, QDialogButtonBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMessageBox, QDoubleSpinBox, QProgressBar,
+    QHeaderView, QMessageBox, QDoubleSpinBox, QProgressBar, QSlider,
 )
 from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
 from PySide6.QtCore import Qt, QThread, Signal
@@ -62,10 +62,63 @@ NUMBER_WORDS = {
     "five": "5", "fife": "5", "six": "6", "seven": "7", "eight": "8",
     "niner": "9", "nine": "9",
 }
+# TTY/TDD shorthand from the Corada TDD/TTY Etiquette Glossary. Expanded into
+# full words before Piper TTS so the receiver hears "Go ahead" instead of "G A".
+TTY_ABBREVIATIONS = {
+    # Universal terms
+    "GA TO SK": "Completing messages and getting ready to hang up",
+    "SKSK":     "Hanging up",
+    "GA":       "Go ahead",
+    "SK":       "Stop keying",
+    "TDD":      "Telecommunications Device for the Deaf",
+    "TTY":      "Teletypewriter",
+    "XXXX":     "Erasing the error",
+    "Q":        "Question mark",
+    # Common terms
+    "ASAP": "As soon as possible",
+    "ASST": "Assistant",
+    "BIZ":  "Business",
+    "BYE":  "Goodbye",
+    "CD":   "Could",
+    "CLD":  "Could",
+    "CUL":  "See you later",
+    "CUZ":  "Because",
+    "DR":   "Doctor",
+    "FIG":  "Figures",
+    "HD":   "Hold",
+    "HLD":  "Hold",
+    "ILY":  "I love you",
+    "IMPT": "Important",
+    "INC":  "Incomplete",
+    "LTRS": "Letters",
+    "MISC": "Miscellaneous",
+    "MSG":  "Message",
+    "MSGE": "Message",
+    "MSGS": "Messages",
+    "MTG":  "Meeting",
+}
+# Sort keys longest-first so "GA TO SK" matches before "GA"/"SK" and "SKSK"
+# matches before "SK".
+_TTY_ABBREV_PATTERN = re.compile(
+    r'\b(' + '|'.join(
+        re.escape(k) for k in sorted(TTY_ABBREVIATIONS, key=len, reverse=True)
+    ) + r')\b',
+    re.IGNORECASE,
+)
 SINGLE_CHAR_RUN_RE = re.compile(r'\b(?:[A-Za-z0-9][\s\-.,]+){2,}[A-Za-z0-9]\b')
 LOCATION_RE = re.compile(
     r'\b(?:in|from|near|at)\s+([A-Z][a-z]+(?:[\s,]+[A-Z][a-z]+){0,3})',
 )
+
+
+def expand_tty_abbreviations(text):
+    """Replace TTY/TDD shorthand (GA, SKSK, ASAP, ILY, MSG, ...) with the
+    full-word form so Piper reads it as prose. Case-insensitive; word-boundary
+    matched so 'QSO' won't trigger 'Q' and 'Doctor' won't trigger 'DR'."""
+    return _TTY_ABBREV_PATTERN.sub(
+        lambda m: TTY_ABBREVIATIONS[m.group(1).upper()],
+        text,
+    )
 
 
 def _convert_phonetics(text):
@@ -248,18 +301,19 @@ class TTSSynthesisThread(QThread):
     ready = Signal(object, int)  # (np.ndarray int16 or None, sample_rate)
     error = Signal(str)
 
-    def __init__(self, voice, text, lead_seconds, tail_seconds, parent=None):
+    def __init__(self, voice, text, lead_seconds, tail_seconds, length_scale=1.0, parent=None):
         super().__init__(parent)
         self.voice = voice
         self.text = text
         self.lead_seconds = lead_seconds
         self.tail_seconds = tail_seconds
+        self.length_scale = length_scale
 
     def run(self):
         try:
-            syn_config = (
-                SynthesisConfig(speaker_id=0)
-                if self.voice.config.num_speakers > 1 else None
+            syn_config = SynthesisConfig(
+                speaker_id=0 if self.voice.config.num_speakers > 1 else None,
+                length_scale=self.length_scale,
             )
             sample_rate = self.voice.config.sample_rate
 
@@ -742,6 +796,39 @@ class ConfigDialog(QDialog):
         voice_row_layout.addWidget(self.voice_input, 1)
         voice_row_layout.addWidget(self.test_voice_button)
 
+        # Speech-rate slider: integer 70..150 maps to Piper length_scale
+        # 0.70..1.50 (step 0.05). 1.00× = the voice's native pace; higher
+        # values slow speech, lower values speed it up. Stored in config as
+        # `tts_length_scale` (a float).
+        self.length_scale_slider = QSlider(Qt.Orientation.Horizontal)
+        self.length_scale_slider.setRange(70, 150)
+        self.length_scale_slider.setSingleStep(5)
+        self.length_scale_slider.setPageStep(10)
+        self.length_scale_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.length_scale_slider.setTickInterval(10)
+        initial_scale = float(self.config.get("tts_length_scale", 1.0))
+        self.length_scale_slider.setValue(int(round(initial_scale * 100)))
+        self.length_scale_slider.setToolTip(
+            "Piper synthesis speed. 1.00× is the voice's native pace; higher "
+            "is slower, lower is faster. Useful when listeners need more time."
+        )
+        self.length_scale_slider.setAccessibleName("Speech rate")
+        self.length_scale_slider.setAccessibleDescription(
+            "Adjust how fast the TTS voice speaks. 1.00 times is normal, "
+            "higher values are slower, lower values are faster."
+        )
+
+        self.length_scale_value_label = QLabel()
+        self.length_scale_value_label.setMinimumWidth(64)
+        self.length_scale_slider.valueChanged.connect(self._update_length_scale_label)
+        self._update_length_scale_label(self.length_scale_slider.value())
+
+        rate_row = QWidget()
+        rate_row_layout = QHBoxLayout(rate_row)
+        rate_row_layout.setContentsMargins(0, 0, 0, 0)
+        rate_row_layout.addWidget(self.length_scale_slider, 1)
+        rate_row_layout.addWidget(self.length_scale_value_label)
+
         # Device enumeration happens on a background thread; PortAudio's
         # query_devices() can block hundreds of ms on ALSA/PulseAudio and
         # contend with the live STT InputStream. Until it finishes we show
@@ -761,6 +848,7 @@ class ConfigDialog(QDialog):
         layout.addRow("&Name:", self.name_input)
         layout.addRow("&Location:", self.location_input)
         layout.addRow("&Voice Model:", voice_row)
+        layout.addRow("Speech &Rate:", rate_row)
         layout.addRow("&Input Device:", self.input_device_input)
         layout.addRow("&Output Device:", self.output_device_input)
         layout.addRow("VA&D Threshold:", self.vad_threshold_input)
@@ -806,6 +894,7 @@ class ConfigDialog(QDialog):
             "name": self.name_input.text().strip(),
             "location": self.location_input.text().strip(),
             "voice": self.voice_input.currentData(),
+            "tts_length_scale": round(self.length_scale_slider.value() / 100.0, 2),
             "input_device": self.input_device_input.currentData(),
             "output_device": self.output_device_input.currentData(),
             "vad_threshold": round(self.vad_threshold_input.value(), 2),
@@ -814,6 +903,16 @@ class ConfigDialog(QDialog):
             "ptt_serial_port": self.ptt_serial_port_input.text().strip(),
             "ptt_serial_line": self.ptt_serial_line_input.currentData(),
         }
+
+    def _update_length_scale_label(self, value):
+        scale = value / 100.0
+        if value == 100:
+            suffix = " (normal)"
+        elif value < 100:
+            suffix = " (faster)"
+        else:
+            suffix = " (slower)"
+        self.length_scale_value_label.setText(f"{scale:.2f}×{suffix}")
 
     def _update_ptt_fields(self):
         is_serial = self.ptt_mode_input.currentData() == "usb_ftdi"
@@ -838,7 +937,10 @@ class ConfigDialog(QDialog):
             self.test_voice_button.setText("Speaking…")
             QApplication.processEvents()
 
-            syn_config = SynthesisConfig(speaker_id=0) if voice.config.num_speakers > 1 else None
+            syn_config = SynthesisConfig(
+                speaker_id=0 if voice.config.num_speakers > 1 else None,
+                length_scale=self.length_scale_slider.value() / 100.0,
+            )
             chunks = [
                 c.audio_int16_array
                 for c in voice.synthesize(self.TEST_SAMPLE_TEXT, syn_config=syn_config)
@@ -1323,6 +1425,7 @@ class MainWindow(QMainWindow):
     def _synthesize_and_play(self, tts_text):
         """Kick off Piper synthesis on a background thread and hand the result
         to the player when ready. Manages TX button state across both stages."""
+        tts_text = expand_tty_abbreviations(tts_text)
         self._set_tx_buttons_enabled(False)
 
         voice_path = self.config.get("voice", "")
@@ -1344,6 +1447,7 @@ class MainWindow(QMainWindow):
         self.tts_thread = TTSSynthesisThread(
             voice, tts_text,
             self.ptt.lead_in_seconds, self.ptt.tail_seconds,
+            length_scale=float(self.config.get("tts_length_scale", 1.0)),
             parent=self,
         )
         self.tts_thread.ready.connect(self._on_tts_synthesized)

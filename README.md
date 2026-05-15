@@ -25,6 +25,8 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
 - **15-minute ID rule** — appends your callsign + name when more than 15 minutes have passed since last identification.
 - **Standalone "This is" ID button** — one-click station identification: `This is [CALL], [NATO phonetic CALL]. [name] from [location].` Resets the 15-minute ID timer.
 - **Spoken-callsign formatting** — TTS reads callsign digits one at a time (`WSLZ 2 3 3` rather than "two hundred thirty-three") so the receiver hears them as letters and digits, not numbers.
+- **TTY abbreviation expansion** — outgoing shorthand from the Corada TDD/TTY Etiquette Glossary (e.g. `GA`, `SKSK`, `ASAP`, `ILY`, `MSG`, `CUL`) is rewritten into full words before TTS speaks it, so the receiver hears "Go ahead" rather than "G A". Matching is case-insensitive and word-bounded, so it won't expand letters embedded in larger words (e.g. `Q` inside `QSO`).
+- **Adjustable speech rate** — a slider in Configuration (just under the voice picker) maps to Piper's `length_scale` from `0.70×` to `1.50×`; `1.00×` is the voice's native pace, higher is slower, lower is faster. The Test button auditions the current slider value before you save.
 - "All" target is transmitted as-is (no preface).
 
 ### Contact discovery
@@ -135,7 +137,7 @@ python main.py
 
 ### Settings menu
 
-- **Configuration** (Alt+S, Alt+C — or Ctrl+,) — edit callsign, name, location, voice model (with Test button for voice preview), input device, output device (where TTS audio plays — pick a USB sound card / Signalink / Digirig channel to feed your radio directly), VAD threshold (0.10–0.95; lower = more sensitive to weak/quiet signals, higher = stricter gating on noisy channels; default 0.5), time format (24-hour default or 12-hour with AM/PM for RX timestamps), and PTT mode. PTT options: **Manual** (you press PTT on the radio yourself), **VOX** (radio auto-keys on detected audio), or **USB FTDI / Serial** (app keys PTT via a USB-serial adapter's RTS or DTR line — when selected, Serial Port and Control Line fields enable). Changes to the input device or VAD threshold restart the listener automatically.
+- **Configuration** (Alt+S, Alt+C — or Ctrl+,) — edit callsign, name, location, voice model (with Test button for voice preview), speech rate (slider mapping to Piper's `length_scale` from 0.70× to 1.50×; 1.00× is the voice's native pace, higher is slower; Test button previews at the current value), input device, output device (where TTS audio plays — pick a USB sound card / Signalink / Digirig channel to feed your radio directly), VAD threshold (0.10–0.95; lower = more sensitive to weak/quiet signals, higher = stricter gating on noisy channels; default 0.5), time format (24-hour default or 12-hour with AM/PM for RX timestamps), and PTT mode. PTT options: **Manual** (you press PTT on the radio yourself), **VOX** (radio auto-keys on detected audio), or **USB FTDI / Serial** (app keys PTT via a USB-serial adapter's RTS or DTR line — when selected, Serial Port and Control Line fields enable). Changes to the input device or VAD threshold restart the listener automatically.
 - **Contacts** (Alt+S, Alt+N — or Ctrl+B) — table editor for known callsigns/names/locations. The list is sorted alphabetically by callsign whenever it loads or you save changes. A **Sort by Suffix** button (Alt+S inside the dialog) reorders the table by the last 3 digits of each callsign for visual scanning; the saved order remains alphabetical.
 
 ## FCC Compliance Notes (GMRS, Part 95)
