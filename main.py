@@ -38,8 +38,15 @@ PILL_BG = "#FEF3C7"       # amber-100 background for pending-station pills
 PILL_TEXT = "#78350F"     # amber-900, ≥10:1 on PILL_BG
 PILL_BORDER = "#A16207"   # amber-700, 4.05:1 on white (UI border)
 
-# GMRS callsign formats: modern (W + 3 letters + 3 digits) and legacy (KAE/KAA + 3-4 digits)
-CALLSIGN_RE = re.compile(r'\b(W[A-Z]{3}\d{3}|KA[A-Z]\d{3,4})\b', re.IGNORECASE)
+# Callsign formats we detect:
+#   - GMRS modern:  W + 3 letters + 3 digits         (WSLZ233)
+#   - GMRS legacy:  KA + 1 letter + 3-4 digits       (KAE1234)
+#   - US amateur:   1-2 letters (A/K/N/W prefix) +
+#                   1 digit + 1-3 letters            (K1ABC, KD9XYZ, W1AW)
+CALLSIGN_RE = re.compile(
+    r'\b(W[A-Z]{3}\d{3}|KA[A-Z]\d{3,4}|[AKNW][A-Z]?\d[A-Z]{1,3})\b',
+    re.IGNORECASE,
+)
 
 # NATO phonetic alphabet (case insensitive)
 NATO_PHONETIC = {
@@ -63,6 +70,10 @@ LOCATION_RE = re.compile(
 
 def _convert_phonetics(text):
     """Replace NATO phonetic words and spelled-out digits with letters/digits."""
+    # 'X-ray' is the only NATO word with an internal separator; normalize
+    # 'X-ray' / 'X ray' to 'Xray' so the word-level regex treats it as a
+    # single token instead of 'X' + 'ray'.
+    text = re.sub(r'\bX[\s\-]ray\b', 'Xray', text, flags=re.IGNORECASE)
     def repl(m):
         w = m.group(0).lower()
         return NATO_PHONETIC.get(w, NUMBER_WORDS.get(w, m.group(0)))
@@ -128,13 +139,14 @@ def callsign_to_nato(callsign):
 
 
 def spell_digits_in_callsigns(text):
-    """Insert spaces between the digits of any GMRS callsign so TTS reads them
-    individually ('233' -> '2 3 3') instead of as 'two hundred thirty-three'."""
+    """Insert spaces around every digit in any detected callsign so TTS reads
+    them one at a time. 'WSLZ233' -> 'WSLZ 2 3 3', 'K1ABC' -> 'K 1 ABC'.
+    Amateur callsigns have a digit between letter groups, so we tokenize on
+    letter-runs vs. individual digits rather than assuming a single prefix."""
     def repl(m):
         cs = m.group(1)
-        prefix = re.match(r'^[A-Za-z]+', cs).group(0)
-        digits = cs[len(prefix):]
-        return f"{prefix} {' '.join(digits)}"
+        tokens = re.findall(r'[A-Za-z]+|\d', cs)
+        return ' '.join(tokens)
     return CALLSIGN_RE.sub(repl, text)
 
 
