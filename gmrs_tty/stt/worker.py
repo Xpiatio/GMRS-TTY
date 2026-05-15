@@ -6,6 +6,7 @@ from PySide6.QtCore import QThread, Signal
 
 from gmrs_tty.audio.capture import open_input_source
 from gmrs_tty.audio.dsp import bandpass, denoise, make_bandpass_sos
+from gmrs_tty.audio.silence_watchdog import SilenceWatchdog
 from gmrs_tty.audio.vad import load_vad_model, make_vad_iterator, reset_vad_state
 from gmrs_tty.stt.transcriber import WhisperTranscriber
 
@@ -32,6 +33,7 @@ class STTWorker(QThread):
     MIN_SPEECH_DURATION_S = 0.4  # drops kerchunks / blips
     BANDPASS_LOW_HZ = 300   # narrowband-FM voice floor
     BANDPASS_HIGH_HZ = 3000  # narrowband-FM voice ceiling
+    SILENCE_RESET_S = 30.0  # re-baseline VAD after this much continuous silence
 
     MODELS_STT_DIR = os.path.join("Models", "STT")
 
@@ -112,6 +114,9 @@ class STTWorker(QThread):
         collected = []
         in_speech = False
         was_paused = False
+        silence_watchdog = SilenceWatchdog(
+            int(self.SILENCE_RESET_S * self.SAMPLE_RATE / self.CHUNK_SAMPLES)
+        )
 
         try:
             while self._running:
@@ -134,12 +139,14 @@ class STTWorker(QThread):
                         in_speech = False
                         rolling.clear()
                         reset_vad_state(vad_iter)
+                        silence_watchdog.reset()
                         self.status.emit("Paused (transmitting)")
                         was_paused = True
                     continue
 
                 if was_paused:
                     reset_vad_state(vad_iter)
+                    silence_watchdog.reset()
                     self.status.emit("Listening...")
                     was_paused = False
 
@@ -152,15 +159,23 @@ class STTWorker(QThread):
                 if speech_dict and 'start' in speech_dict:
                     in_speech = True
                     collected = list(rolling) + [chunk]
+                    silence_watchdog.note_speech()
                 elif speech_dict and 'end' in speech_dict:
                     collected.append(chunk)
                     audio = np.concatenate(collected)
                     in_speech = False
                     collected = []
+                    silence_watchdog.note_speech()
                     if len(audio) / self.SAMPLE_RATE >= self.MIN_SPEECH_DURATION_S:
                         self._transcribe_one(audio, transcriber, bandpass_sos)
                 elif in_speech:
                     collected.append(chunk)
+                    silence_watchdog.note_speech()
+                elif silence_watchdog.note_silence():
+                    # Silero's RNN state drifts after long silence; re-baseline so
+                    # the next speech onset still clears the threshold.
+                    reset_vad_state(vad_iter)
+                    silence_watchdog.reset()
 
                 rolling.append(chunk)
         finally:
