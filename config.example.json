@@ -3,6 +3,7 @@
     "name": "Your Name",
     "location": "Your City, State",
     "voice": "Voices/en_US-ryan-high.onnx",
+    "tts_length_scale": 1.0,
     "input_device": -1,
     "output_device": -1,
     "whisper_model": "small.en",
