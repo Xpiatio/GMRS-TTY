@@ -8,7 +8,7 @@ from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QButtonGroup, QComboBox, QFrame, QHBoxLayout, QInputDialog, QLabel,
     QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton,
-    QRadioButton, QScrollArea, QVBoxLayout, QWidget,
+    QRadioButton, QScrollArea, QToolButton, QVBoxLayout, QWidget,
 )
 
 from gmrs_tty.audio.playback import AudioPlayerThread
@@ -153,6 +153,69 @@ class MainWindow(QMainWindow):
         service_row.addWidget(self.gmrs_radio)
         service_row.addWidget(self.frs_radio)
         service_row.addStretch(1)
+        # Right-anchored quick-access icon trio: Q (Quick Messages) | 👤
+        # (Contacts) | ⚙️ (Configuration). Left-to-right order goes from
+        # most-used (message presets) to least-used (settings) with the
+        # cog wheel rightmost, matching the established "settings last on
+        # a toolbar" convention. All three share one font bump so the row
+        # height stays balanced.
+        icon_font = QFont(self.font())
+        icon_font.setPointSize(icon_font.pointSize() + 4)
+
+        # Quick Messages icon. Plain bold "Q" — the operator already learns
+        # "Q" as the symbol for this strip via the menu mnemonic, so the
+        # letter doubles as its own affordance. Usable in both GMRS and FRS.
+        self.quick_messages_icon_btn = QToolButton(self)
+        self.quick_messages_icon_btn.setText("Q")
+        qm_font = QFont(icon_font)
+        qm_font.setBold(True)
+        self.quick_messages_icon_btn.setFont(qm_font)
+        self.quick_messages_icon_btn.setAutoRaise(True)
+        self.quick_messages_icon_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.quick_messages_icon_btn.setAccessibleName("Open quick messages")
+        self.quick_messages_icon_btn.setAccessibleDescription(
+            "Open the quick messages editor to add, edit, or reorder the "
+            "one-click preset phrases shown above the message field. Same "
+            "destination as Settings → Quick Messages."
+        )
+        self.quick_messages_icon_btn.setToolTip("Quick Messages")
+        self.quick_messages_icon_btn.clicked.connect(self.open_quick_messages_dialog)
+        service_row.addWidget(self.quick_messages_icon_btn)
+
+        # Contacts icon. Same destination as Settings → Contacts (Ctrl+B).
+        # Disabled in FRS mode (no callsigns, no contacts) by the same code
+        # path that disables the Contacts menu action.
+        self.contacts_icon_btn = QToolButton(self)
+        self.contacts_icon_btn.setText("\U0001F464")  # 👤 bust-in-silhouette
+        self.contacts_icon_btn.setFont(icon_font)
+        self.contacts_icon_btn.setAutoRaise(True)
+        self.contacts_icon_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.contacts_icon_btn.setAccessibleName("Open contacts")
+        self.contacts_icon_btn.setAccessibleDescription(
+            "Open the contacts editor to add, edit, or remove known "
+            "callsigns. Same destination as Settings → Contacts (Ctrl+B)."
+        )
+        self.contacts_icon_btn.setToolTip("Contacts (Ctrl+B)")
+        self.contacts_icon_btn.clicked.connect(self.open_contacts_dialog)
+        service_row.addWidget(self.contacts_icon_btn)
+
+        # Configuration cog. Rightmost — "settings last" convention. Stays
+        # enabled in FRS mode because Configuration is service-agnostic
+        # (voice, audio devices, PTT mode all apply to both modes).
+        self.config_icon_btn = QToolButton(self)
+        self.config_icon_btn.setText("⚙️")  # gear
+        self.config_icon_btn.setFont(icon_font)
+        self.config_icon_btn.setAutoRaise(True)
+        self.config_icon_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.config_icon_btn.setAccessibleName("Open configuration")
+        self.config_icon_btn.setAccessibleDescription(
+            "Open the configuration dialog to edit callsign, voice, audio "
+            "devices, VAD threshold, and PTT mode. Same destination as "
+            "Settings → Configuration."
+        )
+        self.config_icon_btn.setToolTip("Configuration (Ctrl+,)")
+        self.config_icon_btn.clicked.connect(self.open_config_dialog)
+        service_row.addWidget(self.config_icon_btn)
         # toggled fires on both selection AND deselection within the group;
         # we only care about the newly-checked button, so guard inside the
         # handler by reading the group state.
@@ -527,6 +590,17 @@ class MainWindow(QMainWindow):
                 self._contacts_action.setStatusTip(
                     "Add, edit, or remove known callsigns."
                 )
+
+        # Quick-access contacts icon button mirrors the menu action — same
+        # destination, same disable rule, same explanatory tooltip.
+        if hasattr(self, "contacts_icon_btn"):
+            self.contacts_icon_btn.setEnabled(not is_frs)
+            if is_frs:
+                self.contacts_icon_btn.setToolTip(
+                    "Contacts apply to GMRS only — switch to GMRS to manage them."
+                )
+            else:
+                self.contacts_icon_btn.setToolTip("Contacts (Ctrl+B)")
 
         # Chat-display pill highlighting: clearing the index suppresses all
         # callsign highlighting on existing and future lines.

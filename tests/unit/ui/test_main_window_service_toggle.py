@@ -124,6 +124,23 @@ class TestToggleHidesCallsignSurfaces:
         finally:
             w.close()
 
+    def test_frs_disables_contacts_icon_button(self, qapp):
+        # The quick-access contacts icon on the service row must follow the
+        # same enable rule as the menu action — both lead to the same dialog,
+        # both are GMRS-only.
+        w = _make_window(qapp)
+        try:
+            assert w.contacts_icon_btn.isEnabled() is True
+            w.frs_radio.setChecked(True)
+            assert w.contacts_icon_btn.isEnabled() is False
+            # Tooltip swaps to an explanation so the operator can recover.
+            assert "FRS" in w.contacts_icon_btn.toolTip() \
+                or "GMRS" in w.contacts_icon_btn.toolTip()
+            w.gmrs_radio.setChecked(True)
+            assert w.contacts_icon_btn.isEnabled() is True
+        finally:
+            w.close()
+
     def test_frs_clears_callsign_index_so_highlights_stop(self, qapp):
         w = _make_window(qapp, contacts=[
             {"callsign": "WSAC909", "name": "Tim"},
