@@ -205,6 +205,71 @@ class TestVerifyAll:
         assert row.get("verified") is True
         assert row.get("verified_at") == "2026-05-10T00:00:00Z"
 
+    def test_verify_all_skips_already_verified_rows(self, qapp):
+        """Already-verified rows must NOT be re-checked: the FCC lookup is the
+        slowest single operation in this dialog, and a cached match doesn't
+        change between sessions. Skipping also keeps the verified_at
+        timestamp stable so 'last verified' history stays meaningful."""
+        dlg = _make_dialog(qapp, [
+            {"callsign": "WSLZ233", "name": "Benjamin",
+             "verified": True, "verified_at": "2026-05-10T00:00:00Z"},
+            {"callsign": "WSAC909", "name": "Tim"},  # unverified — must hit FCC
+        ])
+
+        calls = []
+
+        def fake_verify(callsign, name):
+            calls.append((callsign, name))
+            return crossref.VerificationResult(
+                status="verified",
+                license_name=f"{name} License",
+                license_active=True,
+            )
+
+        with patch("gmrs_tty.ui.contacts_dialog.is_online", return_value=True), \
+             patch("gmrs_tty.ui.contacts_dialog.verify_callsign",
+                   side_effect=fake_verify):
+            dlg.verify_all()
+
+        assert calls == [("WSAC909", "Tim")], (
+            f"verify_callsign should run only for the unverified row, got {calls}"
+        )
+        # The verified row keeps its original verified_at — not bumped to now.
+        verified_row = next(c for c in dlg.contacts if c["callsign"] == "WSLZ233")
+        assert verified_row["verified"] is True
+        assert verified_row["verified_at"] == "2026-05-10T00:00:00Z"
+
+    def test_verify_all_re_verifies_edited_verified_row(self, qapp):
+        """Editing a verified row's callsign or name in-dialog invalidates its
+        cached verification — the flag was earned against the pre-edit values
+        and shouldn't carry over. Verify-all must hit the FCC again for it."""
+        dlg = _make_dialog(qapp, [
+            {"callsign": "WSLZ233", "name": "Benjamin",
+             "verified": True, "verified_at": "2026-05-10T00:00:00Z"},
+        ])
+        # Operator edits the callsign cell in row 0 — the verified flag now
+        # refers to "WSLZ233 / Benjamin", not what's currently rendered.
+        dlg.table.item(0, 0).setText("WSAC909")
+
+        calls = []
+
+        def fake_verify(callsign, name):
+            calls.append((callsign, name))
+            return crossref.VerificationResult(
+                status="verified",
+                license_name=f"{name} License",
+                license_active=True,
+            )
+
+        with patch("gmrs_tty.ui.contacts_dialog.is_online", return_value=True), \
+             patch("gmrs_tty.ui.contacts_dialog.verify_callsign",
+                   side_effect=fake_verify):
+            dlg.verify_all()
+
+        assert calls == [("WSAC909", "Benjamin")], (
+            f"edited verified row should still be re-checked, got {calls}"
+        )
+
 
 class TestVerifyOnSave:
     def test_get_contacts_runs_verify_when_online(self, qapp):
