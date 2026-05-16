@@ -233,11 +233,9 @@ class ContactsDialog(QDialog):
         the run with no message when offline (the button is also disabled —
         this is belt-and-suspenders for keyboard activation).
 
-        Rows whose `verified` flag is already True are skipped so a re-run
-        doesn't waste FCC lookups (or flap the `verified_at` timestamp) on
-        contacts whose match is already cached. A row whose callsign or name
-        has been edited in-dialog is still re-verified, since its cached
-        flag refers to the pre-edit data and is no longer trustworthy.
+        Verification gating goes through `_should_verify` so this button and
+        the save-time hand-off agree on which rows are worth a network round
+        trip: already-verified, unedited rows are cached and skipped.
         """
         if not is_online():
             self._online = False
@@ -249,7 +247,7 @@ class ContactsDialog(QDialog):
             cs = (contact.get("callsign") or "").upper()
             if not cs or cs == "ALL":
                 continue
-            if contact.get("verified") and not self._identity_edited(idx, contact):
+            if not self._should_verify(idx, contact):
                 continue
             result = verify_callsign(cs, contact.get("name", ""))
             rows[idx] = apply_verification(contact, result, now_iso=now)
@@ -257,14 +255,16 @@ class ContactsDialog(QDialog):
         self.populate_table()
 
     def get_contacts(self):
-        """Hand the current rows back to the caller, re-verifying any row that
-        was edited (or never verified) when online. Drops empty-callsign rows.
+        """Hand the current rows back to the caller, verifying any row that
+        meets the same criteria the Verify-all button uses. Drops empty-
+        callsign rows.
 
-        Re-verify policy:
+        Verify policy (shared with Verify-all via `_should_verify`):
           • Skip 'ALL' (it's the broadcast shortcut, not a station).
           • When offline, never verify — preserve whatever flags were on disk.
-          • Otherwise, verify if (a) callsign/name changed, or (b) no prior
-            verified_at timestamp. Cached verifications survive untouched.
+          • Otherwise, skip only rows that are already verified AND whose
+            callsign / name match what was loaded. Newly added rows, edits,
+            and previously-failed lookups all get a fresh round trip.
         """
         rows = self._read_rows_from_table()
         online = is_online()
@@ -274,29 +274,30 @@ class ContactsDialog(QDialog):
 
         now = _now_iso()
         out = []
-        # Build a lookup keyed by row index into the *original* contacts so we
-        # can tell whether a row was edited.
         for idx, current in enumerate(rows):
             callsign = (current.get("callsign") or "").strip().upper()
             if not callsign:
                 continue
             current["callsign"] = callsign
             if online and callsign != "ALL":
-                if self._needs_reverify(idx, current):
+                if self._should_verify(idx, current):
                     result = verify_callsign(callsign, current.get("name", ""))
                     current = apply_verification(current, result, now_iso=now)
             out.append(current)
         return out
 
-    def _needs_reverify(self, row_index, current):
-        """Decide if `current` differs from the row we initially loaded enough
-        to invalidate any cached verification. Rows that never had a
-        verified_at also get re-verified so newly-added contacts pick up a
-        check on first save."""
-        original = self.contacts[row_index] if row_index < len(self.contacts) else {}
-        if not original.get("verified_at"):
-            return True
-        return self._identity_edited(row_index, current)
+    def _should_verify(self, row_index, current):
+        """Decide whether `current` needs a fresh FCC lookup. Shared by the
+        Verify-all button and the save-time hand-off so both paths agree on
+        which rows are worth a network round trip.
+
+        A row is treated as cached — and skipped — only when its `verified`
+        flag is True AND its identifying fields (callsign / name) haven't
+        been edited from the loaded values. Everything else (newly added,
+        edits, or previously-failed lookups) gets a fresh round trip."""
+        if current.get("verified") and not self._identity_edited(row_index, current):
+            return False
+        return True
 
     def _identity_edited(self, row_index, current):
         """True if `current`'s callsign or name differs from the row we loaded.
