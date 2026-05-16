@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout,
 )
 
+from gmrs_tty.constants import VERIFIED_COLOR, VERIFIED_GLYPH
 from gmrs_tty.fcc.crossref import apply_verification, verify_callsign
 from gmrs_tty.net.online import is_online
 from gmrs_tty.persistence.contacts import sort_contacts_by_suffix
@@ -21,10 +22,6 @@ GMRS_COL = 3
 HAM_COL = 4
 VERIFIED_COL = 5
 COLUMN_COUNT = 6
-
-VERIFIED_GLYPH = "✓"
-VERIFIED_COLOR = "#15803D"  # green-700, matches COLOR_RX (≥4.5:1 on white)
-
 
 def _now_iso():
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
