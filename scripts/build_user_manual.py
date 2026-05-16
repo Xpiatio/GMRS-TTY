@@ -1,0 +1,1574 @@
+"""Render the GMRS-TTY user manual to docs/USER_MANUAL.pdf.
+
+Run from the repo root:
+
+    python scripts/build_user_manual.py
+
+The manual content lives in this file so it stays in lockstep with the
+codebase — when a UI label or shortcut changes, update the matching string
+here and re-run.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from dataclasses import dataclass
+from typing import Callable, Iterable
+
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.pagesizes import LETTER
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.platypus import (
+    BaseDocTemplate, Frame, KeepTogether, NextPageTemplate, PageBreak,
+    PageTemplate, Paragraph, Preformatted, Spacer, Table, TableStyle,
+)
+
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+OUTPUT_PATH = os.path.join(REPO_ROOT, "docs", "USER_MANUAL.pdf")
+
+PRIMARY = colors.HexColor("#1D4ED8")   # TX blue
+ACCENT  = colors.HexColor("#15803D")   # RX green
+WARN    = colors.HexColor("#92400E")   # amber
+ERROR   = colors.HexColor("#B91C1C")   # error red
+PILL_BG = colors.HexColor("#FEF3C7")
+PILL_BORDER = colors.HexColor("#F59E0B")
+CODE_BG = colors.HexColor("#F3F4F6")
+RULE    = colors.HexColor("#D1D5DB")
+MUTED   = colors.HexColor("#6B7280")
+
+
+# ---------------------------------------------------------------------------
+# Style sheet
+# ---------------------------------------------------------------------------
+
+def build_styles():
+    base = getSampleStyleSheet()
+    styles = {}
+    styles["body"] = ParagraphStyle(
+        "body", parent=base["BodyText"], fontName="Helvetica",
+        fontSize=10.5, leading=14, spaceAfter=6, alignment=TA_LEFT,
+    )
+    styles["body_indent"] = ParagraphStyle(
+        "body_indent", parent=styles["body"], leftIndent=18,
+    )
+    styles["h1"] = ParagraphStyle(
+        "h1", parent=base["Heading1"], fontName="Helvetica-Bold",
+        fontSize=22, leading=26, spaceBefore=0, spaceAfter=12,
+        textColor=PRIMARY,
+    )
+    styles["h2"] = ParagraphStyle(
+        "h2", parent=base["Heading2"], fontName="Helvetica-Bold",
+        fontSize=15, leading=18, spaceBefore=14, spaceAfter=6,
+        textColor=PRIMARY,
+    )
+    styles["h3"] = ParagraphStyle(
+        "h3", parent=base["Heading3"], fontName="Helvetica-Bold",
+        fontSize=12, leading=15, spaceBefore=10, spaceAfter=4,
+        textColor=colors.black,
+    )
+    styles["bullet"] = ParagraphStyle(
+        "bullet", parent=styles["body"], leftIndent=18, bulletIndent=6,
+        spaceAfter=3,
+    )
+    styles["sub_bullet"] = ParagraphStyle(
+        "sub_bullet", parent=styles["body"], leftIndent=34, bulletIndent=22,
+        spaceAfter=2,
+    )
+    styles["code"] = ParagraphStyle(
+        "code", parent=base["Code"], fontName="Courier",
+        fontSize=9.2, leading=12, leftIndent=10, rightIndent=10,
+        spaceBefore=6, spaceAfter=8, backColor=CODE_BG,
+        borderColor=RULE, borderWidth=0.5, borderPadding=6,
+    )
+    styles["callout"] = ParagraphStyle(
+        "callout", parent=styles["body"], leftIndent=10, rightIndent=10,
+        spaceBefore=6, spaceAfter=8, backColor=PILL_BG,
+        borderColor=PILL_BORDER, borderWidth=0.7, borderPadding=8,
+        textColor=colors.HexColor("#78350F"),
+    )
+    styles["note"] = ParagraphStyle(
+        "note", parent=styles["body"], leftIndent=10, rightIndent=10,
+        spaceBefore=6, spaceAfter=8,
+        backColor=colors.HexColor("#EFF6FF"),
+        borderColor=colors.HexColor("#93C5FD"), borderWidth=0.7,
+        borderPadding=8, textColor=colors.HexColor("#1E3A8A"),
+    )
+    styles["warning"] = ParagraphStyle(
+        "warning", parent=styles["body"], leftIndent=10, rightIndent=10,
+        spaceBefore=6, spaceAfter=8,
+        backColor=colors.HexColor("#FEE2E2"),
+        borderColor=ERROR, borderWidth=0.7, borderPadding=8,
+        textColor=colors.HexColor("#7F1D1D"),
+    )
+    styles["cover_title"] = ParagraphStyle(
+        "cover_title", parent=base["Title"], fontName="Helvetica-Bold",
+        fontSize=42, leading=48, alignment=TA_CENTER, textColor=PRIMARY,
+        spaceAfter=12,
+    )
+    styles["cover_subtitle"] = ParagraphStyle(
+        "cover_subtitle", parent=base["BodyText"], fontName="Helvetica",
+        fontSize=16, leading=22, alignment=TA_CENTER, textColor=MUTED,
+        spaceAfter=18,
+    )
+    styles["cover_blurb"] = ParagraphStyle(
+        "cover_blurb", parent=base["BodyText"], fontName="Helvetica",
+        fontSize=12, leading=18, alignment=TA_CENTER,
+        textColor=colors.black, spaceAfter=8,
+    )
+    styles["caption"] = ParagraphStyle(
+        "caption", parent=styles["body"], fontSize=9, textColor=MUTED,
+        leading=11, spaceAfter=10,
+    )
+    styles["toc_entry"] = ParagraphStyle(
+        "toc_entry", parent=styles["body"], leftIndent=0, fontSize=11,
+        leading=15, spaceAfter=2,
+    )
+    return styles
+
+
+# ---------------------------------------------------------------------------
+# Page templates with header / footer / page numbers
+# ---------------------------------------------------------------------------
+
+def _draw_chrome(canvas, doc):
+    canvas.saveState()
+    page = canvas.getPageNumber()
+    if page == 1:
+        canvas.restoreState()
+        return
+    width, height = LETTER
+    canvas.setFont("Helvetica", 8.5)
+    canvas.setFillColor(MUTED)
+    canvas.drawString(0.75 * inch, height - 0.55 * inch, "GMRS-TTY — User Manual")
+    canvas.drawRightString(width - 0.75 * inch, height - 0.55 * inch,
+                           "Full reference")
+    canvas.setStrokeColor(RULE)
+    canvas.setLineWidth(0.4)
+    canvas.line(0.75 * inch, height - 0.62 * inch,
+                width - 0.75 * inch, height - 0.62 * inch)
+    canvas.drawCentredString(width / 2.0, 0.5 * inch, f"— {page} —")
+    canvas.restoreState()
+
+
+def make_doc(path):
+    doc = BaseDocTemplate(
+        path, pagesize=LETTER,
+        leftMargin=0.85 * inch, rightMargin=0.85 * inch,
+        topMargin=0.9 * inch, bottomMargin=0.85 * inch,
+        title="GMRS-TTY User Manual",
+        author="GMRS-TTY",
+        subject="GMRS-TTY desktop application reference manual",
+    )
+    frame = Frame(doc.leftMargin, doc.bottomMargin,
+                  doc.width, doc.height, id="main")
+    doc.addPageTemplates([
+        PageTemplate(id="cover", frames=[frame]),
+        PageTemplate(id="body", frames=[frame], onPage=_draw_chrome),
+    ])
+    return doc
+
+
+# ---------------------------------------------------------------------------
+# Content helpers
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Builder:
+    styles: dict
+    flow: list
+
+    def add(self, item):
+        self.flow.append(item)
+
+    def h1(self, text):
+        self.add(Paragraph(text, self.styles["h1"]))
+
+    def h2(self, text):
+        self.add(Paragraph(text, self.styles["h2"]))
+
+    def h3(self, text):
+        self.add(Paragraph(text, self.styles["h3"]))
+
+    def p(self, text):
+        self.add(Paragraph(text, self.styles["body"]))
+
+    def indent(self, text):
+        self.add(Paragraph(text, self.styles["body_indent"]))
+
+    def bullets(self, items, style="bullet"):
+        for item in items:
+            if isinstance(item, tuple):
+                lead, body = item
+                self.add(Paragraph(f"<b>{lead}</b> — {body}",
+                                   self.styles[style], bulletText="•"))
+            else:
+                self.add(Paragraph(item, self.styles[style],
+                                   bulletText="•"))
+
+    def sub_bullets(self, items):
+        self.bullets(items, style="sub_bullet")
+
+    def code(self, text):
+        self.add(Preformatted(text, self.styles["code"]))
+
+    def callout(self, text):
+        self.add(Paragraph(text, self.styles["callout"]))
+
+    def note(self, text):
+        self.add(Paragraph(text, self.styles["note"]))
+
+    def warn(self, text):
+        self.add(Paragraph(text, self.styles["warning"]))
+
+    def spacer(self, amount=8):
+        self.add(Spacer(1, amount))
+
+    def page_break(self):
+        self.add(PageBreak())
+
+    def table(self, header, rows, col_widths=None, body_align="LEFT"):
+        # Wrap every cell in a Paragraph so reportlab word-wraps inside the
+        # cell width. Raw strings would otherwise overflow the column.
+        cell_style = ParagraphStyle(
+            "tbl_cell", parent=self.styles["body"],
+            fontSize=9.2, leading=11.5, spaceAfter=0,
+        )
+        header_style = ParagraphStyle(
+            "tbl_head", parent=cell_style,
+            fontName="Helvetica-Bold", textColor=colors.white,
+        )
+
+        def wrap(value, style):
+            return value if hasattr(value, "wrap") else Paragraph(str(value), style)
+
+        wrapped_header = [wrap(h, header_style) for h in header]
+        wrapped_rows = [[wrap(c, cell_style) for c in row] for row in rows]
+        data = [wrapped_header] + wrapped_rows
+        tbl = Table(data, colWidths=col_widths, repeatRows=1, hAlign="LEFT")
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), PRIMARY),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+            ("TOPPADDING",    (0, 0), (-1, 0), 6),
+            ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
+            ("TOPPADDING",    (0, 1), (-1, -1), 4),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ALIGN",  (0, 1), (-1, -1), body_align),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+             [colors.white, colors.HexColor("#F9FAFB")]),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.5, RULE),
+            ("LINEBELOW", (0, -1), (-1, -1), 0.5, RULE),
+            ("BOX", (0, 0), (-1, -1), 0.5, RULE),
+        ]))
+        self.add(KeepTogether(tbl))
+        self.spacer(8)
+
+
+# ---------------------------------------------------------------------------
+# Content
+# ---------------------------------------------------------------------------
+
+def build_cover(b: Builder):
+    b.add(Spacer(1, 1.6 * inch))
+    b.add(Paragraph("GMRS-TTY", b.styles["cover_title"]))
+    b.add(Paragraph("User Manual &mdash; Full Reference",
+                    b.styles["cover_subtitle"]))
+    b.add(Spacer(1, 0.4 * inch))
+    b.add(Paragraph(
+        "A TTY-style accessibility communicator for the General Mobile "
+        "Radio Service (GMRS) and Family Radio Service (FRS), built for "
+        "deaf, hard-of-hearing, and mute operators.",
+        b.styles["cover_blurb"]))
+    b.add(Spacer(1, 0.25 * inch))
+    b.add(Paragraph("Live transcription &middot; offline TTS &middot; "
+                    "FCC Part 95 ID rules built in",
+                    b.styles["cover_blurb"]))
+    b.add(Spacer(1, 1.2 * inch))
+    b.add(Paragraph(
+        "<i>Read the keyboard-shortcut reference on page 4 if you want "
+        "to skip the tour and start operating immediately.</i>",
+        b.styles["caption"]))
+
+
+def build_toc(b: Builder):
+    b.h1("Contents")
+    entries = [
+        ("1.",  "About this manual"),
+        ("2.",  "System requirements"),
+        ("3.",  "Installation"),
+        ("4.",  "First run &amp; configuration"),
+        ("5.",  "Main window tour"),
+        ("6.",  "Configuration dialog"),
+        ("7.",  "Contacts dialog"),
+        ("8.",  "Quick Messages dialog"),
+        ("9.",  "Add Station dialog"),
+        ("10.", "Keyboard shortcuts &amp; mnemonics"),
+        ("11.", "GMRS vs FRS service mode"),
+        ("12.", "PTT (Push-to-Talk) modes"),
+        ("13.", "Receive (Rx) pipeline"),
+        ("14.", "Transmit (Tx) pipeline"),
+        ("15.", "Callsign detection &amp; FCC verification"),
+        ("16.", "FCC Part 95 compliance features"),
+        ("17.", "Accessibility (WCAG 2.1 AA)"),
+        ("18.", "Off-grid operation"),
+        ("19.", "Troubleshooting"),
+        ("20.", "File reference (config.json, contacts.json)"),
+        ("21.", "Glossary"),
+    ]
+    for num, title in entries:
+        b.add(Paragraph(f"<b>{num}</b>&nbsp;&nbsp;{title}",
+                        b.styles["toc_entry"]))
+
+
+def build_about(b: Builder):
+    b.h1("1. About this manual")
+    b.p("This manual is the full operating reference for GMRS-TTY, a "
+        "cross-platform desktop application that lets deaf, hard-of-hearing, "
+        "and mute operators participate in two-way voice radio conversations "
+        "over GMRS and FRS. The program is written in Python with PySide6, "
+        "runs fully offline once installed, and ships every feature behind "
+        "the FCC Part 95 rule set so operators can stay legal without "
+        "memorizing the regulations.")
+    b.p("The manual is organized as a reference rather than a tutorial. "
+        "Section 5 walks every region of the main window in left-to-right, "
+        "top-to-bottom order. Sections 6–9 document each dialog. "
+        "Section 10 is the keyboard cheat sheet. Sections 11–16 cover "
+        "the deeper behaviors (service mode, PTT modes, the audio "
+        "pipelines, callsign verification, and FCC compliance). "
+        "Section 19 is troubleshooting. Sections 20–21 give the "
+        "on-disk file formats and a glossary.")
+    b.callout(
+        "<b>If you only have five minutes:</b> install the dependencies "
+        "(section 3), copy <font face=\"Courier\">config.example.json</font> "
+        "to <font face=\"Courier\">config.json</font> and edit your "
+        "callsign / name / location, drop one Piper voice into "
+        "<font face=\"Courier\">Voices/</font>, run "
+        "<font face=\"Courier\">python bootstrap_models.py</font>, then "
+        "launch with <font face=\"Courier\">python main.py</font>. Press "
+        "<b>Alt+L</b> to listen and type into the message box to transmit."
+    )
+
+
+def build_requirements(b: Builder):
+    b.h1("2. System requirements")
+    b.h3("Operating system")
+    b.bullets([
+        ("Linux", "Debian 12+, Ubuntu 22.04+, Raspberry Pi OS (Bookworm). "
+                  "PortAudio dev libs required: "
+                  "<font face=\"Courier\">sudo apt install libportaudio2 "
+                  "portaudio19-dev</font>. On PipeWire systems also install "
+                  "<font face=\"Courier\">pulseaudio-utils</font> so the "
+                  "<font face=\"Courier\">parec</font> capture path is "
+                  "available — the app prefers it because PortAudio's "
+                  "PipeWire-via-ALSA bridge can silently deliver flat-zero "
+                  "audio on PipeWire 1.4."),
+        ("Windows", "Windows 10 or 11. PortAudio ships in the wheel; no "
+                    "extra system libraries needed."),
+        ("macOS", "Not formally targeted, but Python 3.11+ with PortAudio "
+                  "available through Homebrew usually works."),
+    ])
+    b.h3("Hardware")
+    b.bullets([
+        ("Microphone", "Anything Linux/Windows recognizes — a USB "
+                       "headset, the built-in laptop mic, or a sound-card "
+                       "channel cabled from your radio's speaker output."),
+        ("Speaker / radio audio path", "A speaker for live listening, or a "
+                                       "USB sound card / Signalink / Digirig "
+                                       "for feeding TTS audio directly into "
+                                       "your radio."),
+        ("Optional: PTT cable", "A USB-serial adapter (FTDI is the most "
+                                "common) for keying PTT via RTS/DTR. Not "
+                                "needed if your radio has VOX or you key "
+                                "manually."),
+    ])
+    b.h3("Software")
+    b.bullets([
+        "Python 3.11 or newer (3.13 recommended).",
+        "~1 GB free disk for Python dependencies (CTranslate2, ONNX Runtime, "
+        "PySide6) plus 75&ndash;150 MB for the Whisper STT model.",
+        "Internet access <b>once</b> to install pip packages and bootstrap "
+        "the STT model. After that the core radio workflow needs no "
+        "network at all.",
+    ])
+
+
+def build_install(b: Builder):
+    b.h1("3. Installation")
+    b.p("Five steps from a fresh clone to a working radio session.")
+
+    b.h3("3.1 Clone and create a virtual environment")
+    b.code(
+        "git clone <repo-url> GMRS-TTY\n"
+        "cd GMRS-TTY\n\n"
+        "python3 -m venv .venv\n"
+        "source .venv/bin/activate              # Linux / macOS\n"
+        "# .venv\\Scripts\\activate              # Windows\n\n"
+        "pip install -r requirements.txt"
+    )
+
+    b.h3("3.2 Drop in a Piper voice")
+    b.p("Download at least one Piper ONNX voice and its matching "
+        "<font face=\"Courier\">.json</font> config file into a "
+        "<font face=\"Courier\">Voices/</font> directory at the project "
+        "root. The Configuration dialog reads this folder at launch and "
+        "lists every voice it finds.")
+    b.code(
+        "Voices/\n"
+        "├── en_US-ryan-high.onnx\n"
+        "├── en_US-ryan-high.onnx.json\n"
+        "├── en_US-amy-medium.onnx\n"
+        "└── en_US-amy-medium.onnx.json"
+    )
+    b.p("Voices: <font color=\"#1D4ED8\">https://github.com/rhasspy/piper/"
+        "blob/master/VOICES.md</font>. Most voices are MIT-licensed; "
+        "<font face=\"Courier\">en_US-libritts-high</font> is CC BY 4.0 "
+        "and requires attribution if you redistribute it.")
+
+    b.h3("3.3 Bootstrap the speech-to-text model")
+    b.p("The Whisper STT model is not bundled in the repo. Fetch it once "
+        "on an internet-connected machine:")
+    b.code(
+        "python bootstrap_models.py                       # default: small.en\n"
+        "python bootstrap_models.py --model base.en       # smaller, faster, less accurate\n"
+        "python bootstrap_models.py --model medium.en     # higher accuracy, slower"
+    )
+    b.p("This populates "
+        "<font face=\"Courier\">Models/STT/&lt;model_name&gt;/</font> with "
+        "the faster-whisper CTranslate2 artifacts. The app loads from "
+        "there on Listen and never attempts network access — if the "
+        "directory is missing, listening fails fast with an instruction "
+        "to run the bootstrap.")
+    b.note(
+        "<b>For air-gapped installs:</b> run the bootstrap once on an "
+        "internet-connected machine, then copy the entire "
+        "<font face=\"Courier\">Models/</font> directory (alongside the "
+        "source) to the offline target. Silero VAD and Piper voices ship "
+        "as local files already, so no other fetches are involved."
+    )
+
+    b.h3("3.4 Configure")
+    b.code(
+        "cp config.example.json config.json\n"
+        "$EDITOR config.json    # set your callsign, name, location, voice"
+    )
+    b.p("You can also leave the file at its defaults and edit everything "
+        "through the in-app Configuration dialog after first launch.")
+
+    b.h3("3.5 Run")
+    b.code(
+        "source .venv/bin/activate\n"
+        "python main.py"
+    )
+
+
+def build_first_run(b: Builder):
+    b.h1("4. First run &amp; configuration")
+    b.p("On first launch the app reads "
+        "<font face=\"Courier\">config.json</font> from the working "
+        "directory. If your callsign is still "
+        "<font face=\"Courier\">YOUR_CALL</font> the header will display "
+        "that literal string — open Settings → Configuration "
+        "(or click the gear icon in the top-right of the service row) "
+        "and fill in:")
+    b.bullets([
+        ("Callsign", "Your FCC GMRS callsign (e.g. "
+                     "<font face=\"Courier\">WSLZ233</font>). Saved "
+                     "uppercased."),
+        ("Name", "Your operator name. Appears in the callsign preface and "
+                 "the station-ID button output."),
+        ("Location", "Free-form city / state. Used by the standalone "
+                     "<b>This is</b> ID announcement."),
+        ("Voice Model", "Pick the Piper voice you dropped into "
+                        "<font face=\"Courier\">Voices/</font>. Click "
+                        "<b>Test</b> to hear a sample before committing."),
+        ("Speech Rate", "Slider from 0.70× (faster) to 1.50× "
+                        "(slower); 1.00× is the voice's native pace."),
+        ("Input Device", "Microphone the Listen button captures from. "
+                         "<i>System Default</i> works for most setups."),
+        ("Output Device", "Where TTS audio is played — choose a USB "
+                          "sound card / Signalink / Digirig channel here "
+                          "to feed your radio directly."),
+        ("VAD Threshold", "Silero VAD sensitivity (0.10–0.95). Lower "
+                          "is more sensitive (catches quiet signals but "
+                          "more false starts); higher is stricter."),
+        ("Time Format", "24-hour or 12-hour AM/PM timestamps on RX lines."),
+        ("Filter profanity", "On by default. Masks the f/s-words and "
+                             "similar with asterisks in both RX transcripts "
+                             "and outgoing TX before TTS speaks them."),
+        ("PTT Mode", "Manual, VOX, or USB FTDI / Serial. See section 12."),
+    ])
+    b.p("Click <b>OK</b>. The header updates, the dropdown lists the new "
+        "voice, and the listener restarts automatically if you changed "
+        "the input device or VAD threshold.")
+    b.note(
+        "Configuration is stored as plain JSON in "
+        "<font face=\"Courier\">config.json</font> next to "
+        "<font face=\"Courier\">main.py</font>. You can hand-edit it "
+        "between runs; the in-app dialog and the file are interchangeable."
+    )
+
+
+def build_main_window(b: Builder):
+    b.h1("5. Main window tour")
+    b.p("The main window is laid out top-to-bottom in five horizontal "
+        "bands: the <b>service toggle row</b>, the <b>header strip</b>, "
+        "the <b>chat area</b> with its toolbar, the <b>pending stations "
+        "and quick-messages strip</b>, and the <b>transmit row</b> with "
+        "the <b>This is</b> button beneath it. The menubar holds Settings, "
+        "and the status bar carries the live online/offline indicator. "
+        "Minimum window size is 720×520 to guarantee no clipping at "
+        "high-DPI / large-font settings; the default is 800×600.")
+
+    b.h3("5.1 Service toggle row (top)")
+    b.bullets([
+        ("Service:", "Label."),
+        ("GMRS / FRS", "Segmented radio buttons (Alt+G / Alt+F). Choose "
+                       "your operating service. The selection persists to "
+                       "<font face=\"Courier\">radio_service</font> in "
+                       "config.json. See section 11 for the full "
+                       "behavior diff."),
+        ("Q icon (right cluster)", "Bold capital Q. Opens the Quick "
+                                   "Messages editor — same destination "
+                                   "as Settings → Quick Messages."),
+        ("Person icon", "Bust-in-silhouette glyph. Opens Contacts — "
+                        "same destination as Settings → Contacts or "
+                        "Ctrl+B. Disabled in FRS mode (no callsigns)."),
+        ("Gear icon", "Cog wheel. Opens Configuration — same "
+                      "destination as Settings → Configuration or "
+                      "Ctrl+,. Enabled in both modes."),
+    ])
+
+    b.h3("5.2 Header strip")
+    b.p("Bold panel just under the service row. In GMRS mode it reads "
+        "<font face=\"Courier\">Station: WSLZ233 | Operator: Benjamin | "
+        "Location: Lansing, MI</font>. In FRS mode the station segment is "
+        "replaced with <font face=\"Courier\">FRS Mode</font> because FRS "
+        "has no callsign requirement.")
+
+    b.h3("5.3 Chat area")
+    b.bullets([
+        ("Clear chat button", "Right-aligned, sits above the log. Alt+C "
+                              "on the button, or Ctrl+K from anywhere. "
+                              "Asks for Yes/No confirmation then wipes the "
+                              "log. Chat history is in-memory only — "
+                              "it cannot be recovered once cleared."),
+        ("Conversation log", "Timestamped messages. Incoming lines are "
+                             "green <font face=\"Courier\">[RX HH:MM:SS]:"
+                             "</font>. Outgoing lines are blue "
+                             "<font face=\"Courier\">[TX to &lt;target&gt;]:"
+                             "</font>. Errors say <font face=\"Courier\">"
+                             "Error:</font> or <font face=\"Courier\">"
+                             "Failed:</font> in the text — state is "
+                             "never carried by color alone."),
+        ("Auto-tail", "New messages keep the viewport pinned to the "
+                      "bottom while you're caught up. Scroll up to "
+                      "re-read older context and incoming traffic will "
+                      "<i>not</i> yank you back."),
+        ("Callsign pills", "Any callsign that matches a saved contact is "
+                           "rendered with an amber, bold pill background. "
+                           "Hover for every operator linked to that "
+                           "callsign — useful for family-shared GMRS "
+                           "calls. A green ✓ appears immediately "
+                           "after the callsign when the contact has a "
+                           "confirmed FCC license match (hover the check "
+                           "for the FCC license verified tooltip)."),
+    ])
+
+    b.h3("5.4 Transmit row")
+    b.bullets([
+        ("Listen button", "Toggle button (Alt+L or Ctrl+L). Starts/stops "
+                          "microphone capture and live transcription. "
+                          "Loads the Whisper model from "
+                          "<font face=\"Courier\">Models/STT/&lt;model&gt;/"
+                          "</font> on first start; subsequent toggles are "
+                          "instant."),
+        ("Input level meter", "Thin progress bar immediately to the "
+                              "right of Listen. Real-time peak amplitude "
+                              "of the captured audio. Use it to verify "
+                              "your mic / cable / device is wired up "
+                              "— if it stays at zero while you key "
+                              "audio into the radio, the app isn't "
+                              "getting audio. Stays at zero when Listen "
+                              "is off."),
+        ("Target dropdown", "Pick a contact callsign or <i>All</i>. "
+                            "Entries are sorted alphabetically; <i>All</i> "
+                            "is pinned at the top. Family-shared GMRS "
+                            "calls appear on separate rows like "
+                            "<font face=\"Courier\">WSLZ233 (Eliza)</font> "
+                            "/ <font face=\"Courier\">WSLZ233 (Jennifer)"
+                            "</font>, and the preface speaks the exact "
+                            "operator name from the row you selected."),
+        ("Message box", "Text input. Type your message and press Enter "
+                        "or click Transmit. Placeholder reads "
+                        "<i>Type your message here&hellip;</i>."),
+        ("Transmit button", "Alt+T or Ctrl+Return / Ctrl+Enter. Sends "
+                            "the message through the TX pipeline: "
+                            "shorthand expansion, profanity masking, "
+                            "callsign framing, 15-minute ID check, PTT "
+                            "keying, TTS synthesis, and STT auto-pause "
+                            "until the unkey."),
+    ])
+
+    b.h3("5.5 Standalone “This is” button")
+    b.p("Sits in its own row beneath Transmit. Alt+I or Ctrl+I. Sends a "
+        "standalone station ID — <font face=\"Courier\">This is "
+        "&lt;CALL&gt;, &lt;NATO phonetic&gt;. &lt;name&gt; from "
+        "&lt;location&gt;.</font> — without needing to type anything. "
+        "Resets the 15-minute ID timer. Disabled in FRS mode (FRS has no "
+        "ID rule); hover the disabled button for the explanation.")
+
+    b.h3("5.6 Pending stations bar")
+    b.p("Sits between the chat log and the quick-messages strip. Hidden "
+        "when no pills are pending. Yellow pill buttons appear when a "
+        "new GMRS callsign is detected on RX:")
+    b.bullets([
+        "<b>Click</b> a pill to open the Add Station dialog (section 9) "
+        "pre-filled with the detected name and location.",
+        "<b>Right-click</b> or long-press a pill to dismiss that one "
+        "without adding it.",
+        "<b>Dismiss all</b> (Alt+D) appears on the right edge whenever "
+        "any pill is present — clears every pending pill at once.",
+        "Pills wrap to additional rows up to a maximum of three; past "
+        "that a vertical scrollbar appears so the chat area doesn't get "
+        "squeezed.",
+    ])
+
+    b.h3("5.7 Quick-messages strip")
+    b.p("Strip of one-click buttons between the pending bar and the "
+        "transmit row. Each button rides the standard TX pipeline. "
+        "Curly-brace tokens like <font face=\"Courier\">{N}</font> "
+        "in <font face=\"Courier\">QSY to channel {N}</font> prompt for "
+        "a value before transmitting. The first nine buttons are bound "
+        "to <b>Alt+1</b> through <b>Alt+9</b>. Edit the list from "
+        "Settings → Quick Messages or the Q icon.")
+    b.p("The seed list is: <i>Radio check, Loud and clear, Standing by, "
+        "Acknowledged, Say again, QSY to channel {N}, Clear, Monitoring, "
+        "Net check-in, Emergency traffic</i>.")
+
+    b.h3("5.8 Status bar")
+    b.p("Carries a permanent <b>Online</b> / <b>Offline</b> indicator on "
+        "the right edge. Green ● for online, amber ○ for "
+        "offline. Updates every 30 seconds. The indicator is the "
+        "user-visible side of the contract for opt-in network features "
+        "— when offline, the FCC verification button disables and "
+        "save-time verification is skipped. Hidden in FRS mode.")
+
+    b.h3("5.9 Menubar")
+    b.p("Single <b>Settings</b> menu (Alt+S). Contains:")
+    b.bullets([
+        ("Configuration… (Alt+C or Ctrl+,)", "Opens the Configuration "
+                                                   "dialog (section 6)."),
+        ("Contacts… (Alt+N or Ctrl+B)", "Opens the Contacts dialog "
+                                              "(section 7). Disabled in "
+                                              "FRS mode."),
+        ("Quick Messages… (Alt+Q)", "Opens the Quick Messages "
+                                          "editor (section 8)."),
+        ("Clear chat (Alt+R or Ctrl+K)", "Erases every message from the "
+                                          "log after a Yes/No confirmation."),
+    ])
+
+
+def build_config_dialog(b: Builder):
+    b.h1("6. Configuration dialog")
+    b.p("Opened from Settings → Configuration, the gear icon, or "
+        "Ctrl+,. Minimum width 420 px. All fields are mnemonic-linked "
+        "(Alt+letter focuses the underlined field). The OK button is "
+        "disabled until the background device-enumeration thread "
+        "finishes; while loading you'll see <i>Loading devices&hellip;"
+        "</i> in the device dropdowns.")
+    b.table(
+        ["Field", "Type", "Behavior"],
+        [
+            ["Callsign (Alt+C)", "Text",
+             "Your FCC GMRS callsign. Saved uppercased and stripped."],
+            ["Name (Alt+N)", "Text",
+             "Operator name. Used in callsign preface and ID."],
+            ["Location (Alt+L)", "Text",
+             "City, state. Used by the standalone This is announcement."],
+            ["Voice Model (Alt+V)", "Dropdown + Test",
+             "Lists every .onnx file in Voices/. Test button (Alt+T) "
+             "synthesizes a short sample at the current speech rate, "
+             "played on the currently selected output device."],
+            ["Speech Rate (Alt+R)", "Slider 0.70×–1.50×",
+             "Maps to Piper length_scale. 1.00× normal, lower = "
+             "faster, higher = slower. Step 0.05. Stored as "
+             "tts_length_scale."],
+            ["Input Device (Alt+I)", "Dropdown",
+             "Microphone for capture. System Default plus every device "
+             "PortAudio reports. Changing this restarts the listener "
+             "automatically."],
+            ["Output Device (Alt+O)", "Dropdown",
+             "Where TTS audio plays. Pick a USB sound card to feed your "
+             "radio directly. System Default uses the OS default sink."],
+            ["VAD Threshold (Alt+D)", "Spin 0.10–0.95 step 0.05",
+             "Silero VAD speech probability cutoff. Lower = more "
+             "sensitive, higher = stricter. Default 0.50. Changing this "
+             "restarts the listener."],
+            ["Time Format (Alt+F)", "Dropdown",
+             "24-hour (14:32:15) or 12-hour (2:32:15 PM) for RX "
+             "timestamps."],
+            ["Filter profanity (Alt+Y)", "Checkbox",
+             "Mask strong language with asterisks. Default on. Applies "
+             "to both RX transcripts and TX messages before TTS speaks "
+             "them."],
+            ["PTT Mode (Alt+P)", "Dropdown",
+             "Manual / VOX / USB FTDI / Serial. See section 12."],
+            ["Serial Port (Alt+S)", "Text",
+             "Only enabled in USB FTDI mode. e.g. /dev/ttyUSB0 or COM3."],
+            ["Control Line (Alt+E)", "Dropdown",
+             "Only enabled in USB FTDI mode. RTS or DTR."],
+        ],
+        col_widths=[1.5 * inch, 1.4 * inch, 3.85 * inch],
+    )
+    b.note(
+        "On save the dialog returns a sanitized config object: callsign "
+        "uppercased, name/location/serial-port stripped of leading and "
+        "trailing whitespace, length scale rounded to two decimals."
+    )
+
+
+def build_contacts_dialog(b: Builder):
+    b.h1("7. Contacts dialog")
+    b.p("Opened from Settings → Contacts, the person icon, or "
+        "Ctrl+B. Minimum size 820×360. Six columns of editable "
+        "data; <b>Verified</b> is read-only and reflects the FCC "
+        "verification gate.")
+    b.h3("Columns")
+    b.bullets([
+        ("Callsign", "Saved uppercased. Required — rows with empty "
+                     "callsign are dropped on save."),
+        ("Name", "Free-form operator name. Used by the callsign-match "
+                 "side of FCC verification (“Tim” matches "
+                 "“Surname, Timothy L” in the license record)."),
+        ("Location", "Free-form city / state. Auto-backfilled from the "
+                     "FCC city on a successful verification when the row "
+                     "had no location of its own; values you typed are "
+                     "never overwritten."),
+        ("GMRS", "Cross-reference callsign — the operator's GMRS "
+                 "call if the primary callsign is their HAM call. "
+                 "Auto-populated from FCC <font face=\"Courier\">related"
+                 "</font> records (service code <font face=\"Courier\">"
+                 "ZA</font>) on verification. Hand-editable. Uppercased "
+                 "on save."),
+            ("HAM", "Cross-reference Amateur callsign. Auto-populated "
+                    "from FCC <font face=\"Courier\">related</font> "
+                    "records (service codes <font face=\"Courier\">HA"
+                    "</font> / <font face=\"Courier\">HV</font>). "
+                    "Hand-editable. Uppercased on save."),
+            ("Verified", "Read-only. Green ✓ when the callsign is "
+                         "in the active FCC database AND the contact's "
+                         "name matches a token in the licensee's name. "
+                         "Hover for the licensee, GMRS / HAM cross-refs, "
+                         "and the timestamp of the last successful "
+                         "lookup."),
+    ])
+    b.h3("Buttons")
+    b.bullets([
+        ("Add Contact", "Append a row with default values "
+                        "<font face=\"Courier\">NEW_CALL</font> / "
+                        "<font face=\"Courier\">New Name</font>. Edit "
+                        "in place."),
+        ("Remove Selected", "Remove the currently selected row."),
+        ("Sort by Suffix (Alt+S)", "View-only reorder by the last 3 "
+                                    "digits of each callsign. Useful for "
+                                    "spotting consecutive licenses or "
+                                    "family clusters. <i>ALL</i> stays at "
+                                    "the top. Clicking OK still saves "
+                                    "the list alphabetically."),
+        ("Verify all (Alt+V)", "Check every not-yet-verified row "
+                                "against the FCC database. Already-"
+                                "verified rows whose callsign and name "
+                                "match what was loaded are cached and "
+                                "skipped. Disabled when the app is "
+                                "offline; hover the disabled button for "
+                                "the reason."),
+        ("OK / Cancel", "Standard. OK runs the same verification gate "
+                        "as Verify all (newly added rows, edits, and "
+                        "previously-failed lookups all get a fresh "
+                        "round trip; cached rows are skipped) and saves "
+                        "to <font face=\"Courier\">contacts.json</font>."),
+    ])
+    b.h3("Verification semantics")
+    b.bullets([
+        "A row earns a green ✓ when (a) the callsign is in the "
+        "active FCC database AND (b) the contact's name matches a "
+        "token in the licensee's name. Family members on a shared GMRS "
+        "callsign whose name doesn't match the licensee remain "
+        "unverified.",
+        "GMRS / HAM cross-references are <i>only</i> written when the "
+        "name matches the licensee. A family-member row keeps its own "
+        "GMRS / HAM fields untouched because those callsigns describe "
+        "the licensee, not the family member.",
+        "Offline behavior: Verify all disables, save-time verification "
+        "is skipped, and previously-earned green checks are preserved "
+        "untouched — a transient outage will never wipe verified "
+        "state.",
+    ])
+
+
+def build_quick_messages_dialog(b: Builder):
+    b.h1("8. Quick Messages dialog")
+    b.p("Opened from Settings → Quick Messages or the Q icon in the "
+        "top-right of the service row. Minimum size 520×360. "
+        "Single-column editable table of phrases plus four management "
+        "buttons.")
+    b.bullets([
+        ("Add (Alt+A)", "Append a blank row and immediately enter edit "
+                        "mode on the new cell."),
+        ("Remove Selected (Alt+R)", "Delete the currently selected row."),
+        ("Move Up (Alt+U) / Move Down (Alt+D)", "Reorder the selected "
+                                                "row. Order matters: the "
+                                                "first nine rows get "
+                                                "<b>Alt+1</b>…"
+                                                "<b>Alt+9</b> shortcuts; "
+                                                "everything past slot "
+                                                "nine is mouse-only."),
+        ("OK / Cancel", "OK saves the trimmed phrase list to "
+                        "<font face=\"Courier\">config.json</font> under "
+                        "<font face=\"Courier\">quick_messages</font>. "
+                        "Blank rows are dropped so the strip never shows "
+                        "an unlabeled button."),
+    ])
+    b.h3("Placeholder tokens")
+    b.p("Wrap a token in curly braces to prompt for a value at TX time. "
+        "<font face=\"Courier\">QSY to channel {N}</font> opens a small "
+        "input dialog asking for <i>N</i>; the substituted phrase then "
+        "rides the standard TX pipeline. Multiple tokens are prompted "
+        "in order. Cancelling any prompt aborts the transmission.")
+
+
+def build_add_station_dialog(b: Builder):
+    b.h1("9. Add Station dialog")
+    b.p("Opens when you click a yellow pill on the pending-stations bar. "
+        "Compact three-field form with three QLineEdit inputs:")
+    b.bullets([
+        ("Callsign (Alt+C)", "Pre-filled with the detected callsign in "
+                              "canonical (compact, uppercase) form."),
+        ("Name (Alt+N)", "Pre-filled if the heuristic detected a name in "
+                          "the surrounding transcription."),
+        ("Location (Alt+L)", "Pre-filled if a location was detected."),
+    ])
+    b.p("Click <b>OK</b> to append the new contact to "
+        "<font face=\"Courier\">contacts.json</font>; the target "
+        "dropdown is rebuilt and any historical RX lines mentioning that "
+        "callsign retroactively gain the amber-pill highlight. The "
+        "originating pill is removed automatically. <b>Cancel</b> leaves "
+        "the pill in place so you can come back to it later.")
+
+
+def build_keyboard(b: Builder):
+    b.h1("10. Keyboard shortcuts &amp; mnemonics")
+    b.h3("Global shortcuts")
+    b.table(
+        ["Action", "Shortcut"],
+        [
+            ["Toggle Listen", "Ctrl+L"],
+            ["Transmit message", "Ctrl+Return / Ctrl+Enter"],
+            ["Send standalone station ID", "Ctrl+I"],
+            ["Clear chat (with confirmation)", "Ctrl+K"],
+            ["Open Configuration dialog", "Ctrl+,"],
+            ["Open Contacts dialog", "Ctrl+B"],
+            ["Send quick message preset 1–9", "Alt+1 … Alt+9"],
+        ],
+        col_widths=[3.6 * inch, 2.4 * inch],
+    )
+    b.h3("Main-window mnemonics")
+    b.table(
+        ["Widget", "Mnemonic"],
+        [
+            ["GMRS radio", "Alt+G"],
+            ["FRS radio", "Alt+F"],
+            ["Clear chat button", "Alt+C"],
+            ["Listen button", "Alt+L"],
+            ["Transmit button", "Alt+T"],
+            ["This is button", "Alt+I"],
+            ["Dismiss all (pending pills)", "Alt+D"],
+            ["Settings menu", "Alt+S"],
+        ],
+        col_widths=[3.6 * inch, 2.4 * inch],
+    )
+    b.h3("Settings menu mnemonics")
+    b.table(
+        ["Item", "Mnemonic"],
+        [
+            ["Configuration…", "Alt+S, Alt+C"],
+            ["Contacts…", "Alt+S, Alt+N"],
+            ["Quick Messages…", "Alt+S, Alt+Q"],
+            ["Clear chat", "Alt+S, Alt+R"],
+        ],
+        col_widths=[3.6 * inch, 2.4 * inch],
+    )
+    b.h3("Configuration dialog mnemonics")
+    b.table(
+        ["Field", "Mnemonic"],
+        [
+            ["Callsign", "Alt+C"],
+            ["Name", "Alt+N"],
+            ["Location", "Alt+L"],
+            ["Voice Model", "Alt+V"],
+            ["Test voice", "Alt+T"],
+            ["Speech Rate", "Alt+R"],
+            ["Input Device", "Alt+I"],
+            ["Output Device", "Alt+O"],
+            ["VAD Threshold", "Alt+D"],
+            ["Time Format", "Alt+F"],
+            ["Filter profanity", "Alt+Y"],
+            ["PTT Mode", "Alt+P"],
+            ["Serial Port", "Alt+S"],
+            ["Control Line", "Alt+E"],
+        ],
+        col_widths=[3.6 * inch, 2.4 * inch],
+    )
+    b.h3("Tab order in the main window")
+    b.p("Listen → Target dropdown → Message box → "
+        "Transmit → This is. The order is explicitly set so "
+        "keyboard-only operators get a predictable traversal.")
+
+
+def build_service_mode(b: Builder):
+    b.h1("11. GMRS vs FRS service mode")
+    b.p("The top-of-window toggle controls which Part 95 subpart the app "
+        "treats as canonical. GMRS (Subpart A) is licensed and "
+        "callsign-bearing; FRS (Subpart B) is unlicensed and has no "
+        "callsign requirement. Switching modes is instantaneous; saved "
+        "contacts and the saved callsign are preserved across mode "
+        "changes so switching back to GMRS restores prior state.")
+    b.table(
+        ["Feature", "GMRS (default)", "FRS"],
+        [
+            ["Header line", "Station: CALL | Operator | Location",
+             "FRS Mode | Operator | Location"],
+            ["Outgoing TX preface", "[CALL] [name] calling [target]",
+             "No preface — message is spoken as-is"],
+            ["15-minute ID rule", "Enforced", "Skipped"],
+            ["This is button", "Enabled", "Disabled (tooltip explains)"],
+            ["Target dropdown", "Visible", "Hidden"],
+            ["Contacts menu / icon", "Enabled",
+             "Disabled (tooltip explains)"],
+            ["Pending-station pills", "Detected and displayed",
+             "Detection suppressed"],
+            ["Callsign chat highlighting", "Amber pills, FCC ✓",
+             "Suppressed"],
+            ["Online / Offline indicator", "Visible (gates verification)",
+             "Hidden (no online features apply)"],
+            ["FCC callsign verification", "On (opt-in via connectivity)",
+             "Not applicable"],
+        ],
+        col_widths=[1.8 * inch, 2.5 * inch, 2.4 * inch],
+    )
+    b.note(
+        "<b>Why FRS turns features off:</b> FRS operators are anonymous "
+        "by regulation. Surfacing the 15-minute ID button or callsign "
+        "verification on an FRS channel would be misleading at best "
+        "and FCC-incorrect at worst. The toggle is therefore a hard "
+        "behavioral switch, not a cosmetic relabel."
+    )
+
+
+def build_ptt(b: Builder):
+    b.h1("12. PTT (Push-to-Talk) modes")
+    b.p("Selectable from Configuration → PTT Mode. The choice "
+        "determines how the radio is keyed around each transmission.")
+
+    b.h3("Manual")
+    b.p("Default. You press PTT on the radio yourself, the app plays "
+        "audio through the configured output device, and you release "
+        "PTT when the audio finishes. The app makes no attempt to key "
+        "the radio.")
+    b.p("Use when: you have a desk mic with a foot switch, you're "
+        "operating a handheld and physically pressing the PTT button, "
+        "or you're testing the app without any radio connected.")
+
+    b.h3("VOX (Voice-Operated Transmit)")
+    b.p("Your radio is set to auto-key whenever it hears audio on its "
+        "mic input. The app appends a short tail of silence after each "
+        "transmission so the last syllable survives the VOX hang "
+        "dropout.")
+    b.p("Use when: your radio has a VOX setting and you've already "
+        "tuned VOX sensitivity / hang time to your setup. Simplest "
+        "wiring — just a cable from the output device to the "
+        "radio's mic input.")
+
+    b.h3("USB FTDI / Serial")
+    b.p("The app keys PTT through a USB-serial adapter's RTS or DTR "
+        "line. The line drives an external transistor or opto-isolator "
+        "wired to the radio's PTT pin. Short lead-in and tail silence "
+        "are inserted around each transmission so the radio's keying "
+        "ramp doesn't clip the audio.")
+    b.bullets([
+        ("Serial Port", "Device path — e.g. "
+                        "<font face=\"Courier\">/dev/ttyUSB0</font> on "
+                        "Linux or <font face=\"Courier\">COM3</font> on "
+                        "Windows. Field is enabled only when this PTT "
+                        "mode is selected."),
+        ("Control Line", "RTS or DTR. Choose whichever your interface "
+                         "uses. Most FTDI-based DIY PTT cables use RTS; "
+                         "Signalink-style boxes vary."),
+    ])
+    b.warn(
+        "<b>Cable safety:</b> never wire a serial line directly to a "
+        "radio's PTT pin. Use an opto-isolator or NPN transistor between "
+        "the adapter and the radio so a stuck line or a host crash "
+        "can't dump TTL voltage onto the radio."
+    )
+
+
+def build_rx(b: Builder):
+    b.h1("13. Receive (Rx) pipeline")
+    b.p("Pressing Listen starts a background thread that captures audio, "
+        "gates it through Silero VAD, conditions each utterance through "
+        "a DSP chain, and hands the result to faster-whisper for "
+        "transcription. The pipeline is designed to skip kerchunks, "
+        "static, and Whisper hallucinations so the chat log shows only "
+        "genuine speech.")
+    b.h3("Audio capture")
+    b.bullets([
+        "On Linux with PipeWire the app prefers "
+        "<font face=\"Courier\">parec</font> over PortAudio because "
+        "PortAudio's PipeWire-via-ALSA bridge can silently deliver "
+        "flat-zero audio on PipeWire 1.4. If "
+        "<font face=\"Courier\">parec</font> is missing the app falls "
+        "back to PortAudio.",
+        "Anywhere else (or if you've selected a specific input device "
+        "index in Configuration), PortAudio is used directly.",
+    ])
+    b.h3("Voice activity detection (VAD)")
+    b.bullets([
+        ("Silero VAD", "Neural VAD. Only audio it scores as speech is "
+                       "forwarded for transcription — kerchunks and "
+                       "static are dropped."),
+        ("Threshold", "Tunable from 0.10 (very sensitive) to 0.95 (very "
+                      "strict) in Configuration. Default 0.50."),
+        ("Auto-rebaseline", "After roughly 30 s of continuous silence "
+                            "the VAD is rebaselined so detection stays "
+                            "responsive on long-quiet channels."),
+        ("TX auto-pause", "While the app is transmitting, the listener "
+                          "is paused so your own TTS isn't transcribed "
+                          "back. Listening resumes immediately on "
+                          "unkey, with VAD state reset so no in-progress "
+                          "speech bleeds across the boundary."),
+    ])
+    b.h3("DSP conditioning")
+    b.bullets([
+        ("300–3000 Hz bandpass", "Matches the narrowband-FM voice "
+                                       "band. Strips hum and out-of-band "
+                                       "hiss before denoising."),
+        ("Noise reduction", "Spectral gating applied per utterance "
+                            "after bandpass and before transcription."),
+        ("Hallucination filter", "Drops utterances shorter than ~400 ms "
+                                  "and common Whisper hallucinations on "
+                                  "silence (“Thank you”, "
+                                  "“Subtitles by…”, etc.)."),
+    ])
+    b.h3("Transcription")
+    b.bullets([
+        ("Engine", "faster-whisper (CTranslate2 backend). int8 CPU "
+                   "inference by default."),
+        ("Default model", "<font face=\"Courier\">small.en</font>. "
+                          "Trade quality / speed via "
+                          "<font face=\"Courier\">bootstrap_models.py "
+                          "--model base.en|medium.en</font>."),
+        ("Profanity masking", "When <b>Filter profanity</b> is on, "
+                              "strong language in the transcript is "
+                              "masked with asterisks before it lands "
+                              "in the chat log."),
+    ])
+
+
+def build_tx(b: Builder):
+    b.h1("14. Transmit (Tx) pipeline")
+    b.p("Each transmission (typed message, quick preset, or This is) "
+        "passes through the same pipeline.")
+    b.bullets([
+        ("1. Placeholder substitution", "Curly-brace tokens in quick "
+                                         "presets are filled by "
+                                         "prompting the user."),
+        ("2. Shorthand expansion", "TTY and ham-radio shorthand is "
+                                    "rewritten to full words before "
+                                    "TTS — GA → Go ahead, "
+                                    "SKSK → end of conversation, "
+                                    "73 → best regards, QTH "
+                                    "→ location, etc. Matching is "
+                                    "case-insensitive and word-bounded, "
+                                    "longest-key-first, so QSO → "
+                                    "radio contact while a lone Q "
+                                    "inside another word passes "
+                                    "through."),
+        ("3. Profanity masking", "When the filter is on (default), "
+                                  "strong language is asterisk-masked "
+                                  "before TTS sees it. Mild PG-13 words "
+                                  "(damn, hell, crap, bare ass) pass "
+                                  "through unchanged. Word-bounded so "
+                                  "substrings like classroom or "
+                                  "Scunthorpe are never false-positives."),
+        ("4. FCC framing (GMRS only)", "Prepends "
+                                        "<font face=\"Courier\">[CALL] "
+                                        "[name] calling [target]</font> "
+                                        "when targeting a specific "
+                                        "station; appends a station ID "
+                                        "if more than 15 minutes have "
+                                        "passed since last identification. "
+                                        "<i>All</i>-targeted "
+                                        "transmissions skip the preface "
+                                        "but still pick up the ID "
+                                        "append when the rule triggers. "
+                                        "FRS skips both."),
+        ("5. Spoken-callsign formatting", "Digits inside callsigns are "
+                                           "split with spaces so TTS "
+                                           "reads them as individual "
+                                           "digits (WSLZ 2 3 3 rather "
+                                           "than two hundred "
+                                           "thirty-three)."),
+        ("6. PTT key-down", "Manual mode: no-op. VOX: append silence "
+                             "tail. USB FTDI: assert the configured "
+                             "control line and pad with lead-in / tail "
+                             "silence."),
+        ("7. STT auto-pause", "The listener is paused so your own "
+                               "audio isn't transcribed back."),
+        ("8. Piper synthesis", "TTS audio is rendered offline through "
+                                "the selected Piper voice at the "
+                                "configured length scale and played to "
+                                "the configured output device."),
+        ("9. Unkey and resume", "PTT releases (in serial mode) after a "
+                                 "tail of silence; STT resumes with VAD "
+                                 "state reset."),
+    ])
+
+
+def build_callsign_detection(b: Builder):
+    b.h1("15. Callsign detection &amp; FCC verification")
+    b.h3("Recognized formats")
+    b.bullets([
+        "GMRS modern: <font face=\"Courier\">WSLZ233</font>.",
+        "GMRS legacy: <font face=\"Courier\">KAE1234</font>.",
+        "US amateur: <font face=\"Courier\">K1ABC</font>, "
+        "<font face=\"Courier\">KD9XYZ</font>, "
+        "<font face=\"Courier\">W1AW</font>.",
+        "Compact: <font face=\"Courier\">WSLZ233</font>.",
+        "Spaced: <font face=\"Courier\">W S L Z 2 3 3</font>.",
+        "Separated: <font face=\"Courier\">W.S.L.Z.233</font>, "
+        "<font face=\"Courier\">WSLZ-233</font>, "
+        "<font face=\"Courier\">WSLZ, 233</font>.",
+        "NATO phonetic: <font face=\"Courier\">Whiskey Sierra Lima "
+        "Zulu Two Three Three</font> (also accepts <i>X-ray</i> and "
+        "<i>X ray</i>).",
+    ])
+    b.h3("Pending pills")
+    b.p("Unknown stations earn a yellow pill on the pending bar. The "
+        "“unknown” check considers all three callsign fields "
+        "on every contact (<font face=\"Courier\">callsign</font>, "
+        "<font face=\"Courier\">gmrs_callsign</font>, "
+        "<font face=\"Courier\">ham_callsign</font>), so a HAM call "
+        "detected over the air won't pill if the operator's GMRS call "
+        "is already saved (and vice versa).")
+    b.h3("FCC verification (online, opt-in)")
+    b.p("When the connectivity probe says the app is online, contacts "
+        "are cross-referenced against the public FCC license database "
+        "via the ke8rxnwx crossref API. A row earns a green ✓ in "
+        "the Verified column when both conditions hold:")
+    b.bullets([
+        "The callsign is in the active FCC database, AND",
+        "The contact's name matches a token in the licensee's name "
+        "(“Tim” matches “Surname, Timothy L”).",
+    ])
+    b.p("Verified lookups also persist <font face=\"Courier\">"
+        "gmrs_callsign</font> and <font face=\"Courier\">ham_callsign"
+        "</font> fields on the contact, pulled from the FCC "
+        "<font face=\"Courier\">related</font> cross-reference list "
+        "(service codes <font face=\"Courier\">ZA</font> for GMRS and "
+        "<font face=\"Courier\">HA</font> / <font face=\"Courier\">HV"
+        "</font> for Amateur). For an operator licensed for both "
+        "services, a HAM call entered as the primary will resolve its "
+        "associated GMRS call and vice versa.")
+    b.p("Cross-references are <b>only</b> written when the contact's "
+        "name matches the licensee. A family-member row on a shared "
+        "GMRS call (whose name doesn't match) keeps its own GMRS / HAM "
+        "fields untouched because those callsigns describe the "
+        "licensee, not the family member.")
+    b.p("A verified lookup also backfills the contact's <font "
+        "face=\"Courier\">location</font> field with the FCC city "
+        "(title-cased) when the row had no location of its own. Any "
+        "value the operator already typed is left alone.")
+    b.note(
+        "<b>Caching:</b> rows whose <font face=\"Courier\">verified"
+        "</font> flag is True with unchanged callsign and name are "
+        "treated as cached. Both Verify all and OK skip them, so "
+        "opening and closing Contacts doesn't churn the "
+        "<font face=\"Courier\">verified_at</font> timestamp. Newly "
+        "added rows, in-dialog edits, and previously-failed lookups "
+        "all earn a fresh round trip."
+    )
+
+
+def build_compliance(b: Builder):
+    b.h1("16. FCC Part 95 compliance features")
+    b.p("GMRS-TTY makes Part 95 GMRS compliance the default behavior:")
+    b.bullets([
+        "Outbound messages always carry your callsign and name when "
+        "targeting a specific station.",
+        "The 15-minute ID rule is enforced automatically — your "
+        "callsign and name are appended when more than 15 minutes have "
+        "passed since the last identification.",
+        "Identification is appended even on short messages if the rule "
+        "triggers.",
+        "The standalone <b>This is</b> button (Alt+I or Ctrl+I) sends a "
+        "complete station ID and resets the 15-minute timer.",
+        "The PG-13 profanity filter (default on) masks strong language "
+        "in both RX and TX so transmissions stay within Part 95 "
+        "obscenity expectations. Toggle in Configuration if you operate "
+        "on a private repeater with different norms.",
+        "FRS mode (Subpart B) intentionally skips Part 95 Subpart A "
+        "station-ID rules. FRS is unlicensed and has no callsign "
+        "requirement, so callsign framing, the 15-minute timer, and "
+        "the standalone-ID button are all disabled.",
+    ])
+    b.warn(
+        "<b>You are still responsible for legal operation.</b> This "
+        "software does not replace a valid FCC GMRS license, and the "
+        "operator remains accountable for content, channel choice, and "
+        "any local repeater rules. The app's compliance features are a "
+        "convenience, not a guarantee."
+    )
+
+
+def build_accessibility(b: Builder):
+    b.h1("17. Accessibility (WCAG 2.1 AA)")
+    b.p("The application exists for users with disabilities, so "
+        "accessibility is a hard design constraint. The UI targets WCAG "
+        "2.1 Level AA — the practical baseline DOJ and Section 508 "
+        "reference for software ADA compliance.")
+    b.bullets([
+        ("Color contrast", "Text colors meet ≥4.5:1 against the "
+                            "chat background (RX green #15803D, TX blue "
+                            "#1D4ED8, errors #B91C1C, warnings #92400E). "
+                            "UI borders such as the pending-station "
+                            "pills meet ≥3:1."),
+        ("State never by color alone", "Every RX line is prefixed "
+                                        "<font face=\"Courier\">[RX "
+                                        "HH:MM:SS]:</font>, TX lines "
+                                        "<font face=\"Courier\">[TX to "
+                                        "&hellip;]:</font> or "
+                                        "<font face=\"Courier\">[TX "
+                                        "ID]:</font>, errors say "
+                                        "<i>Error:</i> or <i>Failed:</i> "
+                                        "in the text. Color is "
+                                        "supplemental, never the only "
+                                        "cue."),
+        ("Full keyboard operation", "Explicit tab order (Listen "
+                                     "→ Target → Message "
+                                     "→ Transmit → This is). "
+                                     "Mnemonics on every actionable "
+                                     "label. Global shortcuts listed in "
+                                     "section 10."),
+        ("Screen reader support", "Every non-decorative widget has an "
+                                   "accessibleName and (where useful) "
+                                   "accessibleDescription for the Qt "
+                                   "accessibility bridge — NVDA, "
+                                   "JAWS, Orca, VoiceOver."),
+        ("Font scaling", "No hard-coded font-size in stylesheets. "
+                          "Bold uses Qt's relative QFont API so the OS "
+                          "font-scale setting carries through."),
+        ("Resizable layout", "Main window minimum 720×520 so "
+                              "high-DPI / large-font setups don't clip. "
+                              "All dialogs are resizable."),
+        ("Focus visible", "Relies on the Fusion style's default focus "
+                           "indicator — Qt does not strip outlines "
+                           "and neither does the app."),
+    ])
+
+
+def build_offgrid(b: Builder):
+    b.h1("18. Off-grid operation")
+    b.p("Once the dependencies and models are in place, the radio "
+        "workflow does not need a network. RX transcription, TX "
+        "synthesis, PTT keying, and contact management all run "
+        "locally.")
+    b.bullets([
+        ("Whisper STT", "Loaded from "
+                        "<font face=\"Courier\">Models/STT/&lt;model&gt;/"
+                        "</font>. Pre-staged via "
+                        "<font face=\"Courier\">bootstrap_models.py"
+                        "</font>; never re-fetched at runtime."),
+        ("Silero VAD", "Ships as a local ONNX file inside the wheel."),
+        ("Piper TTS", "Voices live under "
+                      "<font face=\"Courier\">Voices/</font>; you "
+                      "supply them once."),
+        ("Online features", "Strictly opt-in via the connectivity "
+                             "probe. When offline: the Verify all "
+                             "button disables, save-time verification "
+                             "is skipped, the online indicator turns "
+                             "amber, and previously-earned verified "
+                             "checks are preserved untouched. The radio "
+                             "workflow keeps running."),
+    ])
+    b.p("Recommended deployment for a true air-gapped target: clone the "
+        "repo, install dependencies, and run "
+        "<font face=\"Courier\">bootstrap_models.py</font> on an "
+        "internet-connected machine. Then copy the entire source tree, "
+        "<font face=\"Courier\">Models/</font>, and "
+        "<font face=\"Courier\">Voices/</font> to the offline target. "
+        "Reuse the same virtual environment if it's portable across "
+        "the architecture, otherwise rebuild the venv from the same "
+        "<font face=\"Courier\">requirements.txt</font> on the target.")
+
+
+def build_troubleshooting(b: Builder):
+    b.h1("19. Troubleshooting")
+
+    b.h3("Listen does nothing or fails immediately")
+    b.bullets([
+        ("“STT model not found” in chat", "Run "
+         "<font face=\"Courier\">python bootstrap_models.py --model "
+         "&lt;name&gt;</font> with the model named in the message."),
+        ("Listen toggles but the level meter stays at zero", "The app "
+         "isn't getting audio. Check the Input Device dropdown in "
+         "Configuration, your microphone privacy permissions, and the "
+         "physical cable. On PipeWire installs, confirm "
+         "<font face=\"Courier\">pulseaudio-utils</font> is installed "
+         "so <font face=\"Courier\">parec</font> is on PATH."),
+        ("Lots of false starts on a noisy channel", "Raise VAD "
+         "Threshold (try 0.65–0.75). Conversely, on a very quiet "
+         "channel where speech is being missed, lower it (try 0.30)."),
+    ])
+
+    b.h3("Transmit is silent or clipped")
+    b.bullets([
+        ("Nothing audible at all", "Check Output Device. If you're "
+         "feeding the radio directly, make sure you didn't accidentally "
+         "leave Output Device on System Default — you'd hear it "
+         "through the laptop speakers instead."),
+        ("First syllable clipped on VOX", "VOX hang/sensitivity needs "
+         "tuning on the radio; lengthen the radio's VOX attack if "
+         "available."),
+        ("Last syllable cut off on serial PTT", "Increase the "
+         "tail-silence padding (recompile with longer pad) or switch "
+         "to VOX where the tail is already extended."),
+    ])
+
+    b.h3("FCC verification problems")
+    b.bullets([
+        ("Verify all is disabled", "Status bar shows Offline. "
+         "Reconnect; the indicator refreshes every 30 s."),
+        ("Row stays unverified even though the callsign is real",
+         "Check that the Name field matches a token in the licensee's "
+         "name. Hover the empty Verified cell — if the tooltip "
+         "lists a licensee, the row was rejected for name-mismatch on "
+         "purpose (family-shared GMRS call)."),
+    ])
+
+    b.h3("Quick messages")
+    b.bullets([
+        ("Strip is invisible", "You have no presets saved. Open the "
+         "Quick Messages dialog and add at least one phrase."),
+        ("Alt+1…Alt+9 fire the wrong preset", "Use Move Up / "
+         "Move Down in the Quick Messages dialog to reorder — the "
+         "shortcuts follow the saved order."),
+    ])
+
+
+def build_files(b: Builder):
+    b.h1("20. File reference")
+
+    b.h3("config.json")
+    b.p("Lives in the working directory next to "
+        "<font face=\"Courier\">main.py</font>. Plain UTF-8 JSON.")
+    b.code(
+        '{\n'
+        '    "callsign": "WSLZ233",\n'
+        '    "name": "Benjamin",\n'
+        '    "location": "Lansing, MI",\n'
+        '    "voice": "Voices/en_US-ryan-high.onnx",\n'
+        '    "tts_length_scale": 1.0,\n'
+        '    "input_device": -1,\n'
+        '    "output_device": -1,\n'
+        '    "whisper_model": "small.en",\n'
+        '    "vad_threshold": 0.5,\n'
+        '    "time_format": "24h",\n'
+        '    "filter_profanity": true,\n'
+        '    "ptt_mode": "manual",\n'
+        '    "ptt_serial_port": "",\n'
+        '    "ptt_serial_line": "RTS",\n'
+        '    "radio_service": "GMRS",\n'
+        '    "quick_messages": [\n'
+        '        "Radio check",\n'
+        '        "Loud and clear",\n'
+        '        "Standing by",\n'
+        '        "Acknowledged",\n'
+        '        "Say again",\n'
+        '        "QSY to channel {N}",\n'
+        '        "Clear",\n'
+        '        "Monitoring",\n'
+        '        "Net check-in",\n'
+        '        "Emergency traffic"\n'
+        '    ]\n'
+        '}'
+    )
+    b.bullets([
+        ("input_device / output_device", "-1 means system default. Any "
+                                          "other integer is the "
+                                          "PortAudio device index."),
+        ("tts_length_scale", "0.70–1.50. Higher is slower."),
+        ("vad_threshold", "0.10–0.95. Higher is stricter."),
+        ("ptt_mode", "<font face=\"Courier\">manual</font>, <font "
+                     "face=\"Courier\">vox</font>, or <font face="
+                     "\"Courier\">usb_ftdi</font>."),
+        ("ptt_serial_line", "<font face=\"Courier\">RTS</font> or "
+                            "<font face=\"Courier\">DTR</font>. Only "
+                            "used when "
+                            "<font face=\"Courier\">ptt_mode</font> is "
+                            "<font face=\"Courier\">usb_ftdi</font>."),
+        ("time_format", "<font face=\"Courier\">24h</font> or <font "
+                        "face=\"Courier\">12h</font>."),
+        ("radio_service", "<font face=\"Courier\">GMRS</font> or "
+                          "<font face=\"Courier\">FRS</font>. Default "
+                          "GMRS if missing or unknown."),
+        ("quick_messages", "Ordered list of phrase strings; first nine "
+                            "get Alt+1…Alt+9."),
+    ])
+
+    b.h3("contacts.json")
+    b.p("Lives alongside <font face=\"Courier\">config.json</font>. "
+        "Array of contact objects. The synthetic <i>All</i> row is "
+        "always pinned at the top of the in-app dropdown and is "
+        "preserved across saves.")
+    b.code(
+        '[\n'
+        '    { "callsign": "All", "name": "Everyone" },\n'
+        '    {\n'
+        '        "callsign": "WSLZ233",\n'
+        '        "name": "Tim",\n'
+        '        "location": "Lansing, MI",\n'
+        '        "gmrs_callsign": "WSLZ233",\n'
+        '        "ham_callsign": "KD9XYZ",\n'
+        '        "verified": true,\n'
+        '        "verified_at": "2026-05-16T14:32:11Z",\n'
+        '        "license_name": "SURNAME, TIMOTHY L"\n'
+        '    }\n'
+        ']'
+    )
+    b.bullets([
+        ("callsign", "Required. Uppercased on save."),
+        ("name", "Free-form."),
+        ("location", "Free-form. Auto-backfilled from FCC city on "
+                     "successful verification if originally empty."),
+        ("gmrs_callsign / ham_callsign", "Cross-references. "
+                                          "Auto-populated by FCC "
+                                          "verification when the name "
+                                          "matches; hand-editable "
+                                          "otherwise."),
+        ("verified", "Boolean. True only when callsign is active in "
+                     "the FCC database AND name matches the licensee."),
+        ("verified_at", "ISO-8601 UTC timestamp of the last successful "
+                        "lookup."),
+        ("license_name", "Raw licensee name returned by the FCC — "
+                         "stored so the Verified-cell tooltip can show "
+                         "<i>FCC license is held by &hellip;</i>."),
+    ])
+
+
+def build_glossary(b: Builder):
+    b.h1("21. Glossary")
+    glossary = [
+        ("FCC Part 95", "The section of US federal regulations covering "
+                       "the Personal Radio Services. Subpart A is "
+                       "GMRS; Subpart B is FRS."),
+        ("FRS", "Family Radio Service. Unlicensed, no callsign, lower "
+                "power, fixed antennas only on most channels."),
+        ("GMRS", "General Mobile Radio Service. Licensed (one license "
+                 "covers an immediate family), callsign required, up "
+                 "to 50 W on repeater inputs."),
+        ("kerchunk", "A brief unmodulated key-up with no voice. "
+                    "Common when checking repeater access. Silero VAD "
+                    "is designed to ignore these."),
+        ("NATO phonetic", "The ICAO/NATO spelling alphabet (Alfa, "
+                          "Bravo, Charlie&hellip;). Used over voice "
+                          "radio to make letters unambiguous."),
+        ("Piper", "An offline neural TTS engine using ONNX voices."),
+        ("PTT", "Push-to-Talk. The control line that keys the radio "
+                "into transmit mode."),
+        ("QSL / QSO / QTH / QRZ", "Ham-radio Q-signals. QSL = "
+                                  "acknowledge. QSO = radio contact. "
+                                  "QTH = location. QRZ = who is calling "
+                                  "me?"),
+        ("Silero VAD", "An open-source neural voice-activity detector. "
+                       "Decides which audio chunks contain speech."),
+        ("STT", "Speech-to-text. The Whisper transcription stage."),
+        ("TTS", "Text-to-speech. The Piper synthesis stage."),
+        ("TTY", "Teletypewriter — the device, and by extension "
+                "the abbreviation style (GA, SK, 73, ILY), that "
+                "deaf operators have used over phone and radio for "
+                "decades."),
+        ("VAD", "Voice activity detection. See Silero VAD."),
+        ("VOX", "Voice-operated transmit. A radio's auto-key on "
+                "detected audio."),
+        ("Whisper", "OpenAI's speech-recognition model. faster-whisper "
+                    "is the CTranslate2-accelerated CPU runtime used "
+                    "by this app."),
+    ]
+    rows = [[term, definition] for term, definition in glossary]
+    b.table(["Term", "Definition"], rows,
+            col_widths=[1.3 * inch, 5.45 * inch])
+
+
+# ---------------------------------------------------------------------------
+# Assembly
+# ---------------------------------------------------------------------------
+
+def build_manual(path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    doc = make_doc(path)
+    styles = build_styles()
+    flow = []
+    b = Builder(styles=styles, flow=flow)
+
+    build_cover(b)
+    flow.append(NextPageTemplate("body"))
+    flow.append(PageBreak())
+
+    sections = [
+        build_toc,
+        build_about,
+        build_requirements,
+        build_install,
+        build_first_run,
+        build_main_window,
+        build_config_dialog,
+        build_contacts_dialog,
+        build_quick_messages_dialog,
+        build_add_station_dialog,
+        build_keyboard,
+        build_service_mode,
+        build_ptt,
+        build_rx,
+        build_tx,
+        build_callsign_detection,
+        build_compliance,
+        build_accessibility,
+        build_offgrid,
+        build_troubleshooting,
+        build_files,
+        build_glossary,
+    ]
+    for i, section in enumerate(sections):
+        section(b)
+        if i < len(sections) - 1:
+            flow.append(PageBreak())
+
+    doc.build(flow)
+
+
+def main(argv):
+    out = OUTPUT_PATH
+    if len(argv) > 1:
+        out = argv[1]
+    build_manual(out)
+    print(f"Wrote {out}")
+
+
+if __name__ == "__main__":
+    main(sys.argv)

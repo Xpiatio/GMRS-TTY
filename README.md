@@ -151,6 +151,23 @@ python main.py
 - **Configuration** (Alt+S, Alt+C — or Ctrl+,) — edit callsign, name, location, voice model (with Test button for voice preview), speech rate (slider mapping to Piper's `length_scale` from 0.70× to 1.50×; 1.00× is the voice's native pace, higher is slower; Test button previews at the current value), input device, output device (where TTS audio plays — pick a USB sound card / Signalink / Digirig channel to feed your radio directly), VAD threshold (0.10–0.95; lower = more sensitive to weak/quiet signals, higher = stricter gating on noisy channels; default 0.5), time format (24-hour default or 12-hour with AM/PM for RX timestamps), profanity filter (PG-13 masking on RX and TX; default on), and PTT mode. PTT options: **Manual** (you press PTT on the radio yourself), **VOX** (radio auto-keys on detected audio), or **USB FTDI / Serial** (app keys PTT via a USB-serial adapter's RTS or DTR line — when selected, Serial Port and Control Line fields enable). Changes to the input device or VAD threshold restart the listener automatically.
 - **Contacts** (Alt+S, Alt+N — or Ctrl+B) — six-column editor: **Callsign | Name | Location | GMRS | HAM | Verified**. The GMRS and HAM columns auto-populate from FCC verification (when online) but are also hand-editable for rows you haven't verified yet; values are uppercased on save like the primary callsign. The **Verified** column shows green ✓ when the callsign is active in the FCC database and the contact's name matches the licensee. The list is sorted alphabetically by callsign whenever it loads or you save changes. A **Sort by Suffix** button (Alt+S inside the dialog) reorders the table by the last 3 digits of each callsign for visual scanning; the saved order remains alphabetical. A **Verify all** button (Alt+V) checks every not-yet-verified row against the FCC database when online (verified rows are skipped unless their callsign or name was edited in-dialog); it disables automatically when the app is offline. Saving the dialog uses the same gate as Verify all — already-verified, unedited rows are cached and skipped on save too; new rows, edits, and previously-failed lookups get a fresh FCC round trip. Offline saves keep their prior verified state.
 
+## User manual
+
+A full-reference user manual (29 pages, PDF) lives at
+[docs/USER_MANUAL.pdf](docs/USER_MANUAL.pdf). It covers installation,
+first-run configuration, every dialog, the keyboard-shortcut cheat
+sheet, GMRS vs FRS behavior, PTT modes, the RX/TX pipelines, FCC
+verification semantics, accessibility, off-grid operation, and the
+on-disk file formats.
+
+The PDF is regenerated from [scripts/build_user_manual.py](scripts/build_user_manual.py)
+— the script holds the manual content as data so it stays in lockstep
+with the codebase. To rebuild after a UI change:
+
+```bash
+python scripts/build_user_manual.py
+```
+
 ## FCC Compliance Notes (GMRS, Part 95)
 
 This software is built to make FCC Part 95 GMRS compliance easier:
