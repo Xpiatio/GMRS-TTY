@@ -11,5 +11,17 @@
     "ptt_mode": "manual",
     "ptt_serial_port": "",
     "ptt_serial_line": "RTS",
-    "filter_profanity": true
+    "filter_profanity": true,
+    "quick_messages": [
+        "Radio check",
+        "Loud and clear",
+        "Standing by",
+        "Acknowledged",
+        "Say again",
+        "QSY to channel {N}",
+        "Clear",
+        "Monitoring",
+        "Net check-in",
+        "Emergency traffic"
+    ]
 }

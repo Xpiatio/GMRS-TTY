@@ -6,8 +6,9 @@ from piper.voice import PiperVoice
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu,
-    QProgressBar, QPushButton, QScrollArea, QVBoxLayout, QWidget,
+    QComboBox, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+    QMainWindow, QMenu, QProgressBar, QPushButton, QScrollArea, QVBoxLayout,
+    QWidget,
 )
 
 from gmrs_tty.audio.playback import AudioPlayerThread
@@ -24,14 +25,17 @@ from gmrs_tty.stt.worker import STTWorker
 from gmrs_tty.text.callsigns import detect_callsigns, spell_digits_in_callsigns
 from gmrs_tty.text.metadata import extract_name_location
 from gmrs_tty.text.profanity import mask_profanity
+from gmrs_tty.text.placeholders import find_placeholders, substitute_placeholders
 from gmrs_tty.text.shorthand import expand_tty_abbreviations
 from gmrs_tty.tts.synthesizer import TTSSynthesisThread
 from gmrs_tty.ui.chat_display import ChatDisplay
 from gmrs_tty.ui.config_dialog import ConfigDialog
 from gmrs_tty.ui.contacts_dialog import AddContactDialog, ContactsDialog
 from gmrs_tty.ui.flow_layout import FlowLayout
+from gmrs_tty.ui.quick_messages_dialog import QuickMessagesDialog
 
 PENDING_PILL_MAX_ROWS = 3
+QUICK_MESSAGE_SHORTCUT_COUNT = 9
 
 
 class MainWindow(QMainWindow):
@@ -59,6 +63,7 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.update_header()
         self.populate_target_dropdown()
+        self.populate_quick_messages_strip()
         self._refresh_callsign_index()
         self._check_bundled_models()
 
@@ -158,6 +163,25 @@ class MainWindow(QMainWindow):
         self.pending_bar.addWidget(self.clear_pending_btn, 0, Qt.AlignmentFlag.AlignTop)
         main_layout.addLayout(self.pending_bar)
 
+        # 2c. Quick-messages preset strip. Sits between the pending bar and
+        # the TX row so common phrases ("Radio check", "Standing by", "QSY to
+        # channel {N}") are one click away. Presets ride the same TX pipeline
+        # as the typed message-input box, so callsign framing, the 15-minute
+        # ID rule, PTT keying, and STT auto-pause all still apply.
+        self.quick_messages_widget = QWidget(self)
+        self.quick_messages_flow = FlowLayout(
+            self.quick_messages_widget, margin=0, spacing=5
+        )
+        self.quick_messages_widget.setAccessibleName("Quick message presets")
+        self.quick_messages_widget.setAccessibleDescription(
+            "Row of one-click preset phrases. Edit the list from "
+            "Settings, Quick Messages."
+        )
+        main_layout.addWidget(self.quick_messages_widget)
+        # Will be repopulated by populate_quick_messages_strip(); start hidden
+        # so users without saved presets don't see an empty band.
+        self.quick_messages_widget.hide()
+
         # 3. Input Area (Tx Section). Mnemonics: Alt+L Listen, Alt+T Transmit, Alt+I This is.
         input_layout = QHBoxLayout()
 
@@ -240,6 +264,16 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+Enter"), self, activated=self.transmit_message)
         QShortcut(QKeySequence("Ctrl+I"), self, activated=self.transmit_id_only)
 
+        # Alt+1 … Alt+9 fire the first nine quick-message presets, in order.
+        # User-defined phrases can't carry unique alphabetic mnemonics so we
+        # claim the digit row instead; everything past slot nine is mouse-only.
+        for i in range(QUICK_MESSAGE_SHORTCUT_COUNT):
+            QShortcut(
+                QKeySequence(f"Alt+{i + 1}"),
+                self,
+                activated=lambda index=i: self._send_preset(index),
+            )
+
         self.statusBar().showMessage("Ready")
 
         # Reasonable minimum so high-DPI / large-font users don't get clipping.
@@ -265,6 +299,13 @@ class MainWindow(QMainWindow):
         contacts_action.setStatusTip("Add, edit, or remove known callsigns.")
         contacts_action.triggered.connect(self.open_contacts_dialog)
         settings_menu.addAction(contacts_action)
+
+        quick_action = QAction("&Quick Messages…", self)
+        quick_action.setStatusTip(
+            "Edit the one-click preset phrases shown above the message field."
+        )
+        quick_action.triggered.connect(self.open_quick_messages_dialog)
+        settings_menu.addAction(quick_action)
 
     def update_header(self):
         """Updates the top bar with current user info."""
@@ -329,15 +370,100 @@ class MainWindow(QMainWindow):
             self.populate_target_dropdown()
             self._refresh_callsign_index()
 
+    def open_quick_messages_dialog(self):
+        dlg = QuickMessagesDialog(self._quick_messages(), parent=self)
+        if dlg.exec():
+            self.config["quick_messages"] = dlg.get_quick_messages()
+            save_json(CONFIG_FILE, self.config)
+            self.populate_quick_messages_strip()
+
+    def _quick_messages(self):
+        """Read the saved preset list, filtering out any non-string / blank
+        entries so a hand-edited config.json can't crash the strip."""
+        raw = self.config.get("quick_messages", []) or []
+        return [p.strip() for p in raw if isinstance(p, str) and p.strip()]
+
+    def populate_quick_messages_strip(self):
+        """Tear down the strip and rebuild it from the saved preset list.
+        Called at startup and after the editor dialog saves."""
+        while self.quick_messages_flow.count():
+            item = self.quick_messages_flow.takeAt(0)
+            w = item.widget() if item is not None else None
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+
+        presets = self._quick_messages()
+        for index, phrase in enumerate(presets):
+            btn = QPushButton(phrase, self.quick_messages_widget)
+            tip_parts = [f"Transmit: {phrase}"]
+            if index < QUICK_MESSAGE_SHORTCUT_COUNT:
+                tip_parts.append(f"Shortcut: Alt+{index + 1}")
+            placeholders = find_placeholders(phrase)
+            if placeholders:
+                tip_parts.append(
+                    "Prompts for: " + ", ".join(placeholders)
+                )
+            btn.setToolTip("\n".join(tip_parts))
+            btn.setAccessibleName(f"Quick message: {phrase}")
+            btn.setAccessibleDescription(
+                "Transmit this preset through the standard TX pipeline. "
+                "Placeholders in curly braces will prompt for a value before "
+                "transmitting."
+            )
+            btn.clicked.connect(
+                lambda _checked=False, p=phrase: self._send_preset_phrase(p)
+            )
+            self.quick_messages_flow.addWidget(btn)
+
+        self.quick_messages_widget.setVisible(bool(presets))
+
+    def _send_preset(self, index):
+        """Alt+N hotkey path: pick the Nth preset (0-indexed) and send it
+        through `_send_preset_phrase`. Silently no-ops when the slot is
+        empty so unbound digit keys don't misfire."""
+        presets = self._quick_messages()
+        if 0 <= index < len(presets):
+            self._send_preset_phrase(presets[index])
+
+    def _send_preset_phrase(self, phrase):
+        """Resolve any `{Name}` placeholders via inline prompts and hand the
+        result to the shared TX pipeline. Cancel on any prompt aborts the
+        transmission so a half-filled placeholder never goes on-air."""
+        placeholders = find_placeholders(phrase)
+        values = {}
+        for name in placeholders:
+            value, ok = QInputDialog.getText(
+                self,
+                "Quick Message",
+                f"Value for {{{name}}}:",
+            )
+            if not ok:
+                return
+            values[name] = value.strip()
+        resolved = substitute_placeholders(phrase, values)
+        self._transmit_text(resolved)
+
     def transmit_message(self):
-        """Handles when the user attempts to send a message."""
-        text = self.message_input.text().strip()
+        """Wire the typed message-input box into the shared TX pipeline."""
+        if self._transmit_text(self.message_input.text().strip()):
+            self.message_input.clear()
+
+    def _transmit_text(self, text):
+        """Send `text` through the FCC-framing + TTS pipeline.
+
+        Used by both the typed message-input box and the quick-message presets,
+        so target-aware preface, profanity masking, 15-minute ID rule, chat-log
+        rendering, target reset to All, and Piper synthesis all happen in one
+        place. Returns True if a transmission was kicked off, False if the
+        request was a no-op (empty text + open-call target).
+        """
         target_call = self.target_dropdown.currentData()
         prefaced = bool(target_call and target_call.upper() != "ALL")
 
         # Empty text is only valid when calling a specific station — the preface itself is the call.
         if not text and not prefaced:
-            return
+            return False
 
         if self.config.get("filter_profanity", True):
             text = mask_profanity(text)
@@ -360,12 +486,8 @@ class MainWindow(QMainWindow):
             now=datetime.datetime.now(),
         )
 
-        # Append to chat (original form for readability)
         formatted_msg = f"<b>[TX to {target_call}]:</b> {spoken_text}"
         self.append_to_chat(formatted_msg, color=COLOR_TX)
-
-        # Clear input box; TTS spells out callsign digits ('233' -> '2 3 3').
-        self.message_input.clear()
 
         if prefaced:
             for i in range(self.target_dropdown.count()):
@@ -375,6 +497,7 @@ class MainWindow(QMainWindow):
                     break
 
         self._synthesize_and_play(spell_digits_in_callsigns(spoken_text))
+        return True
 
     def transmit_id_only(self):
         """Transmit a standalone ID: 'This is [call], [NATO phonetic call]. [name] from [location]'."""

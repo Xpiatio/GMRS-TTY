@@ -28,6 +28,7 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
 - **TTY + radio vernacular expansion** — outgoing shorthand from the Corada TDD/TTY Etiquette Glossary (e.g. `GA`, `SKSK`, `ASAP`, `ILY`, `MSG`, `CUL`) plus the ARRL/CW radio vernacular (`73`, `88`, Q-signals `QSL`/`QSO`/`QTH`/`QRZ`/`QRM`/`QRN`/`QRT`, and CW shorthand `HW`, `OM`, `XYL`, `WX`, `TNX`, `RST`, `ES`, `FB`, `AGN`, `B4`) is rewritten into full words before TTS speaks it, so the receiver hears "Go ahead" / "best regards" rather than "G A" / "seven three". Matching is case-insensitive and word-bounded, longest-key-first, so `QSO` expands to "radio contact" while `Q` inside other words still passes through unchanged.
 - **PG-13 profanity filter** — strong language (the f-word, s-word, slurs, and similar) is masked with asterisks (`shit` → `s***`) in both RX transcripts and outgoing TX messages before TTS speaks them. Mild PG-13 language (`damn`, `hell`, `crap`, bare `ass`) passes through unchanged. Word-bounded so substrings like `Scunthorpe` or `classroom` are never false-positives. Toggle in **Configuration → Filter profanity** (default on); useful for keeping the channel inside FCC Part 95 obscenity expectations.
 - **Adjustable speech rate** — a slider in Configuration (just under the voice picker) maps to Piper's `length_scale` from `0.70×` to `1.50×`; `1.00×` is the voice's native pace, higher is slower, lower is faster. The Test button auditions the current slider value before you save.
+- **Quick-message presets** — a configurable strip of one-click phrase buttons (seed list: `Radio check`, `Loud and clear`, `Standing by`, `Acknowledged`, `Say again`, `QSY to channel {N}`, `Clear`, `Monitoring`, `Net check-in`, `Emergency traffic`) sits between the pending-station bar and the message field. Click — or press **Alt+1** … **Alt+9** for the first nine — to transmit through the standard TX pipeline (callsign framing, 15-minute ID rule, PTT keying, STT auto-pause all still apply). Curly-brace tokens like `{N}` in `QSY to channel {N}` prompt for a value before transmitting. Edit the list (add / remove / reorder) from **Settings → Quick Messages…**; persisted to `config.json` under `quick_messages`.
 - "All" target is transmitted as-is (no preface).
 
 ### Contact discovery
@@ -212,7 +213,7 @@ Tracked in [implementation_plan.md](implementation_plan.md):
 9. ⏳ Future hardware (Bluetooth HT/mobile audio, hamlib CAT/CI-V rig control)
 10. ✅ TTY-to-radio-vernacular translation at TTS time (expand `GA`/`SK`/`73`/Q-signals to spoken form on TX)
 11. ⏳ AI-summarized session journal (on-device summaries via `ollama` + Gemma 3n E2B, with a date-stamped history viewer)
-12. ⏳ Quick / common messages (one-click preset phrases like "Radio check", "Standing by", "QSY to channel {N}", editable per-user)
+12. ✅ Quick / common messages (one-click preset phrases like "Radio check", "Standing by", "QSY to channel {N}", editable per-user)
 
 ## Contributing
 
