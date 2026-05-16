@@ -1,6 +1,27 @@
 CONFIG_FILE = "config.json"
 CONTACTS_FILE = "contacts.json"
 
+# Radio-service mode. GMRS requires a callsign; FRS doesn't, so when the user
+# selects FRS we disable every callsign-dependent feature (preface, ID rule,
+# contacts, pill highlighting, detection, online verification). Stored on
+# config.json as `radio_service`.
+SERVICE_GMRS = "GMRS"
+SERVICE_FRS = "FRS"
+DEFAULT_SERVICE = SERVICE_GMRS
+
+
+def normalize_service(value):
+    """Coerce whatever's in config.json into a known service constant.
+    Anything unrecognized (None, typo, missing key) falls back to GMRS — the
+    licensed mode is the safe default because it preserves Part 95 ID-rule
+    enforcement until the user explicitly opts into FRS."""
+    if not value:
+        return DEFAULT_SERVICE
+    upper = str(value).strip().upper()
+    if upper == SERVICE_FRS:
+        return SERVICE_FRS
+    return SERVICE_GMRS
+
 # WCAG 2.1 AA color palette. Text colors meet ≥4.5:1 contrast against white;
 # UI borders/icons meet ≥3:1. Picked from the Tailwind palette which has
 # documented contrast ratios.

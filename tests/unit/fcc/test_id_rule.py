@@ -2,6 +2,7 @@ import datetime
 
 import pytest
 
+from gmrs_tty.constants import SERVICE_FRS, SERVICE_GMRS
 from gmrs_tty.fcc.id_rule import (
     ID_INTERVAL_SECONDS,
     format_outgoing_message,
@@ -218,3 +219,73 @@ class TestStandaloneId:
             now=now,
         )
         assert text == "This is K1ABC, Kilo 1 Alpha Bravo Charlie. Carol from Denver."
+
+
+class TestFrsModeSkipsCallsignFraming:
+    """FRS doesn't issue callsigns — Part 95 Subpart B has no ID requirement —
+    so the TX pipeline must not prefix, suffix, or otherwise inject a callsign
+    into outgoing audio when the user has selected FRS. The 15-minute timer
+    also stops running so toggling back to GMRS doesn't immediately demand
+    re-identification on the next send."""
+
+    def test_untargeted_text_passes_through_unchanged(self, now, me):
+        text, new_last = format_outgoing_message(
+            "Just a quick check-in",
+            target_call="ALL",
+            target_name="Everyone",
+            my_call=me["call"],
+            my_name=me["name"],
+            last_id_time=None,
+            now=now,
+            service=SERVICE_FRS,
+        )
+        assert text == "Just a quick check-in"
+        # Timer stays None — FRS has no ID rule, so we don't pretend an ID
+        # 'happened' on this transmit.
+        assert new_last is None
+
+    def test_targeted_send_does_not_inject_preface(self, now, me):
+        text, new_last = format_outgoing_message(
+            "you copy?",
+            target_call="WSAC909",
+            target_name="Tim",
+            my_call=me["call"],
+            my_name=me["name"],
+            last_id_time=None,
+            now=now,
+            service=SERVICE_FRS,
+        )
+        # Even with a 'target' selected, FRS speaks the body verbatim — no
+        # callsign preface, no FCC framing.
+        assert text == "you copy?"
+        assert new_last is None
+
+    def test_id_timer_preserved_when_user_toggles_into_frs(self, now, me):
+        # If the user transmits in FRS we must not advance their GMRS
+        # last_id_time. They could be flipping mid-conversation.
+        prior = now - datetime.timedelta(minutes=3)
+        _, new_last = format_outgoing_message(
+            "anything",
+            target_call="ALL",
+            target_name="",
+            my_call=me["call"],
+            my_name=me["name"],
+            last_id_time=prior,
+            now=now,
+            service=SERVICE_FRS,
+        )
+        assert new_last == prior
+
+    def test_default_service_is_gmrs(self, now, me):
+        # Callers that don't pass `service` keep GMRS behavior — the new
+        # parameter must not silently change the existing semantics.
+        text, _ = format_outgoing_message(
+            "Hello channel",
+            target_call="ALL",
+            target_name="Everyone",
+            my_call=me["call"],
+            my_name=me["name"],
+            last_id_time=None,
+            now=now,
+        )
+        assert text == "Hello channel. This is WSLZ233 Bob."
