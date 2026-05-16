@@ -39,6 +39,10 @@ class VerificationResult:
     status: str  # see module docstring
     license_name: str = ""
     license_location: str = ""
+    # Raw city pulled from the FCC primary record — kept separate from the
+    # formatted `license_location` (which interleaves state) so callers that
+    # want just the city can grab it without parsing the formatted string.
+    license_city: str = ""
     license_active: bool = False
     gmrs_callsign: str = ""
     ham_callsign: str = ""
@@ -130,6 +134,7 @@ def verify_callsign(callsign, expected_name):
     primary = payload.get("primary") or {}
     license_name = (primary.get("name") or "").strip()
     license_location = _format_location(primary)
+    license_city = (primary.get("city") or "").strip()
     license_active = (primary.get("status") or "").upper() == "A"
 
     if not license_name:
@@ -148,6 +153,7 @@ def verify_callsign(callsign, expected_name):
         status=status,
         license_name=license_name,
         license_location=license_location,
+        license_city=license_city,
         license_active=license_active,
         gmrs_callsign=gmrs_callsign,
         ham_callsign=ham_callsign,
@@ -177,12 +183,28 @@ def apply_verification(contact, result, now_iso):
         updated["license_name"] = result.license_name
     if result.license_location:
         updated["license_location"] = result.license_location
-    # GMRS / HAM cross-references: only write a field when the lookup actually
-    # surfaced a value, so a partial API response can't silently clobber a
-    # user's hand-edited entry. The user owns contacts.json — when we have new
-    # information we share it, when we don't we stay quiet.
-    if result.gmrs_callsign:
+    # GMRS / HAM cross-references describe the LICENSEE, not the row we're
+    # updating. Only persist them when the contact's name actually matched
+    # the licensee (status == 'verified') — otherwise a family-member row on
+    # a shared GMRS callsign (e.g. spouse / kid using mom's WSLZ-call) would
+    # silently inherit mom's HAM call as its own. License-holder identity is
+    # already surfaced via license_name + the verified column tooltip; the
+    # cross-reference columns are reserved for rows that own those calls.
+    #
+    # Also: only write when the lookup actually returned a value, so a
+    # partial API response can't clobber a user's hand-edited entry.
+    if result.status == "verified" and result.gmrs_callsign:
         updated["gmrs_callsign"] = result.gmrs_callsign
-    if result.ham_callsign:
+    if result.status == "verified" and result.ham_callsign:
         updated["ham_callsign"] = result.ham_callsign
+    # Backfill the user-facing `location` field from the FCC city when the
+    # contact is verified (so we trust the licensee identity) AND the user
+    # left location blank. We never overwrite a value the user typed — their
+    # label ("Home", "Cabin", "Mobile") is intentional. Title-cased because
+    # ULS records are all-uppercase ("JENISON" → "Jenison") and that reads
+    # noisier than necessary in the header / target dropdown.
+    if (result.status == "verified"
+            and result.license_city
+            and not (contact.get("location") or "").strip()):
+        updated["location"] = result.license_city.title()
     return updated

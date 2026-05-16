@@ -275,8 +275,14 @@ class TestApplyVerificationToContact:
         updated = crossref.apply_verification(contact, result, now_iso="2026-05-16T20:00:00Z")
         assert updated["ham_callsign"] == "MANUAL"
 
-    def test_callsign_only_also_records_cross_references(self):
-        # The lookup data is valid even when the name didn't match.
+    def test_callsign_only_does_not_stamp_licensee_cross_references(self):
+        # A `callsign_only` result means the row's name doesn't match the
+        # licensee — this is the family-member-on-shared-GMRS-call scenario
+        # (Eliza on mom's WSLZ-call). The GMRS / HAM cross-references in the
+        # FCC payload describe the LICENSEE; writing them onto Eliza's row
+        # would falsely claim she owns mom's HAM call. license_name is fine
+        # to record (it's labeled as the licensee in the tooltip), but the
+        # cross-reference columns must stay clear of the row.
         contact = {"callsign": "WSLZ233", "name": "Eliza"}
         result = crossref.VerificationResult(
             status="callsign_only",
@@ -286,8 +292,34 @@ class TestApplyVerificationToContact:
             ham_callsign="KE8RXN",
         )
         updated = crossref.apply_verification(contact, result, now_iso="2026-05-16T20:00:00Z")
-        assert updated["gmrs_callsign"] == "WSLZ233"
-        assert updated["ham_callsign"] == "KE8RXN"
+        assert "gmrs_callsign" not in updated, (
+            "callsign_only must not stamp the licensee's GMRS call onto a "
+            "row whose name doesn't match the licensee"
+        )
+        assert "ham_callsign" not in updated, (
+            "callsign_only must not stamp the licensee's HAM call onto a "
+            "row whose name doesn't match the licensee"
+        )
+        # The license_name is still recorded so the tooltip can explain why
+        # the row didn't earn a green check.
+        assert updated["license_name"] == "Zomberg, Benjamin J"
+
+    def test_callsign_only_does_not_clobber_manual_cross_references(self):
+        # Inverse of the above: if Eliza happens to be a licensed HAM with
+        # her own call entered manually, a callsign_only verification on her
+        # GMRS row (matching mom's license) must NOT overwrite Eliza's own
+        # HAM call with mom's.
+        contact = {"callsign": "WSLZ233", "name": "Eliza",
+                   "ham_callsign": "KE8ELZ"}
+        result = crossref.VerificationResult(
+            status="callsign_only",
+            license_name="Zomberg, Benjamin J",
+            license_active=True,
+            gmrs_callsign="WSLZ233",
+            ham_callsign="KE8RXN",
+        )
+        updated = crossref.apply_verification(contact, result, now_iso="2026-05-16T20:00:00Z")
+        assert updated["ham_callsign"] == "KE8ELZ"
 
     def test_callsign_only_clears_verified(self):
         contact = {"callsign": "WSLZ233", "name": "Eliza", "verified": True}
@@ -322,3 +354,97 @@ class TestApplyVerificationToContact:
         result = crossref.VerificationResult(status="not_found")
         updated = crossref.apply_verification(contact, result, now_iso="2026-05-16T20:00:00Z")
         assert updated["verified"] is False
+
+
+class TestLocationBackfill:
+    """A verified lookup carries the licensee's city. When the contact row
+    has no location of its own, fill it in from the FCC city — saves the
+    operator from typing the same value that's already in the license
+    record. ULS data is all-uppercase so we title-case for display."""
+
+    def test_verified_backfills_empty_location_with_title_cased_city(self):
+        contact = {"callsign": "WSLZ233", "name": "Benjamin", "location": ""}
+        result = crossref.VerificationResult(
+            status="verified",
+            license_name="Zomberg, Benjamin J",
+            license_city="JENISON",
+            license_active=True,
+        )
+        updated = crossref.apply_verification(contact, result, now_iso="2026-05-16T20:00:00Z")
+        assert updated["location"] == "Jenison"
+
+    def test_verified_backfills_missing_location_key(self):
+        # A freshly-added contact may not even carry the `location` key yet.
+        contact = {"callsign": "WSLZ233", "name": "Benjamin"}
+        result = crossref.VerificationResult(
+            status="verified",
+            license_name="Zomberg, Benjamin J",
+            license_city="JENISON",
+            license_active=True,
+        )
+        updated = crossref.apply_verification(contact, result, now_iso="2026-05-16T20:00:00Z")
+        assert updated["location"] == "Jenison"
+
+    def test_verified_does_not_overwrite_existing_location(self):
+        # If the operator labeled the row ("Home", "Cabin", "Mobile") that's
+        # intentional — the FCC city must not silently replace it.
+        contact = {"callsign": "WSLZ233", "name": "Benjamin",
+                   "location": "Home"}
+        result = crossref.VerificationResult(
+            status="verified",
+            license_name="Zomberg, Benjamin J",
+            license_city="JENISON",
+            license_active=True,
+        )
+        updated = crossref.apply_verification(contact, result, now_iso="2026-05-16T20:00:00Z")
+        assert updated["location"] == "Home"
+
+    def test_verified_treats_whitespace_location_as_empty(self):
+        # Round-tripping through the table can land an all-spaces value in
+        # the field; treat it the same as missing for backfill purposes.
+        contact = {"callsign": "WSLZ233", "name": "Benjamin",
+                   "location": "   "}
+        result = crossref.VerificationResult(
+            status="verified",
+            license_name="Zomberg, Benjamin J",
+            license_city="JENISON",
+            license_active=True,
+        )
+        updated = crossref.apply_verification(contact, result, now_iso="2026-05-16T20:00:00Z")
+        assert updated["location"] == "Jenison"
+
+    def test_callsign_only_does_not_backfill_location(self):
+        # The FCC city belongs to the licensee, not to the family-member row
+        # we're updating. Mirrors the GMRS / HAM cross-reference rule: only
+        # write licensee-derived data onto rows whose name actually matched.
+        contact = {"callsign": "WSLZ233", "name": "Eliza", "location": ""}
+        result = crossref.VerificationResult(
+            status="callsign_only",
+            license_name="Zomberg, Benjamin J",
+            license_city="JENISON",
+            license_active=True,
+        )
+        updated = crossref.apply_verification(contact, result, now_iso="2026-05-16T20:00:00Z")
+        assert not updated.get("location")
+
+    def test_verified_with_empty_city_leaves_location_alone(self):
+        # API may not always return a city; absent data must not write the
+        # empty string into the row.
+        contact = {"callsign": "WSLZ233", "name": "Benjamin", "location": ""}
+        result = crossref.VerificationResult(
+            status="verified",
+            license_name="Zomberg, Benjamin J",
+            license_city="",
+            license_active=True,
+        )
+        updated = crossref.apply_verification(contact, result, now_iso="2026-05-16T20:00:00Z")
+        assert updated.get("location", "") == ""
+
+    def test_verify_callsign_populates_license_city(self):
+        # End-to-end: the network helper has to surface the city on the
+        # result so apply_verification has something to work with.
+        with patch("gmrs_tty.fcc.crossref.is_online", return_value=True), \
+             patch("gmrs_tty.fcc.crossref.urllib.request.urlopen",
+                   return_value=FakeResponse(_ok_payload(city="JENISON"))):
+            result = crossref.verify_callsign("WSLZ233", "Benjamin")
+        assert result.license_city == "JENISON"
