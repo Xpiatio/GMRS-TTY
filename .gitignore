@@ -19,6 +19,9 @@ Voices/
 # Bundled ML models (Stage 6 — air-gapped install)
 Models/
 
+# Build artifacts (.deb staging tree, vendored wheels, output packages)
+build/
+
 # Editor / OS
 .vscode/
 .idea/
