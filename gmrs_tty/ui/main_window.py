@@ -3,12 +3,12 @@ import os
 import traceback
 
 from piper.voice import PiperVoice
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QComboBox, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-    QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton, QScrollArea,
-    QVBoxLayout, QWidget,
+    QButtonGroup, QComboBox, QFrame, QHBoxLayout, QInputDialog, QLabel,
+    QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton,
+    QRadioButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from gmrs_tty.audio.playback import AudioPlayerThread
@@ -16,9 +16,15 @@ from gmrs_tty.constants import (
     COLOR_ERROR, COLOR_RX, COLOR_TX, COLOR_WARN,
     CONFIG_FILE, CONTACTS_FILE,
     PILL_BG, PILL_BORDER, PILL_TEXT,
+    SERVICE_FRS, SERVICE_GMRS, normalize_service,
 )
 from gmrs_tty.fcc.id_rule import format_outgoing_message, format_standalone_id
-from gmrs_tty.persistence.contacts import index_contacts_by_callsign, sort_contacts
+from gmrs_tty.net.online import is_online
+from gmrs_tty.persistence.contacts import (
+    index_contacts_by_callsign,
+    known_callsigns,
+    sort_contacts,
+)
 from gmrs_tty.persistence.json_store import load_json, save_json
 from gmrs_tty.ptt import make_ptt
 from gmrs_tty.stt.worker import STTWorker
@@ -36,6 +42,16 @@ from gmrs_tty.ui.quick_messages_dialog import QuickMessagesDialog
 
 PENDING_PILL_MAX_ROWS = 3
 QUICK_MESSAGE_SHORTCUT_COUNT = 9
+# How often we re-probe the network for the online indicator. Long enough that
+# the probe (cached at the net layer with PROBE_TTL_SECONDS) is essentially a
+# no-op between fires, short enough that a router reboot is reflected in well
+# under a minute.
+ONLINE_REFRESH_MS = 30_000
+
+ONLINE_LABEL_ONLINE = "● Online"
+ONLINE_LABEL_OFFLINE = "○ Offline"
+ONLINE_COLOR_ONLINE = "#15803D"   # green-700, matches COLOR_RX
+ONLINE_COLOR_OFFLINE = "#92400E"  # amber-800, matches COLOR_WARN
 
 
 class MainWindow(QMainWindow):
@@ -61,10 +77,12 @@ class MainWindow(QMainWindow):
         self.ptt = make_ptt(self.config)
 
         self.init_ui()
+        self._sync_service_radios()
         self.update_header()
         self.populate_target_dropdown()
         self.populate_quick_messages_strip()
         self._refresh_callsign_index()
+        self._apply_service_mode()
         self._check_bundled_models()
 
     def _check_bundled_models(self):
@@ -98,6 +116,49 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
+
+        # 0. Service-mode toggle. Sits above the header so the active radio
+        # service is the first thing the user sees — switching to FRS disables
+        # every callsign-dependent feature in this app, which is a big enough
+        # behavioral shift that it earns top-of-window placement.
+        service_row = QHBoxLayout()
+        service_label = QLabel("Service:", self)
+        service_label.setAccessibleName("Radio service")
+        service_row.addWidget(service_label)
+        self._service_group = QButtonGroup(self)
+        self._service_group.setExclusive(True)
+        self.gmrs_radio = QRadioButton("&GMRS", self)
+        self.gmrs_radio.setAccessibleName("Operate in GMRS mode")
+        self.gmrs_radio.setAccessibleDescription(
+            "FCC-licensed General Mobile Radio Service. Callsign framing, "
+            "15-minute ID rule, contacts, callsign verification, and "
+            "callsign highlighting are all enabled."
+        )
+        self.gmrs_radio.setToolTip(
+            "FCC-licensed GMRS operation. All callsign features active."
+        )
+        self.frs_radio = QRadioButton("&FRS", self)
+        self.frs_radio.setAccessibleName("Operate in FRS mode")
+        self.frs_radio.setAccessibleDescription(
+            "Unlicensed Family Radio Service. All callsign-specific features "
+            "(preface, station ID, contacts, callsign verification, "
+            "highlighting, pending-station detection) are disabled — FRS "
+            "has no callsign requirement under Part 95 Subpart B."
+        )
+        self.frs_radio.setToolTip(
+            "Unlicensed FRS operation. Callsign features turn off."
+        )
+        self._service_group.addButton(self.gmrs_radio)
+        self._service_group.addButton(self.frs_radio)
+        service_row.addWidget(self.gmrs_radio)
+        service_row.addWidget(self.frs_radio)
+        service_row.addStretch(1)
+        # toggled fires on both selection AND deselection within the group;
+        # we only care about the newly-checked button, so guard inside the
+        # handler by reading the group state.
+        self.gmrs_radio.toggled.connect(self._on_service_toggled)
+        self.frs_radio.toggled.connect(self._on_service_toggled)
+        main_layout.addLayout(service_row)
 
         # 1. Header (User Info). Bold via QFont so size scales with system font (WCAG 1.4.4).
         self.header_label = QLabel("Loading...", self)
@@ -296,6 +357,23 @@ class MainWindow(QMainWindow):
                 activated=lambda index=i: self._send_preset(index),
             )
 
+        # Online/offline indicator lives as a permanent widget on the status
+        # bar so it's never hidden by transient showMessage() calls. Online
+        # features (FCC callsign verification, future lookups) gate on this
+        # state; the indicator is the user-visible side of that contract.
+        self.online_indicator = QLabel(ONLINE_LABEL_ONLINE, self)
+        self.online_indicator.setAccessibleName("Internet connectivity status")
+        self.online_indicator.setAccessibleDescription(
+            "Indicates whether online features (FCC callsign verification) "
+            "are available. Updates every 30 seconds."
+        )
+        self.statusBar().addPermanentWidget(self.online_indicator)
+        self._refresh_online_indicator()
+        self._online_timer = QTimer(self)
+        self._online_timer.setInterval(ONLINE_REFRESH_MS)
+        self._online_timer.timeout.connect(self._refresh_online_indicator)
+        self._online_timer.start()
+
         self.statusBar().showMessage("Ready")
 
         # Reasonable minimum so high-DPI / large-font users don't get clipping.
@@ -321,6 +399,9 @@ class MainWindow(QMainWindow):
         contacts_action.setStatusTip("Add, edit, or remove known callsigns.")
         contacts_action.triggered.connect(self.open_contacts_dialog)
         settings_menu.addAction(contacts_action)
+        # Held on self so _apply_service_mode can flip enabled state when the
+        # user toggles between GMRS and FRS.
+        self._contacts_action = contacts_action
 
         quick_action = QAction("&Quick Messages…", self)
         quick_action.setStatusTip(
@@ -347,11 +428,109 @@ class MainWindow(QMainWindow):
         settings_menu.addAction(clear_chat_action)
 
     def update_header(self):
-        """Updates the top bar with current user info."""
-        call = self.config.get('callsign', 'N/A')
+        """Updates the top bar with current user info. In FRS mode the
+        callsign segment is replaced with a 'FRS Mode' label since FRS has
+        no callsign — the operator/location segments stay useful for the
+        on-screen log."""
         name = self.config.get('name', 'N/A')
         loc = self.config.get('location', 'N/A')
-        self.header_label.setText(f"Station: {call} | Operator: {name} | Location: {loc}")
+        if self._service_mode() == SERVICE_FRS:
+            self.header_label.setText(f"FRS Mode | Operator: {name} | Location: {loc}")
+        else:
+            call = self.config.get('callsign', 'N/A')
+            self.header_label.setText(f"Station: {call} | Operator: {name} | Location: {loc}")
+
+    def _service_mode(self):
+        return normalize_service(self.config.get("radio_service"))
+
+    def _sync_service_radios(self):
+        """Initialize the radio buttons from config without triggering the
+        toggled-signal write-back loop. Called once at startup."""
+        mode = self._service_mode()
+        # blockSignals so this programmatic state set doesn't fire the
+        # toggled handler — that handler writes config and rebuilds UI,
+        # which would be wasteful at startup.
+        for btn in (self.gmrs_radio, self.frs_radio):
+            btn.blockSignals(True)
+        self.gmrs_radio.setChecked(mode == SERVICE_GMRS)
+        self.frs_radio.setChecked(mode == SERVICE_FRS)
+        for btn in (self.gmrs_radio, self.frs_radio):
+            btn.blockSignals(False)
+
+    def _on_service_toggled(self, checked):
+        """Handle a user click on either service radio. QButtonGroup fires
+        toggled on both buttons (the old one going False, the new one going
+        True); we only act on the True edge so we don't double-process."""
+        if not checked:
+            return
+        new_mode = SERVICE_FRS if self.frs_radio.isChecked() else SERVICE_GMRS
+        if self.config.get("radio_service") == new_mode:
+            return
+        self.config["radio_service"] = new_mode
+        save_json(CONFIG_FILE, self.config)
+        self._apply_service_mode()
+
+    def _apply_service_mode(self):
+        """Enable / disable every callsign-dependent UI surface based on the
+        active service. Idempotent — safe to call from init, toggle handlers,
+        and config-dialog OK.
+
+        In FRS the following are disabled or hidden:
+          • target dropdown (no callsign to address)
+          • 'This is' standalone-ID button (no ID rule applies)
+          • online indicator + verification (FCC lookups are GMRS/HAM only)
+          • pending-station bar (no detection without callsigns)
+          • Contacts menu action (informational reason in tooltip)
+          • chat-display pill highlighter (no callsigns to highlight)
+        """
+        is_frs = self._service_mode() == SERVICE_FRS
+
+        # Header reflects mode immediately.
+        self.update_header()
+
+        # Target dropdown only makes sense when callsigns are in play.
+        self.target_dropdown.setVisible(not is_frs)
+
+        # Standalone ID button — disable rather than hide so its row layout
+        # stays stable and keyboard tab-order doesn't reshuffle silently.
+        self.id_btn.setEnabled(not is_frs)
+        if is_frs:
+            self.id_btn.setToolTip(
+                "Station ID is GMRS-only — FRS has no Part 95 ID requirement. "
+                "Switch to GMRS to re-enable."
+            )
+        else:
+            self.id_btn.setToolTip(
+                "Transmit station ID: This is [callsign]. [name] from [location] "
+                "(Alt+I, Ctrl+I)"
+            )
+
+        # Online indicator: hide in FRS, since the only online feature
+        # (callsign verification) doesn't apply.
+        self.online_indicator.setVisible(not is_frs)
+
+        # Pending bar: hide and clear in FRS so old pills don't linger.
+        if is_frs:
+            self._clear_all_pending_pills()
+        self.pending_scroll.setVisible(not is_frs and bool(self.pending_buttons))
+        self.clear_pending_btn.setVisible(not is_frs and bool(self.pending_buttons))
+
+        # Contacts menu action — disable with explanatory tooltip so users
+        # discover the feature exists and know how to re-enable it.
+        if hasattr(self, "_contacts_action"):
+            self._contacts_action.setEnabled(not is_frs)
+            if is_frs:
+                self._contacts_action.setStatusTip(
+                    "Contacts apply to GMRS only — switch to GMRS to manage them."
+                )
+            else:
+                self._contacts_action.setStatusTip(
+                    "Add, edit, or remove known callsigns."
+                )
+
+        # Chat-display pill highlighting: clearing the index suppresses all
+        # callsign highlighting on existing and future lines.
+        self._refresh_callsign_index()
 
     def populate_target_dropdown(self):
         """Fills the target selection combo box with current contacts.
@@ -504,12 +683,23 @@ class MainWindow(QMainWindow):
         rendering, target reset to All, and Piper synthesis all happen in one
         place. Returns True if a transmission was kicked off, False if the
         request was a no-op (empty text + open-call target).
-        """
-        target_data = self.target_dropdown.currentData() or ("", "")
-        target_call, target_name = target_data
-        prefaced = bool(target_call and target_call.upper() != "ALL")
 
-        # Empty text is only valid when calling a specific station — the preface itself is the call.
+        In FRS mode every callsign-shaped step is bypassed: no target preface,
+        no station ID, and the chat label drops the 'to <CALL>' segment
+        because there is no callsign to address.
+        """
+        service = self._service_mode()
+        if service == SERVICE_FRS:
+            # FRS: callsigns don't exist, so we never preface, never reset
+            # target, and never append ID. Empty text is the only no-op.
+            target_call, target_name, prefaced = "", "", False
+        else:
+            target_data = self.target_dropdown.currentData() or ("", "")
+            target_call, target_name = target_data
+            prefaced = bool(target_call and target_call.upper() != "ALL")
+
+        # Empty text is only valid in GMRS targeted mode — the preface itself
+        # is the call. FRS always needs body text.
         if not text and not prefaced:
             return False
 
@@ -527,9 +717,13 @@ class MainWindow(QMainWindow):
             my_name=self.config.get("name", "Default User"),
             last_id_time=self.last_tx_time,
             now=datetime.datetime.now(),
+            service=service,
         )
 
-        formatted_msg = f"<b>[TX to {target_call}]:</b> {spoken_text}"
+        if service == SERVICE_FRS:
+            formatted_msg = f"<b>[TX]:</b> {spoken_text}"
+        else:
+            formatted_msg = f"<b>[TX to {target_call}]:</b> {spoken_text}"
         self.append_to_chat(formatted_msg, color=COLOR_TX)
 
         if prefaced:
@@ -544,6 +738,11 @@ class MainWindow(QMainWindow):
 
     def transmit_id_only(self):
         """Transmit a standalone ID: 'This is [call], [NATO phonetic call]. [name] from [location]'."""
+        if self._service_mode() == SERVICE_FRS:
+            # FRS has no ID rule. The button is disabled, but the Ctrl+I /
+            # Alt+I shortcuts are also bound at window level — guard here so
+            # a stray hotkey can't push a callsign on-air.
+            return
         spoken_text, self.last_tx_time = format_standalone_id(
             my_call=self.config.get("callsign", "N0CALL"),
             my_name=self.config.get("name", "Default User"),
@@ -665,8 +864,12 @@ class MainWindow(QMainWindow):
     def _refresh_callsign_index(self):
         """Recompute the known-callsign lookup and push it to the chat widget.
         Past chat lines are re-scanned so newly-added contacts get retroactive
-        pill highlighting."""
-        index = index_contacts_by_callsign(self.contacts)
+        pill highlighting. In FRS mode the index is forced empty — there are
+        no callsigns in FRS, so highlighting them would be misleading."""
+        if self._service_mode() == SERVICE_FRS:
+            index = {}
+        else:
+            index = index_contacts_by_callsign(self.contacts)
         self.chat_display.set_callsign_index(index)
         self.chat_display.rescan_all_blocks()
 
@@ -747,8 +950,17 @@ class MainWindow(QMainWindow):
         self.scan_for_unknown_stations(text)
 
     def scan_for_unknown_stations(self, text):
+        # `known` spans every callsign field on every contact (primary + GMRS
+        # + HAM cross-references) so a detected HAM call doesn't show a
+        # redundant '+ Add' pill when that operator's GMRS call is already
+        # in the contact list (and vice versa).
+        if self._service_mode() == SERVICE_FRS:
+            # FRS users don't carry callsigns — detection would only generate
+            # noise pills for anyone speaking a callsign on a shared FRS/GMRS
+            # frequency, which the operator can't act on usefully.
+            return
         my_call = self.config.get("callsign", "").upper()
-        known = {c.get("callsign", "").upper() for c in self.contacts}
+        known = known_callsigns(self.contacts)
         detected = detect_callsigns(text)
         for cs in detected:
             if cs == my_call or cs in known or cs in self.pending_buttons:
@@ -849,6 +1061,7 @@ class MainWindow(QMainWindow):
             contact = dlg.get_contact()
             if not contact["callsign"]:
                 return
+            contact = self._verify_contact_if_online(contact)
             for c in self.contacts:
                 if c.get("callsign", "").upper() == contact["callsign"]:
                     c.update(contact)
@@ -860,6 +1073,20 @@ class MainWindow(QMainWindow):
             self.populate_target_dropdown()
             self._refresh_callsign_index()
         self._remove_pending_pill(callsign)
+
+    def _verify_contact_if_online(self, contact):
+        """Run FCC verification against `contact` when online, returning a new
+        dict with verification fields populated. Offline / failed lookups pass
+        through unchanged so the user can still add the contact — they just
+        won't get a green check until connectivity is restored. Imported here
+        to keep the FCC dependency out of MainWindow's import-time graph for
+        users who never open the add-contact flow."""
+        from gmrs_tty.fcc.crossref import apply_verification, verify_callsign
+        if not is_online():
+            return contact
+        result = verify_callsign(contact["callsign"], contact.get("name", ""))
+        now_iso = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return apply_verification(contact, result, now_iso=now_iso)
 
     def on_stt_error(self, msg):
         self.append_to_chat(f"<i>STT Error: {msg}</i>", color=COLOR_ERROR)
@@ -873,3 +1100,22 @@ class MainWindow(QMainWindow):
 
     def on_stt_status(self, msg):
         self.statusBar().showMessage(msg, 5000)
+
+    def _refresh_online_indicator(self):
+        """Re-probe internet connectivity and update the status-bar label.
+        Cheap because the underlying probe is cached for ~60s, so the timer
+        callback at 30s mostly returns a cached value."""
+        online = is_online()
+        if online:
+            self.online_indicator.setText(ONLINE_LABEL_ONLINE)
+            self.online_indicator.setStyleSheet(f"color: {ONLINE_COLOR_ONLINE};")
+            self.online_indicator.setToolTip(
+                "Connected. Online features (FCC callsign verification) are available."
+            )
+        else:
+            self.online_indicator.setText(ONLINE_LABEL_OFFLINE)
+            self.online_indicator.setStyleSheet(f"color: {ONLINE_COLOR_OFFLINE};")
+            self.online_indicator.setToolTip(
+                "No internet connection detected. Online features are disabled "
+                "until connectivity returns."
+            )

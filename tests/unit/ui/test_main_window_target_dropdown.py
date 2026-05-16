@@ -104,7 +104,7 @@ class TestTransmitUsesSelectedRowName:
         captured = {}
 
         def fake_format(*, text, target_call, target_name, my_call, my_name,
-                       last_id_time, now):
+                       last_id_time, now, service="GMRS"):
             captured["target_call"] = target_call
             captured["target_name"] = target_name
             return ("spoken", now)
@@ -128,7 +128,7 @@ class TestTransmitUsesSelectedRowName:
         captured = {}
 
         def fake_format(*, text, target_call, target_name, my_call, my_name,
-                       last_id_time, now):
+                       last_id_time, now, service="GMRS"):
             captured["target_call"] = target_call
             captured["target_name"] = target_name
             return ("spoken", now)

@@ -31,6 +31,11 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
 - **Quick-message presets** — a configurable strip of one-click phrase buttons (seed list: `Radio check`, `Loud and clear`, `Standing by`, `Acknowledged`, `Say again`, `QSY to channel {N}`, `Clear`, `Monitoring`, `Net check-in`, `Emergency traffic`) sits between the pending-station bar and the message field. Click — or press **Alt+1** … **Alt+9** for the first nine — to transmit through the standard TX pipeline (callsign framing, 15-minute ID rule, PTT keying, STT auto-pause all still apply). Curly-brace tokens like `{N}` in `QSY to channel {N}` prompt for a value before transmitting. Edit the list (add / remove / reorder) from **Settings → Quick Messages…**; persisted to `config.json` under `quick_messages`.
 - "All" target is transmitted as-is (no preface).
 
+### Service mode (GMRS / FRS)
+- **Top-of-window toggle** lets you switch between licensed GMRS and unlicensed FRS operation. The chosen mode persists in `config.json` as `radio_service` (default `GMRS`) and is reloaded on next launch.
+- **FRS mode turns off every callsign-specific feature** because FRS (Part 95 Subpart B) has no callsign requirement: outgoing TX skips the operator-callsign preface and the 15-minute station-ID rule, the header replaces the callsign segment with `FRS Mode`, the target dropdown and **This is** button hide/disable, callsign detection (pending-station pills) is suppressed, callsign highlighting in the chat log is suppressed, the **Contacts** menu action disables (with a tooltip explaining why), and the online indicator + FCC callsign verification hide.
+- **GMRS mode is the default** and behaves exactly as documented in the rest of this README — callsign framing, ID enforcement, contacts, verification, highlighting, and online status are all active. Switching back from FRS restores prior state instantly; saved contacts and the saved callsign are preserved across mode changes.
+
 ### Contact discovery
 - Detects callsigns in incoming transcriptions across formats:
   - GMRS modern (`WSLZ233`), GMRS legacy (`KAE1234`), and US amateur (`K1ABC`, `KD9XYZ`, `W1AW`).
@@ -38,13 +43,15 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
   - Spaced: `W S L Z 2 3 3`
   - With separators: `W.S.L.Z.233`, `WSLZ-233`, `WSLZ, 233`
   - NATO phonetic: `Whiskey Sierra Lima Zulu Two Three Three` (also `X-ray` / `X ray`).
-- Unknown stations appear as one-click `+ Add` pills below the chat with the detected name/location pre-filled. Right-click (or long-press) a pill to dismiss it without adding the callsign, or use the **Dismiss all** button on the right edge of the pending-stations bar to clear every pending pill at once.
-- **Known callsigns are pill-highlighted in the chat** — any callsign that matches an entry in Contacts is rendered with the amber pill palette (bold, amber background) wherever it appears in RX or TX lines, in any of the recognized forms (compact, spaced, NATO phonetic, hyphenated, or period/comma-separated). Hovering reveals every name (and location, when present) sharing that callsign, so family-shared GMRS calls expose all of their operators at a glance. New contacts retroactively re-highlight earlier transmissions.
-- Manual contact management dialog (callsign, name, location).
+- Unknown stations appear as one-click `+ Add` pills below the chat with the detected name/location pre-filled. The "unknown" check considers all three callsign fields on every contact (`callsign`, `gmrs_callsign`, `ham_callsign`), so a HAM call detected over the air won't pill if the operator's GMRS call is already saved (and vice versa). Right-click (or long-press) a pill to dismiss it without adding the callsign, or use the **Dismiss all** button on the right edge of the pending-stations bar to clear every pending pill at once.
+- **Known callsigns are pill-highlighted in the chat** — any callsign that matches an entry in Contacts is rendered with the amber pill palette (bold, amber background) wherever it appears in RX or TX lines, in any of the recognized forms (compact, spaced, NATO phonetic, hyphenated, or period/comma-separated). **Matching considers all three callsign fields on a contact** (`callsign`, `gmrs_callsign`, `ham_callsign`), so a contact whose primary is their HAM call still lights up when a remote operator addresses them by their GMRS call, and vice versa. Hovering reveals every entry sharing that callsign — each one shows name, location, and the contact's GMRS / HAM cross-references when known — so family-shared GMRS calls expose all of their operators (with each operator's individual amateur call) at a glance. New contacts retroactively re-highlight earlier transmissions.
+- **FCC callsign verification (online, opt-in)** — when the app detects an internet connection, contacts are cross-referenced against the public FCC license database via the [ke8rxnwx crossref API](https://api.ke8rxnwx.net/crossref/). A row earns a **green ✓ in the Verified column** when (a) the callsign is in the active FCC database and (b) the contact's name matches a token in the license holder's name ("Tim" matches "Haskin, Timothy L"). Family members on a shared GMRS callsign whose name doesn't match the licensee remain unverified — the lookup still records the licensee name in the tooltip so you can see why. Successful lookups also persist **`gmrs_callsign` and `ham_callsign` fields** on the contact entry, pulled from the FCC `related` cross-reference list (service codes `ZA` for GMRS and `HA`/`HV` for Amateur). For an operator licensed for both services, a HAM call entered as the primary will resolve its associated GMRS call (and vice versa); both are shown in the Verified cell tooltip. Verification runs automatically when you save a new or edited contact, and a **Verify all** button re-checks the whole list on demand. **Offline behavior:** the Verify all button disables, save-time verification is skipped, and previously-earned green checks are preserved untouched (a transient outage won't nuke your verified state). The status bar shows a live **Online / Offline** indicator so you know when online features are available.
+- Manual contact management dialog (callsign, name, location, verified status).
 
 ### Cross-platform & off-grid
 - Targets Raspberry Pi, Linux, Windows.
-- All STT/TTS/VAD models run locally — **no internet required at runtime**. The app never attempts a network fetch; the Whisper model is pre-staged via a one-time `bootstrap_models.py` run on a connected machine, after which the entire source tree (including `Models/` and `Voices/`) is portable to air-gapped targets.
+- All STT/TTS/VAD models run locally — **the core radio workflow needs no internet at runtime**. The Whisper model is pre-staged via a one-time `bootstrap_models.py` run on a connected machine, after which the entire source tree (including `Models/` and `Voices/`) is portable to air-gapped targets.
+- **Online features (FCC callsign verification) are strictly opt-in via connectivity**: a periodic probe of the crossref API decides whether they're available. If the probe fails — no network, DNS broken, API down — the relevant UI controls disable themselves and the app falls back to its fully-offline behavior. The radio workflow (RX transcription, TX synthesis, PTT keying, contact management) never depends on the network.
 - Future stages: multi-arch Docker image, distribution packaging.
 
 ### Accessibility (WCAG 2.1 AA)
@@ -129,7 +136,8 @@ python main.py
 
 ### Main window
 
-- **Header** shows your configured callsign, name, and location.
+- **Service toggle** (top row) — segmented `GMRS` / `FRS` radio buttons (Alt+G / Alt+F). Switching to FRS immediately disables every callsign-specific surface in the app; switching back to GMRS restores them. The selection persists to `config.json` as `radio_service`.
+- **Header** shows your configured callsign, name, and location (GMRS mode), or `FRS Mode | Operator: … | Location: …` (FRS mode).
 - **Chat area** — incoming (green `[RX HH:MM:SS]`) and outgoing (blue `[TX to ...]`) messages. Callsigns that match a saved contact are styled with an amber, bold pill; hover any pill to see every operator name (and location, if recorded) associated with that callsign. A **Clear chat** button sits above the log (mnemonic Alt+C on the button itself, Alt+S → Alt+R from the Settings menu, or Ctrl+K from anywhere) and erases every message after a Yes/No confirmation — chat history is in-memory only and can't be recovered once cleared.
 - **Listen** button — toggles microphone capture and live transcription. Loads the bundled Whisper model from `Models/STT/<whisper_model>/` (no network); fails fast with a clear instruction if the model directory is missing.
 - **Input level meter** (right of Listen) — a thin bar that shows real-time peak amplitude of the captured audio. Use it to verify your radio / cable / input device is actually wired up: if it stays at zero while you transmit into the radio, the app isn't getting audio. Stays at zero when Listen is off.
@@ -141,7 +149,7 @@ python main.py
 ### Settings menu
 
 - **Configuration** (Alt+S, Alt+C — or Ctrl+,) — edit callsign, name, location, voice model (with Test button for voice preview), speech rate (slider mapping to Piper's `length_scale` from 0.70× to 1.50×; 1.00× is the voice's native pace, higher is slower; Test button previews at the current value), input device, output device (where TTS audio plays — pick a USB sound card / Signalink / Digirig channel to feed your radio directly), VAD threshold (0.10–0.95; lower = more sensitive to weak/quiet signals, higher = stricter gating on noisy channels; default 0.5), time format (24-hour default or 12-hour with AM/PM for RX timestamps), profanity filter (PG-13 masking on RX and TX; default on), and PTT mode. PTT options: **Manual** (you press PTT on the radio yourself), **VOX** (radio auto-keys on detected audio), or **USB FTDI / Serial** (app keys PTT via a USB-serial adapter's RTS or DTR line — when selected, Serial Port and Control Line fields enable). Changes to the input device or VAD threshold restart the listener automatically.
-- **Contacts** (Alt+S, Alt+N — or Ctrl+B) — table editor for known callsigns/names/locations. The list is sorted alphabetically by callsign whenever it loads or you save changes. A **Sort by Suffix** button (Alt+S inside the dialog) reorders the table by the last 3 digits of each callsign for visual scanning; the saved order remains alphabetical.
+- **Contacts** (Alt+S, Alt+N — or Ctrl+B) — table editor for known callsigns/names/locations with a fourth **Verified** column showing FCC license status (green ✓ when the callsign is active in the FCC database and the contact's name matches the licensee). The list is sorted alphabetically by callsign whenever it loads or you save changes. A **Sort by Suffix** button (Alt+S inside the dialog) reorders the table by the last 3 digits of each callsign for visual scanning; the saved order remains alphabetical. A **Verify all** button (Alt+V) re-checks every row against the FCC database when online; it disables automatically when the app is offline. Saving a new or edited row also triggers verification when online; offline saves keep their prior verified state.
 
 ## FCC Compliance Notes (GMRS, Part 95)
 
@@ -151,6 +159,7 @@ This software is built to make FCC Part 95 GMRS compliance easier:
 - The 15-minute ID rule is enforced automatically — your callsign + name are appended when more than 15 minutes have passed since the last identification.
 - Identification is appended even on short messages if the rule triggers.
 - The PG-13 profanity filter (default on) masks strong language in both RX and TX so transmissions stay within Part 95 obscenity expectations — toggle in Configuration if you operate on a private repeater with different norms.
+- **FRS mode (Subpart B) intentionally skips Part 95 Subpart A station-ID rules.** FRS is unlicensed and has no callsign requirement, so callsign framing, the 15-minute timer, and the standalone-ID button are all disabled while the top-of-window service toggle is set to FRS.
 
 You are still responsible for legal operation. This app does not replace a valid FCC GMRS license.
 
@@ -164,7 +173,8 @@ GMRS-TTY/
 │   ├── app.py              # QApplication wiring
 │   ├── constants.py        # WCAG palette, pill colors, config/contacts paths
 │   ├── audio/              # capture (parec/PortAudio), DSP (bandpass + denoise), VAD, playback
-│   ├── fcc/                # Part 95 ID-rule formatting (15-min timer, preface, standalone ID)
+│   ├── fcc/                # Part 95 ID-rule formatting (15-min timer, preface, standalone ID) + crossref callsign verification
+│   ├── net/                # Online-status probe (cached) for opt-in network features
 │   ├── persistence/        # JSON store + contact sort/sort-by-suffix
 │   ├── ptt/                # PTT base + Manual / VOX / Serial implementations + factory
 │   ├── stt/                # WhisperTranscriber + STTWorker orchestrator
