@@ -3,6 +3,7 @@ import pytest
 from gmrs_tty.text.callsigns import (
     callsign_to_nato,
     detect_callsigns,
+    find_callsign_spans,
     spell_digits_in_callsigns,
 )
 
@@ -124,3 +125,142 @@ class TestSpellDigitsInCallsigns:
 
     def test_non_callsign_text_left_alone(self):
         assert spell_digits_in_callsigns("just plain text 100") == "just plain text 100"
+
+
+class TestFindCallsignSpansEmptyInputs:
+    def test_none_returns_empty(self):
+        assert find_callsign_spans(None) == []
+
+    def test_empty_string_returns_empty(self):
+        assert find_callsign_spans("") == []
+
+    def test_plain_text_returns_empty(self):
+        assert find_callsign_spans("Hello, world.") == []
+
+    def test_too_few_digits_returns_empty(self):
+        # GMRS modern needs 3 digits; with only 2 we shouldn't match.
+        assert find_callsign_spans("WSLZ 23 over") == []
+
+
+class TestFindCallsignSpansCompact:
+    def test_raw_gmrs_modern_offsets(self):
+        # 'hello ' is 6 characters; 'WSLZ233' is 7. Span should be (6, 13).
+        assert find_callsign_spans("hello WSLZ233 over") == [(6, 13, "WSLZ233")]
+
+    def test_raw_amateur(self):
+        assert find_callsign_spans("K1ABC here") == [(0, 5, "K1ABC")]
+
+    def test_raw_gmrs_legacy_four_digit(self):
+        assert find_callsign_spans("KAE1234 calling") == [(0, 7, "KAE1234")]
+
+    def test_lowercase_normalized(self):
+        spans = find_callsign_spans("wslz233 over")
+        assert spans == [(0, 7, "WSLZ233")]
+
+    def test_multiple_callsigns_left_to_right(self):
+        text = "WSLZ233 to KAE1234"
+        spans = find_callsign_spans(text)
+        assert [cs for _, _, cs in spans] == ["WSLZ233", "KAE1234"]
+        # Each returned span should cover the source substring.
+        for start, end, cs in spans:
+            assert text[start:end].replace(" ", "").upper() == cs
+
+
+class TestFindCallsignSpansSpaced:
+    def test_all_chars_space_separated(self):
+        text = "W S L Z 2 3 3 ack"
+        spans = find_callsign_spans(text)
+        assert spans == [(0, 13, "WSLZ233")]
+
+    def test_letter_block_space_digits(self):
+        text = "WSLZ 233 here"
+        spans = find_callsign_spans(text)
+        assert spans == [(0, 8, "WSLZ233")]
+
+    def test_period_separated(self):
+        text = "W.S.L.Z.2.3.3 over"
+        spans = find_callsign_spans(text)
+        assert spans == [(0, 13, "WSLZ233")]
+
+    def test_letter_block_period_digits(self):
+        text = "WSLZ.233 over"
+        spans = find_callsign_spans(text)
+        assert spans == [(0, 8, "WSLZ233")]
+
+    def test_hyphen_separated(self):
+        text = "WSLZ-233 here"
+        spans = find_callsign_spans(text)
+        assert spans == [(0, 8, "WSLZ233")]
+
+    def test_comma_separated(self):
+        text = "W, S, L, Z, 2, 3, 3 out"
+        spans = find_callsign_spans(text)
+        assert len(spans) == 1
+        start, end, cs = spans[0]
+        assert cs == "WSLZ233"
+        assert text[start:end] == "W, S, L, Z, 2, 3, 3"
+
+
+class TestFindCallsignSpansPhonetic:
+    def test_full_nato(self):
+        text = "calling Whiskey Sierra Lima Zulu Two Three Three out"
+        spans = find_callsign_spans(text)
+        assert len(spans) == 1
+        start, end, cs = spans[0]
+        assert cs == "WSLZ233"
+        assert text[start:end] == "Whiskey Sierra Lima Zulu Two Three Three"
+
+    def test_nato_lowercase(self):
+        text = "whiskey sierra lima zulu two three three"
+        spans = find_callsign_spans(text)
+        assert spans[0][2] == "WSLZ233"
+
+    def test_nato_with_xray_hyphen(self):
+        text = "Whiskey X-ray Sierra Zulu Two Three Three"
+        spans = find_callsign_spans(text)
+        assert len(spans) == 1
+        assert spans[0][2] == "WXSZ233"
+        s, e, _ = spans[0]
+        assert text[s:e] == text  # the whole input is the callsign
+
+    def test_nato_with_xray_space(self):
+        text = "Whiskey X ray Sierra Zulu Two Three Three"
+        spans = find_callsign_spans(text)
+        assert spans[0][2] == "WXSZ233"
+
+    def test_juliett_variant(self):
+        text = "Whiskey Juliett Lima Zulu Two Three Three"
+        spans = find_callsign_spans(text)
+        assert spans[0][2] == "WJLZ233"
+
+    def test_whisky_variant(self):
+        # 'Whisky' (no e) is an accepted spelling of the NATO 'W'.
+        text = "Whisky Sierra Lima Zulu Two Three Three"
+        spans = find_callsign_spans(text)
+        assert spans[0][2] == "WSLZ233"
+
+    def test_alfa_variant(self):
+        # 'Alfa' (instead of Alpha) is an accepted spelling of the NATO 'A'.
+        text = "Kilo Alfa Echo One Two Three"
+        spans = find_callsign_spans(text)
+        assert spans[0][2] == "KAE123"
+
+    def test_amateur_phonetic(self):
+        text = "Kilo One Alpha Bravo Charlie clear"
+        spans = find_callsign_spans(text)
+        assert spans[0][2] == "K1ABC"
+
+    def test_legacy_phonetic(self):
+        text = "Kilo Alpha Echo One Two Three Four out"
+        spans = find_callsign_spans(text)
+        assert spans[0][2] == "KAE1234"
+
+    def test_mixed_nato_and_raw(self):
+        text = "Whiskey Sierra Lima Zulu 233 hello"
+        spans = find_callsign_spans(text)
+        assert spans[0][2] == "WSLZ233"
+
+    def test_nato_not_in_word_boundary(self):
+        # 'Sierraleone' should not contribute a callsign — the NATO branch
+        # requires the word to stand alone.
+        assert find_callsign_spans("Whiskey Sierraleone Lima Zulu Two Three Three") == []
