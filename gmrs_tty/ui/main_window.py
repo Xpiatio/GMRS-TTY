@@ -6,8 +6,8 @@ from piper.voice import PiperVoice
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QComboBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QProgressBar,
-    QPushButton, QVBoxLayout, QWidget,
+    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu,
+    QProgressBar, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from gmrs_tty.audio.playback import AudioPlayerThread
@@ -28,6 +28,9 @@ from gmrs_tty.tts.synthesizer import TTSSynthesisThread
 from gmrs_tty.ui.chat_display import ChatDisplay
 from gmrs_tty.ui.config_dialog import ConfigDialog
 from gmrs_tty.ui.contacts_dialog import AddContactDialog, ContactsDialog
+from gmrs_tty.ui.flow_layout import FlowLayout
+
+PENDING_PILL_MAX_ROWS = 3
 
 
 class MainWindow(QMainWindow):
@@ -49,6 +52,7 @@ class MainWindow(QMainWindow):
         self._stt_vad_model = None
         self._stt_whisper_model_name = None
         self.pending_buttons = {}  # callsign -> QPushButton
+        self._pending_row_height = None  # cached pill row height for scroll cap
         self.ptt = make_ptt(self.config)
 
         self.init_ui()
@@ -116,10 +120,41 @@ class MainWindow(QMainWindow):
         )
         main_layout.addWidget(self.chat_display)
 
-        # 2b. Pending stations bar (populates when STT detects unknown callsigns)
+        # 2b. Pending stations bar (populates when STT detects unknown callsigns).
+        # Layout: [QScrollArea wrapping a FlowLayout of pills] [Dismiss all].
+        # The flow layout wraps pills to the next row when horizontal space
+        # runs out; the scroll area caps visible height to PENDING_PILL_MAX_ROWS
+        # rows and exposes a vertical scrollbar past that.
         self.pending_bar = QHBoxLayout()
         self.pending_bar.setSpacing(5)
-        self.pending_bar.addStretch()
+
+        self.pending_pills_widget = QWidget()
+        self.pending_flow = FlowLayout(self.pending_pills_widget, margin=0, spacing=5)
+
+        self.pending_scroll = QScrollArea(self)
+        self.pending_scroll.setWidgetResizable(True)
+        self.pending_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.pending_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.pending_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.pending_scroll.setWidget(self.pending_pills_widget)
+        self.pending_scroll.hide()
+        self.pending_bar.addWidget(self.pending_scroll, 1)
+
+        self.clear_pending_btn = QPushButton("&Dismiss all", self)
+        self.clear_pending_btn.setToolTip(
+            "Dismiss every pending station pill without adding any callsigns."
+        )
+        self.clear_pending_btn.setAccessibleName("Dismiss all pending stations")
+        self.clear_pending_btn.setAccessibleDescription(
+            "Remove every pending station pill without adding any of the detected callsigns to contacts."
+        )
+        self.clear_pending_btn.clicked.connect(self._clear_all_pending_pills)
+        self.clear_pending_btn.hide()
+        self.pending_bar.addWidget(self.clear_pending_btn, 0, Qt.AlignmentFlag.AlignTop)
         main_layout.addLayout(self.pending_bar)
 
         # 3. Input Area (Tx Section). Mnemonics: Alt+L Listen, Alt+T Transmit, Alt+I This is.
@@ -550,6 +585,7 @@ class MainWindow(QMainWindow):
             tooltip_parts.append(f"Name: {name}")
         if location:
             tooltip_parts.append(f"Location: {location}")
+        tooltip_parts.append("Right-click to dismiss without adding.")
         btn.setToolTip("\n".join(tooltip_parts))
         btn.setAccessibleName(f"Add station {callsign}")
         descr = f"Open the Add Station dialog prefilled for callsign {callsign}"
@@ -557,14 +593,66 @@ class MainWindow(QMainWindow):
             descr += f", operator {name}"
         if location:
             descr += f", location {location}"
-        btn.setAccessibleDescription(descr + ".")
+        descr += ". Right-click or long-press to dismiss without adding."
+        btn.setAccessibleDescription(descr)
         btn.clicked.connect(
             lambda _checked=False, cs=callsign, n=name, loc=location:
                 self.open_add_contact_dialog(cs, n, loc)
         )
+        btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        btn.customContextMenuRequested.connect(
+            lambda pos, cs=callsign, b=btn: self._show_pending_pill_menu(b, pos, cs)
+        )
         self.pending_buttons[callsign] = btn
-        # Insert before the stretch so buttons stack left-to-right
-        self.pending_bar.insertWidget(self.pending_bar.count() - 1, btn)
+        self.pending_flow.addWidget(btn)
+        self._cap_pending_scroll_height(btn)
+        self._update_pending_bar_visibility()
+
+    def _show_pending_pill_menu(self, btn, pos, callsign):
+        """Right-click / long-press menu for a pending-station pill.
+
+        Long-press on touch platforms is synthesized into a context-menu event
+        by Qt, so this single handler covers both interactions."""
+        menu = QMenu(self)
+        dismiss_action = menu.addAction(f"Dismiss {callsign}")
+        dismiss_action.setStatusTip(
+            f"Remove the pending pill for {callsign} without adding it to contacts."
+        )
+        if menu.exec(btn.mapToGlobal(pos)) is dismiss_action:
+            self._remove_pending_pill(callsign)
+
+    def _remove_pending_pill(self, callsign):
+        btn = self.pending_buttons.pop(callsign, None)
+        if btn is not None:
+            btn.setParent(None)
+            btn.deleteLater()
+        self._update_pending_bar_visibility()
+
+    def _clear_all_pending_pills(self):
+        for callsign in list(self.pending_buttons.keys()):
+            self._remove_pending_pill(callsign)
+
+    def _update_pending_bar_visibility(self):
+        has_pills = bool(self.pending_buttons)
+        self.clear_pending_btn.setVisible(has_pills)
+        self.pending_scroll.setVisible(has_pills)
+
+    def _cap_pending_scroll_height(self, sample_btn):
+        """Lock the pending-pill scroll area to PENDING_PILL_MAX_ROWS rows.
+
+        The pill row height is the same for every pill (shared styling), so we
+        measure once on the first pill and reuse it. Beyond the cap, the
+        scroll area's vertical scrollbar takes over."""
+        if self._pending_row_height is not None:
+            return
+        row_h = sample_btn.sizeHint().height()
+        if row_h <= 0:
+            return
+        spacing = max(self.pending_flow.spacing(), 0)
+        rows = PENDING_PILL_MAX_ROWS
+        max_h = rows * row_h + (rows - 1) * spacing
+        self.pending_scroll.setMaximumHeight(max_h)
+        self._pending_row_height = row_h
 
     def open_add_contact_dialog(self, callsign, name, location):
         dlg = AddContactDialog(callsign, name, location, self)
@@ -582,10 +670,7 @@ class MainWindow(QMainWindow):
             save_json(CONTACTS_FILE, self.contacts)
             self.populate_target_dropdown()
             self._refresh_callsign_index()
-        btn = self.pending_buttons.pop(callsign, None)
-        if btn is not None:
-            btn.setParent(None)
-            btn.deleteLater()
+        self._remove_pending_pill(callsign)
 
     def on_stt_error(self, msg):
         self.append_to_chat(f"<i>STT Error: {msg}</i>", color=COLOR_ERROR)
