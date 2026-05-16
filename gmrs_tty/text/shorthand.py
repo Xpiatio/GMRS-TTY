@@ -1,7 +1,9 @@
 import re
 
-# TTY/TDD shorthand from the Corada TDD/TTY Etiquette Glossary. Expanded into
-# full words before Piper TTS so the receiver hears "Go ahead" instead of "G A".
+# TTY/TDD shorthand from the Corada TDD/TTY Etiquette Glossary, plus the
+# ARRL/CW Q-signal and shorthand seed list (Stage 10). Expanded into full
+# words before Piper TTS so the receiver hears "Go ahead" / "best regards"
+# instead of "G A" / "seven three".
 TTY_ABBREVIATIONS = {
     # Universal terms
     "GA TO SK": "Completing messages and getting ready to hang up",
@@ -34,6 +36,28 @@ TTY_ABBREVIATIONS = {
     "MSGE": "Message",
     "MSGS": "Messages",
     "MTG":  "Meeting",
+    # Radio vernacular — numeric sign-offs
+    "73": "best regards",
+    "88": "love and kisses",
+    # Radio vernacular — Q-signals
+    "QSL": "received and acknowledged",
+    "QSO": "radio contact",
+    "QTH": "location",
+    "QRZ": "who is calling me",
+    "QRM": "interference",
+    "QRN": "static",
+    "QRT": "stopping transmission",
+    # Radio vernacular — CW/RTTY shorthand
+    "HW":  "how copy",
+    "OM":  "old man",
+    "XYL": "wife",
+    "WX":  "weather",
+    "TNX": "thanks",
+    "RST": "readability strength tone",
+    "ES":  "and",
+    "FB":  "fine business",
+    "AGN": "again",
+    "B4":  "before",
 }
 
 # Sort keys longest-first so "GA TO SK" matches before "GA"/"SK" and "SKSK"

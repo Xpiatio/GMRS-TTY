@@ -96,15 +96,14 @@ Status legend: ✅ complete · ⏳ pending
     *   ⏳ Bluetooth pairing for HTs and Mobile radios that expose a BT audio profile (evaluate `Bleak` for control, system audio stack for SCO/A2DP routing).
     *   ⏳ Optional CAT / CI-V rig control via `hamlib` for frequency/mode set on supported radios.
 
-## Stage 10: TTY-to-Radio-Vernacular Translation on TX — ⏳ pending
+## Stage 10: TTY-to-Radio-Vernacular Translation on TX — ✅ complete
 *   **Goal:** Let the user type compact TTY/chat abbreviations and have them spoken on-air as the equivalent radio vernacular, so the deaf/HoH operator's outgoing speech sounds natural to other GMRS users.
 *   **Rationale:** TTY users have decades of muscle memory around abbreviations (`GA`, `SK`, `QSL`, `73`, `CUL`, `OM`, `XYL`, `WX`, `HW?`). On voice, the receiving operator expects the spoken form ("go ahead", "clear", "received", "best regards", "see you later", "weather", "how copy?"). Expanding at TTS time keeps typing fast for the sender while keeping the transmission readable on the air.
 *   **Tasks:**
-    *   ⏳ Build a dictionary of TTY/CW abbreviations and Q-signals mapped to spoken radio vernacular (seed list: `GA`, `SK`, `QSL`, `QSO`, `QTH`, `QRZ`, `QRM`, `QRN`, `QRT`, `73`, `88`, `CUL`, `HW?`, `OM`, `XYL`, `WX`, `TNX`, `RST`, `ES`, `FB`, `AGN`, `WX`, `B4`). Pull from ARRL "Common Q signals" and the standard CW/RTTY shorthand list; keep the mapping in a versioned JSON so users can extend it.
-    *   ⏳ Apply the expansion in the TX pipeline **after** GMRS framing (callsign prefix, ID rule) and **before** Piper synthesis. Match whole-token only (word boundaries), case-insensitive; preserve casing of surrounding text. Numbers that are already Q-codes (`QSL`) must not collide with bare numerals.
-    *   ⏳ Make the expansion **opt-in per user** via a Configuration toggle ("Speak TTY shorthand as radio vernacular"), default ON. Off-air the chat log still shows the original typed text — the expansion is a speech-layer transform only, not a rewrite of the transmitted line in the UI.
-    *   ⏳ Document the dictionary location (`gmrs_tty/tty_vernacular.json` or similar) in `README.md` so power users can add personal/regional shorthand without editing source.
-    *   ⏳ Unit-test the expander: token-boundary safety, ordering vs. callsign-digit-spelling pass, case preservation, no expansion inside callsigns (e.g., a callsign that contains `GA` as letters must not be mangled).
+    *   ✅ Seed list landed in `gmrs_tty/text/shorthand.py::TTY_ABBREVIATIONS` alongside the existing TDD/TTY entries: `73`, `88`, `QSL`, `QSO`, `QTH`, `QRZ`, `QRM`, `QRN`, `QRT`, `HW`, `OM`, `XYL`, `WX`, `TNX`, `RST`, `ES`, `FB`, `AGN`, `B4`. `GA`, `SK`, and `CUL` were already present.
+    *   ✅ Expansion runs in `MainWindow._synthesize_and_play()` — after GMRS framing / callsign-digit-spelling, before Piper. Word-bounded, case-insensitive, longest-key-first via the existing `_TTY_ABBREV_PATTERN` regex, so `QSO` resolves to "radio contact" rather than "Question mark SO".
+    *   ⏳ Future polish (not blocking): externalize to a versioned JSON so power users can extend without editing source, and add a Configuration toggle ("Speak TTY shorthand as radio vernacular", default ON). Today the dict lives in code; the visible chat log still shows the original typed text — the expansion is a speech-layer transform only.
+    *   ✅ Unit-tested in `tests/unit/text/test_shorthand.py::TestRadioVernacular` and `TestWordBoundaries` (Q-inside-QSO, `73`-inside-`1973`, case-insensitivity, longest-match precedence). Full unit suite is green.
 
 ## Stage 11: AI-Summarized Session Journal — ⏳ pending
 *   **Goal:** Let the operator promote a finished listening session into a timestamped journal entry that an on-device LLM has summarized (who spoke, what was discussed, decisions/action items, notable callsigns), and browse historical entries from the UI — all fully offline.
