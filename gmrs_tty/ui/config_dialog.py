@@ -6,9 +6,9 @@ from piper.config import SynthesisConfig
 from piper.voice import PiperVoice
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
-    QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
-    QSlider, QWidget,
+    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+    QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+    QPushButton, QSlider, QWidget,
 )
 
 from gmrs_tty.audio.playback import AudioPlayerThread
@@ -78,6 +78,21 @@ class ConfigDialog(QDialog):
             self.time_format_input.setCurrentIndex(idx)
         self.time_format_input.setToolTip(
             "Clock format for RX timestamps in the conversation log."
+        )
+
+        self.filter_profanity_input = QCheckBox("Mask strong language with asterisks (PG-13)")
+        self.filter_profanity_input.setChecked(
+            bool(self.config.get("filter_profanity", True))
+        )
+        self.filter_profanity_input.setToolTip(
+            "When enabled, strong profanity in incoming transcripts and outgoing "
+            "messages is masked (e.g. 'shit' -> 's***'). Helps keep transmissions "
+            "within FCC Part 95 obscenity expectations."
+        )
+        self.filter_profanity_input.setAccessibleName("Filter profanity")
+        self.filter_profanity_input.setAccessibleDescription(
+            "Mask strong language in both RX transcripts and TX messages "
+            "with asterisks. Recommended for GMRS operation."
         )
 
         voices = glob.glob(os.path.join("Voices", "*.onnx"))
@@ -164,6 +179,7 @@ class ConfigDialog(QDialog):
         layout.addRow("&Output Device:", self.output_device_input)
         layout.addRow("VA&D Threshold:", self.vad_threshold_input)
         layout.addRow("Time &Format:", self.time_format_input)
+        layout.addRow("Filter profanit&y:", self.filter_profanity_input)
         layout.addRow("&PTT Mode:", self.ptt_mode_input)
         layout.addRow("&Serial Port:", self.ptt_serial_port_input)
         layout.addRow("Control Lin&e:", self.ptt_serial_line_input)
@@ -210,6 +226,7 @@ class ConfigDialog(QDialog):
             "output_device": self.output_device_input.currentData(),
             "vad_threshold": round(self.vad_threshold_input.value(), 2),
             "time_format": self.time_format_input.currentData(),
+            "filter_profanity": self.filter_profanity_input.isChecked(),
             "ptt_mode": self.ptt_mode_input.currentData(),
             "ptt_serial_port": self.ptt_serial_port_input.text().strip(),
             "ptt_serial_line": self.ptt_serial_line_input.currentData(),

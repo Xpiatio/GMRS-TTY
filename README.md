@@ -26,6 +26,7 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
 - **Standalone "This is" ID button** — one-click station identification: `This is [CALL], [NATO phonetic CALL]. [name] from [location].` Resets the 15-minute ID timer.
 - **Spoken-callsign formatting** — TTS reads callsign digits one at a time (`WSLZ 2 3 3` rather than "two hundred thirty-three") so the receiver hears them as letters and digits, not numbers.
 - **TTY abbreviation expansion** — outgoing shorthand from the Corada TDD/TTY Etiquette Glossary (e.g. `GA`, `SKSK`, `ASAP`, `ILY`, `MSG`, `CUL`) is rewritten into full words before TTS speaks it, so the receiver hears "Go ahead" rather than "G A". Matching is case-insensitive and word-bounded, so it won't expand letters embedded in larger words (e.g. `Q` inside `QSO`).
+- **PG-13 profanity filter** — strong language (the f-word, s-word, slurs, and similar) is masked with asterisks (`shit` → `s***`) in both RX transcripts and outgoing TX messages before TTS speaks them. Mild PG-13 language (`damn`, `hell`, `crap`, bare `ass`) passes through unchanged. Word-bounded so substrings like `Scunthorpe` or `classroom` are never false-positives. Toggle in **Configuration → Filter profanity** (default on); useful for keeping the channel inside FCC Part 95 obscenity expectations.
 - **Adjustable speech rate** — a slider in Configuration (just under the voice picker) maps to Piper's `length_scale` from `0.70×` to `1.50×`; `1.00×` is the voice's native pace, higher is slower, lower is faster. The Test button auditions the current slider value before you save.
 - "All" target is transmitted as-is (no preface).
 
@@ -138,7 +139,7 @@ python main.py
 
 ### Settings menu
 
-- **Configuration** (Alt+S, Alt+C — or Ctrl+,) — edit callsign, name, location, voice model (with Test button for voice preview), speech rate (slider mapping to Piper's `length_scale` from 0.70× to 1.50×; 1.00× is the voice's native pace, higher is slower; Test button previews at the current value), input device, output device (where TTS audio plays — pick a USB sound card / Signalink / Digirig channel to feed your radio directly), VAD threshold (0.10–0.95; lower = more sensitive to weak/quiet signals, higher = stricter gating on noisy channels; default 0.5), time format (24-hour default or 12-hour with AM/PM for RX timestamps), and PTT mode. PTT options: **Manual** (you press PTT on the radio yourself), **VOX** (radio auto-keys on detected audio), or **USB FTDI / Serial** (app keys PTT via a USB-serial adapter's RTS or DTR line — when selected, Serial Port and Control Line fields enable). Changes to the input device or VAD threshold restart the listener automatically.
+- **Configuration** (Alt+S, Alt+C — or Ctrl+,) — edit callsign, name, location, voice model (with Test button for voice preview), speech rate (slider mapping to Piper's `length_scale` from 0.70× to 1.50×; 1.00× is the voice's native pace, higher is slower; Test button previews at the current value), input device, output device (where TTS audio plays — pick a USB sound card / Signalink / Digirig channel to feed your radio directly), VAD threshold (0.10–0.95; lower = more sensitive to weak/quiet signals, higher = stricter gating on noisy channels; default 0.5), time format (24-hour default or 12-hour with AM/PM for RX timestamps), profanity filter (PG-13 masking on RX and TX; default on), and PTT mode. PTT options: **Manual** (you press PTT on the radio yourself), **VOX** (radio auto-keys on detected audio), or **USB FTDI / Serial** (app keys PTT via a USB-serial adapter's RTS or DTR line — when selected, Serial Port and Control Line fields enable). Changes to the input device or VAD threshold restart the listener automatically.
 - **Contacts** (Alt+S, Alt+N — or Ctrl+B) — table editor for known callsigns/names/locations. The list is sorted alphabetically by callsign whenever it loads or you save changes. A **Sort by Suffix** button (Alt+S inside the dialog) reorders the table by the last 3 digits of each callsign for visual scanning; the saved order remains alphabetical.
 
 ## FCC Compliance Notes (GMRS, Part 95)
@@ -148,6 +149,7 @@ This software is built to make FCC Part 95 GMRS compliance easier:
 - Outbound messages always carry your callsign and name when targeting a specific station.
 - The 15-minute ID rule is enforced automatically — your callsign + name are appended when more than 15 minutes have passed since the last identification.
 - Identification is appended even on short messages if the rule triggers.
+- The PG-13 profanity filter (default on) masks strong language in both RX and TX so transmissions stay within Part 95 obscenity expectations — toggle in Configuration if you operate on a private repeater with different norms.
 
 You are still responsible for legal operation. This app does not replace a valid FCC GMRS license.
 
@@ -165,7 +167,7 @@ GMRS-TTY/
 │   ├── persistence/        # JSON store + contact sort/sort-by-suffix
 │   ├── ptt/                # PTT base + Manual / VOX / Serial implementations + factory
 │   ├── stt/                # WhisperTranscriber + STTWorker orchestrator
-│   ├── text/               # callsign detection, NATO/phonetics, TTY shorthand, name/location heuristics
+│   ├── text/               # callsign detection, NATO/phonetics, TTY shorthand, PG-13 profanity filter, name/location heuristics
 │   ├── tts/                # Piper TTSSynthesisThread
 │   └── ui/                 # MainWindow, ConfigDialog, ContactsDialog, AddContactDialog, DeviceQueryThread, FlowLayout
 ├── tests/                  # pytest suites covering pure logic (text/, fcc/, persistence/, ptt/, ui/)
