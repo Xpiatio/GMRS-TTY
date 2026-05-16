@@ -23,6 +23,7 @@ from gmrs_tty.ptt import make_ptt
 from gmrs_tty.stt.worker import STTWorker
 from gmrs_tty.text.callsigns import detect_callsigns, spell_digits_in_callsigns
 from gmrs_tty.text.metadata import extract_name_location
+from gmrs_tty.text.profanity import mask_profanity
 from gmrs_tty.text.shorthand import expand_tty_abbreviations
 from gmrs_tty.tts.synthesizer import TTSSynthesisThread
 from gmrs_tty.ui.chat_display import ChatDisplay
@@ -338,6 +339,9 @@ class MainWindow(QMainWindow):
         if not text and not prefaced:
             return
 
+        if self.config.get("filter_profanity", True):
+            text = mask_profanity(text)
+
         target_name = ""
         if prefaced:
             target_name = next(
@@ -553,6 +557,8 @@ class MainWindow(QMainWindow):
         return now.strftime("%H:%M:%S")
 
     def on_transcription(self, text):
+        if self.config.get("filter_profanity", True):
+            text = mask_profanity(text)
         ts = self._format_timestamp()
         self.append_to_chat(f"<b>[RX {ts}]:</b> {text}", color=COLOR_RX)
         self.scan_for_unknown_stations(text)

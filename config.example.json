@@ -10,5 +10,6 @@
     "vad_threshold": 0.5,
     "ptt_mode": "manual",
     "ptt_serial_port": "",
-    "ptt_serial_line": "RTS"
+    "ptt_serial_line": "RTS",
+    "filter_profanity": true
 }
