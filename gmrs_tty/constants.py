@@ -32,3 +32,10 @@ COLOR_WARN = "#92400E"    # amber-800, 8.13:1 on white — warnings / info
 PILL_BG = "#FEF3C7"       # amber-100 background for pending-station pills
 PILL_TEXT = "#78350F"     # amber-900, ≥10:1 on PILL_BG
 PILL_BORDER = "#A16207"   # amber-700, 4.05:1 on white (UI border)
+
+# FCC-verified marker. Used by the Contacts dialog's verified column and by
+# the chat display's pill highlighter to flag callsigns whose contact entry
+# has a confirmed FCC license match. The color matches COLOR_RX (same
+# green-700) so the "verified" semantic reads consistently across surfaces.
+VERIFIED_GLYPH = "✓"
+VERIFIED_COLOR = COLOR_RX

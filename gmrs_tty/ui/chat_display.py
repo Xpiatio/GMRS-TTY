@@ -2,9 +2,16 @@ from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QTextEdit, QToolTip
 
-from gmrs_tty.constants import PILL_BG, PILL_BORDER, PILL_TEXT
+from gmrs_tty.constants import (
+    PILL_BG, PILL_BORDER, PILL_TEXT, VERIFIED_COLOR, VERIFIED_GLYPH,
+)
 from gmrs_tty.persistence.contacts import format_callsign_tooltip
 from gmrs_tty.text.callsigns import find_callsign_spans
+
+# Trailing glyph appended after a verified callsign. Leading space keeps the
+# checkmark visually detached from the pill's amber background so it reads
+# as a separate badge rather than part of the callsign token.
+_VERIFIED_SUFFIX = f" {VERIFIED_GLYPH}"
 
 
 class ChatDisplay(QTextEdit):
@@ -25,10 +32,23 @@ class ChatDisplay(QTextEdit):
         self._callsign_index = dict(index or {})
 
     def append_message(self, html, color="black"):
-        """Append a chat line and pill-highlight any known callsigns inside it."""
+        """Append a chat line and pill-highlight any known callsigns inside it.
+
+        The viewport "sticks" to the bottom when the operator was already
+        viewing the latest message — new lines stay in view as a live tail.
+        If they had scrolled up to read older context, their position is
+        preserved so an incoming transmission doesn't yank the view away.
+        """
+        sb = self.verticalScrollBar()
+        # Treat "within a couple pixels of max" as at-bottom: Qt sometimes
+        # leaves a sub-pixel gap after layout that would otherwise make us
+        # think the user had scrolled up.
+        was_at_bottom = sb is None or sb.value() >= sb.maximum() - 2
         self.append(f"<span style='color:{color};'>{html}</span>")
         block = self.document().lastBlock()
         self._apply_pill_format(block.position(), block.text())
+        if was_at_bottom and sb is not None:
+            sb.setValue(sb.maximum())
 
     def rescan_all_blocks(self):
         """Re-walk every block and apply pill formatting under the current index.
@@ -45,6 +65,7 @@ class ChatDisplay(QTextEdit):
             return
         doc = self.document()
         seen_spans = set()
+        spans = []
         for start, end, cs in find_callsign_spans(block_text):
             if cs not in self._callsign_index:
                 continue
@@ -52,12 +73,43 @@ class ChatDisplay(QTextEdit):
             if span in seen_spans:
                 continue
             seen_spans.add(span)
+            spans.append((start, end, cs))
+        # Iterate in reverse: inserting the verified-checkmark glyph after one
+        # callsign shifts every position later in the block, so applying
+        # formats end-first keeps earlier spans' offsets correct.
+        for start, end, cs in reversed(spans):
             cursor = QTextCursor(doc)
             cursor.setPosition(block_start + start)
             cursor.setPosition(
                 block_start + end, QTextCursor.MoveMode.KeepAnchor
             )
             cursor.mergeCharFormat(self._pill_format(cs))
+            if self._is_verified(cs) and not self._has_verified_glyph(
+                block_text, end
+            ):
+                self._insert_verified_glyph(block_start + end)
+
+    def _is_verified(self, callsign):
+        """True if any contact under `callsign` has a confirmed FCC match.
+        With family-shared GMRS callsigns the license is held by one operator,
+        so a single verified entry is enough to flag the call."""
+        return any(
+            bool(c.get("verified"))
+            for c in self._callsign_index.get(callsign, [])
+        )
+
+    @staticmethod
+    def _has_verified_glyph(block_text, end):
+        return block_text[end:end + len(_VERIFIED_SUFFIX)] == _VERIFIED_SUFFIX
+
+    def _insert_verified_glyph(self, position):
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(position)
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(VERIFIED_COLOR))
+        fmt.setFontWeight(QFont.Weight.Bold)
+        fmt.setToolTip("FCC license verified for this callsign.")
+        cursor.insertText(_VERIFIED_SUFFIX, fmt)
 
     def _pill_format(self, callsign):
         fmt = QTextCharFormat()
