@@ -11,7 +11,17 @@ from gmrs_tty.fcc.crossref import apply_verification, verify_callsign
 from gmrs_tty.net.online import is_online
 from gmrs_tty.persistence.contacts import sort_contacts_by_suffix
 
-VERIFIED_COL = 3
+# Column layout. Personal-identifying fields cluster left (Callsign / Name /
+# Location), FCC cross-reference fields next (GMRS / HAM), and the verified-
+# status indicator anchors the rightmost edge where users look for badges.
+CALLSIGN_COL = 0
+NAME_COL = 1
+LOCATION_COL = 2
+GMRS_COL = 3
+HAM_COL = 4
+VERIFIED_COL = 5
+COLUMN_COUNT = 6
+
 VERIFIED_GLYPH = "✓"
 VERIFIED_COLOR = "#15803D"  # green-700, matches COLOR_RX (≥4.5:1 on white)
 
@@ -70,7 +80,7 @@ class ContactsDialog(QDialog):
     def __init__(self, current_contacts, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Contact Management")
-        self.setMinimumSize(640, 360)
+        self.setMinimumSize(820, 360)
         # Defensive copy so we can compare each row to its original state when
         # deciding what to re-verify on save.
         self.contacts = [dict(c) for c in current_contacts]
@@ -78,18 +88,28 @@ class ContactsDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Callsign", "Name", "Location", "Verified"])
+        self.table = QTableWidget(0, COLUMN_COUNT)
+        self.table.setHorizontalHeaderLabels(
+            ["Callsign", "Name", "Location", "GMRS", "HAM", "Verified"]
+        )
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        # Stretch Callsign / Name / Location so the personal-identifying
+        # cluster absorbs free space; size GMRS / HAM / Verified to their
+        # contents so callsign-width cells stay tight.
+        header.setSectionResizeMode(CALLSIGN_COL, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(NAME_COL, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(LOCATION_COL, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(GMRS_COL, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(HAM_COL, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(VERIFIED_COL, QHeaderView.ResizeMode.ResizeToContents)
         self.table.setAccessibleName("Contacts table")
         self.table.setAccessibleDescription(
-            "Callsign, name, location, and FCC-verified status for each known "
-            "contact. Use Tab to edit cells. Verified rows are marked with a "
-            "green check after a successful FCC database lookup."
+            "Callsign, name, location, GMRS callsign, HAM callsign, and "
+            "FCC-verified status for each known contact. Use Tab to edit "
+            "cells. GMRS and HAM populate automatically on successful "
+            "verification but can also be entered manually. Verified rows "
+            "are marked with a green check after a successful FCC database "
+            "lookup."
         )
         layout.addWidget(self.table)
 
@@ -149,9 +169,11 @@ class ContactsDialog(QDialog):
             self._render_row(row, contact)
 
     def _render_row(self, row, contact):
-        self.table.setItem(row, 0, QTableWidgetItem(contact.get("callsign", "")))
-        self.table.setItem(row, 1, QTableWidgetItem(contact.get("name", "")))
-        self.table.setItem(row, 2, QTableWidgetItem(contact.get("location", "")))
+        self.table.setItem(row, CALLSIGN_COL, QTableWidgetItem(contact.get("callsign", "")))
+        self.table.setItem(row, NAME_COL, QTableWidgetItem(contact.get("name", "")))
+        self.table.setItem(row, LOCATION_COL, QTableWidgetItem(contact.get("location", "")))
+        self.table.setItem(row, GMRS_COL, QTableWidgetItem(contact.get("gmrs_callsign", "")))
+        self.table.setItem(row, HAM_COL, QTableWidgetItem(contact.get("ham_callsign", "")))
         self.table.setItem(row, VERIFIED_COL, _verified_cell(contact))
 
     def add_row(self):
@@ -179,16 +201,33 @@ class ContactsDialog(QDialog):
         non-editable metadata (verified, verified_at, license_name) carried by
         the in-memory `self.contacts` so a round-trip through the table doesn't
         wipe the green check. Matching is by row index — fine because we never
-        reorder `self.contacts` without re-rendering."""
+        reorder `self.contacts` without re-rendering.
+
+        GMRS / HAM cells override whatever was in the underlying dict because
+        the user may have edited them by hand — a blanked cell removes the
+        field entirely so we don't persist '' values that look like manual
+        data."""
         rows = []
         for row in range(self.table.rowCount()):
-            call_item = self.table.item(row, 0)
-            name_item = self.table.item(row, 1)
-            loc_item = self.table.item(row, 2)
+            call_item = self.table.item(row, CALLSIGN_COL)
+            name_item = self.table.item(row, NAME_COL)
+            loc_item = self.table.item(row, LOCATION_COL)
+            gmrs_item = self.table.item(row, GMRS_COL)
+            ham_item = self.table.item(row, HAM_COL)
             base = dict(self.contacts[row]) if row < len(self.contacts) else {}
             base["callsign"] = call_item.text().strip() if call_item else ""
             base["name"] = name_item.text().strip() if name_item else ""
             base["location"] = loc_item.text().strip() if loc_item else ""
+            gmrs = (gmrs_item.text() if gmrs_item else "").strip().upper()
+            ham = (ham_item.text() if ham_item else "").strip().upper()
+            if gmrs:
+                base["gmrs_callsign"] = gmrs
+            else:
+                base.pop("gmrs_callsign", None)
+            if ham:
+                base["ham_callsign"] = ham
+            else:
+                base.pop("ham_callsign", None)
             rows.append(base)
         return rows
 
