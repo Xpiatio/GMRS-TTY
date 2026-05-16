@@ -7,8 +7,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-    QMainWindow, QMenu, QProgressBar, QPushButton, QScrollArea, QVBoxLayout,
-    QWidget,
+    QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton, QScrollArea,
+    QVBoxLayout, QWidget,
 )
 
 from gmrs_tty.audio.playback import AudioPlayerThread
@@ -114,6 +114,25 @@ class MainWindow(QMainWindow):
             "Your configured callsign, operator name, and location."
         )
         main_layout.addWidget(self.header_label)
+
+        # 2. Chat-toolbar row. Right-aligned Clear-chat button sits above the
+        # chat so it's visibly associated with the log it controls, without
+        # crowding the TX input row below.
+        chat_toolbar = QHBoxLayout()
+        chat_toolbar.addStretch(1)
+        self.clear_chat_btn = QPushButton("Clear &chat", self)
+        self.clear_chat_btn.setToolTip(
+            "Erase every message from the conversation log (Ctrl+K). "
+            "Chat history isn't saved between runs."
+        )
+        self.clear_chat_btn.setAccessibleName("Clear conversation log")
+        self.clear_chat_btn.setAccessibleDescription(
+            "Remove every message from the chat display after confirming. "
+            "Chat history is in-memory only and cannot be recovered after clearing."
+        )
+        self.clear_chat_btn.clicked.connect(self.clear_chat)
+        chat_toolbar.addWidget(self.clear_chat_btn)
+        main_layout.addLayout(chat_toolbar)
 
         # 2. Main Chat Room (Rx Section). No hardcoded font-size so the OS font-scale
         # setting carries through.
@@ -263,6 +282,9 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+Return"), self, activated=self.transmit_message)
         QShortcut(QKeySequence("Ctrl+Enter"), self, activated=self.transmit_message)
         QShortcut(QKeySequence("Ctrl+I"), self, activated=self.transmit_id_only)
+        # Ctrl+K (clear chat) lives on the Settings → Clear chat menu action so
+        # the shortcut shows up next to the menu label and double-binding is
+        # avoided.
 
         # Alt+1 … Alt+9 fire the first nine quick-message presets, in order.
         # User-defined phrases can't carry unique alphabetic mnemonics so we
@@ -307,6 +329,23 @@ class MainWindow(QMainWindow):
         quick_action.triggered.connect(self.open_quick_messages_dialog)
         settings_menu.addAction(quick_action)
 
+        settings_menu.addSeparator()
+
+        # Clear-chat lives on the Settings menu rather than a new top-level menu
+        # so we don't grow the menubar for a single action; the menu entry
+        # surfaces the Ctrl+K shortcut for keyboard-only operators who don't
+        # spot the toolbar button.
+        # In-menu mnemonic differs from the button's "Clear &chat" because the
+        # 'c' inside the open Settings menu already belongs to Configuration —
+        # use 'r' to avoid the collision while keeping the button intuitive.
+        clear_chat_action = QAction("Clea&r chat", self)
+        clear_chat_action.setShortcut(QKeySequence("Ctrl+K"))
+        clear_chat_action.setStatusTip(
+            "Erase every message from the conversation log."
+        )
+        clear_chat_action.triggered.connect(self.clear_chat)
+        settings_menu.addAction(clear_chat_action)
+
     def update_header(self):
         """Updates the top bar with current user info."""
         call = self.config.get('callsign', 'N/A')
@@ -321,14 +360,22 @@ class MainWindow(QMainWindow):
         contacts.json — it's a UI primitive (broadcast / no preface), not a
         person, so the user can never lose the open-call option by deleting
         all their contacts. Any stray 'All' rows in contacts.json are skipped
-        so the entry never duplicates."""
+        so the entry never duplicates.
+
+        Each row stores ``(callsign, name)`` as its userData so that family
+        members sharing a single GMRS callsign stay distinguishable — the
+        chosen name is what the preface speaks, not whichever row happens to
+        sort first."""
         self.target_dropdown.clear()
-        self.target_dropdown.addItem("All (Everyone)", userData="All")
+        self.target_dropdown.addItem("All (Everyone)", userData=("All", ""))
         for contact in self.contacts:
             if (contact.get("callsign", "") or "").upper() == "ALL":
                 continue
             display_text = f"{contact['callsign']} ({contact['name']})"
-            self.target_dropdown.addItem(display_text, userData=contact['callsign'])
+            self.target_dropdown.addItem(
+                display_text,
+                userData=(contact['callsign'], contact.get('name', '')),
+            )
 
     def open_config_dialog(self):
         dlg = ConfigDialog(self.config, self)
@@ -458,7 +505,8 @@ class MainWindow(QMainWindow):
         place. Returns True if a transmission was kicked off, False if the
         request was a no-op (empty text + open-call target).
         """
-        target_call = self.target_dropdown.currentData()
+        target_data = self.target_dropdown.currentData() or ("", "")
+        target_call, target_name = target_data
         prefaced = bool(target_call and target_call.upper() != "ALL")
 
         # Empty text is only valid when calling a specific station — the preface itself is the call.
@@ -468,13 +516,8 @@ class MainWindow(QMainWindow):
         if self.config.get("filter_profanity", True):
             text = mask_profanity(text)
 
-        target_name = ""
-        if prefaced:
-            target_name = next(
-                (c.get("name", "") for c in self.contacts
-                 if c.get("callsign", "").upper() == target_call.upper()),
-                ""
-            )
+        if not prefaced:
+            target_name = ""
 
         spoken_text, self.last_tx_time = format_outgoing_message(
             text=text,
@@ -492,7 +535,7 @@ class MainWindow(QMainWindow):
         if prefaced:
             for i in range(self.target_dropdown.count()):
                 data = self.target_dropdown.itemData(i)
-                if data and str(data).upper() == "ALL":
+                if data and str(data[0]).upper() == "ALL":
                     self.target_dropdown.setCurrentIndex(i)
                     break
 
@@ -601,6 +644,23 @@ class MainWindow(QMainWindow):
     def append_to_chat(self, text, color="black"):
         """Appends HTML formatted text to the chat display."""
         self.chat_display.append_message(text, color=color)
+
+    def clear_chat(self):
+        """Wipe the chat display after confirming with the operator.
+
+        Chat history is in-memory only — once cleared it can't be recovered —
+        so we gate the action behind a Yes/No prompt to keep an accidental
+        button-press or stray Ctrl+K from blowing away a long RX log."""
+        reply = QMessageBox.question(
+            self,
+            "Clear chat",
+            "Remove every message from the conversation log? "
+            "Chat history isn't saved between runs, so this can't be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.chat_display.clear()
 
     def _refresh_callsign_index(self):
         """Recompute the known-callsign lookup and push it to the chat widget.
