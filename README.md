@@ -25,7 +25,7 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
 - **15-minute ID rule** — appends your callsign + name when more than 15 minutes have passed since last identification.
 - **Standalone "This is" ID button** — one-click station identification: `This is [CALL], [NATO phonetic CALL]. [name] from [location].` Resets the 15-minute ID timer.
 - **Spoken-callsign formatting** — TTS reads callsign digits one at a time (`WSLZ 2 3 3` rather than "two hundred thirty-three") so the receiver hears them as letters and digits, not numbers.
-- **TTY abbreviation expansion** — outgoing shorthand from the Corada TDD/TTY Etiquette Glossary (e.g. `GA`, `SKSK`, `ASAP`, `ILY`, `MSG`, `CUL`) is rewritten into full words before TTS speaks it, so the receiver hears "Go ahead" rather than "G A". Matching is case-insensitive and word-bounded, so it won't expand letters embedded in larger words (e.g. `Q` inside `QSO`).
+- **TTY + radio vernacular expansion** — outgoing shorthand from the Corada TDD/TTY Etiquette Glossary (e.g. `GA`, `SKSK`, `ASAP`, `ILY`, `MSG`, `CUL`) plus the ARRL/CW radio vernacular (`73`, `88`, Q-signals `QSL`/`QSO`/`QTH`/`QRZ`/`QRM`/`QRN`/`QRT`, and CW shorthand `HW`, `OM`, `XYL`, `WX`, `TNX`, `RST`, `ES`, `FB`, `AGN`, `B4`) is rewritten into full words before TTS speaks it, so the receiver hears "Go ahead" / "best regards" rather than "G A" / "seven three". Matching is case-insensitive and word-bounded, longest-key-first, so `QSO` expands to "radio contact" while `Q` inside other words still passes through unchanged.
 - **Adjustable speech rate** — a slider in Configuration (just under the voice picker) maps to Piper's `length_scale` from `0.70×` to `1.50×`; `1.00×` is the voice's native pace, higher is slower, lower is faster. The Test button auditions the current slider value before you save.
 - "All" target is transmitted as-is (no preface).
 
@@ -208,7 +208,7 @@ Tracked in [implementation_plan.md](implementation_plan.md):
 7. ⏳ Cross-platform packaging (Windows installer, Linux/Pi tarballs)
 8. ⏳ Multi-arch Docker image (`linux/amd64` + `linux/arm64`)
 9. ⏳ Future hardware (Bluetooth HT/mobile audio, hamlib CAT/CI-V rig control)
-10. ⏳ TTY-to-radio-vernacular translation at TTS time (expand `GA`/`SK`/`73`/Q-signals to spoken form on TX)
+10. ✅ TTY-to-radio-vernacular translation at TTS time (expand `GA`/`SK`/`73`/Q-signals to spoken form on TX)
 11. ⏳ AI-summarized session journal (on-device summaries via `ollama` + Gemma 3n E2B, with a date-stamped history viewer)
 12. ⏳ Quick / common messages (one-click preset phrases like "Radio check", "Standing by", "QSY to channel {N}", editable per-user)
 
