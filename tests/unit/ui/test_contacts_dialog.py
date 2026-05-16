@@ -32,19 +32,25 @@ def _make_dialog(qapp, contacts, online=True):
     return dlg
 
 
-class TestVerifiedColumn:
-    def test_has_four_columns_including_verified(self, qapp):
+class TestColumnLayout:
+    """Six columns: Callsign | Name | Location | GMRS | HAM | Verified.
+    GMRS / HAM appear after the personal fields so the operator-identifying
+    cluster stays leftmost; Verified remains the rightmost status column."""
+
+    def test_has_six_columns(self, qapp):
         dlg = _make_dialog(qapp, [])
-        assert dlg.table.columnCount() == 4
+        assert dlg.table.columnCount() == 6
         headers = [dlg.table.horizontalHeaderItem(i).text()
                    for i in range(dlg.table.columnCount())]
-        assert "Verified" in headers
+        assert headers == ["Callsign", "Name", "Location", "GMRS", "HAM", "Verified"]
 
+
+class TestVerifiedColumn:
     def test_verified_cell_shows_check_for_verified_contact(self, qapp):
         dlg = _make_dialog(qapp, [
             {"callsign": "WSLZ233", "name": "Benjamin", "verified": True},
         ])
-        cell = dlg.table.item(0, 3)
+        cell = dlg.table.item(0, 5)
         assert cell is not None
         # Whatever glyph we render, a verified row's accessible/tool-tip text
         # has to include "verified" so screen readers don't see a bare check.
@@ -55,11 +61,70 @@ class TestVerifiedColumn:
         dlg = _make_dialog(qapp, [
             {"callsign": "WSLZ233", "name": "Benjamin"},
         ])
-        cell = dlg.table.item(0, 3)
+        cell = dlg.table.item(0, 5)
         # No verification yet: cell exists (so the column is well-formed) but
         # should not display a check glyph.
         if cell is not None:
             assert "✓" not in (cell.text() or "")
+
+
+class TestGmrsAndHamColumns:
+    """The GMRS and HAM columns surface the FCC cross-references next to the
+    primary callsign so the operator can see all three forms at a glance —
+    and edit them by hand when a row hasn't been verified yet."""
+
+    def test_columns_render_existing_cross_reference_values(self, qapp):
+        dlg = _make_dialog(qapp, [
+            {"callsign": "KE8RXN", "name": "Collin", "location": "Grand Rapids",
+             "gmrs_callsign": "WRPN553", "ham_callsign": "KE8RXN"},
+        ])
+        assert dlg.table.item(0, 3).text() == "WRPN553"
+        assert dlg.table.item(0, 4).text() == "KE8RXN"
+
+    def test_blank_cells_for_unverified_contact(self, qapp):
+        dlg = _make_dialog(qapp, [
+            {"callsign": "WSAC909", "name": "Tim"},
+        ])
+        assert (dlg.table.item(0, 3).text() or "") == ""
+        assert (dlg.table.item(0, 4).text() or "") == ""
+
+    def test_manual_edit_round_trips_through_get_contacts(self, qapp):
+        """Operator types a HAM callsign into the grid for an unverified
+        row — that value must survive save (get_contacts) without needing
+        a verification round trip."""
+        dlg = _make_dialog(qapp, [
+            {"callsign": "WSAC909", "name": "Tim"},
+        ], online=False)
+        dlg.table.item(0, 4).setText("KE8ABC")
+        with patch("gmrs_tty.ui.contacts_dialog.is_online", return_value=False):
+            rows = dlg.get_contacts()
+        assert rows[0]["ham_callsign"] == "KE8ABC"
+
+    def test_cells_uppercased_on_save_like_primary_callsign(self, qapp):
+        # Callsigns are conventionally upper-case; the primary field already
+        # uppercases on save, so GMRS / HAM should match for consistency.
+        dlg = _make_dialog(qapp, [
+            {"callsign": "WSAC909", "name": "Tim"},
+        ], online=False)
+        dlg.table.item(0, 3).setText("wrpn553")
+        dlg.table.item(0, 4).setText("ke8abc")
+        with patch("gmrs_tty.ui.contacts_dialog.is_online", return_value=False):
+            rows = dlg.get_contacts()
+        assert rows[0]["gmrs_callsign"] == "WRPN553"
+        assert rows[0]["ham_callsign"] == "KE8ABC"
+
+    def test_blank_grid_cell_drops_field(self, qapp):
+        """Blanking out a cell should remove the field from the saved dict
+        (don't persist '' as a value that looks like manual data)."""
+        dlg = _make_dialog(qapp, [
+            {"callsign": "KE8RXN", "name": "Collin",
+             "gmrs_callsign": "WRPN553", "ham_callsign": "KE8RXN"},
+        ], online=False)
+        dlg.table.item(0, 3).setText("")
+        with patch("gmrs_tty.ui.contacts_dialog.is_online", return_value=False):
+            rows = dlg.get_contacts()
+        # Either absent or empty string is acceptable — both signal 'no value'.
+        assert not rows[0].get("gmrs_callsign")
 
 
 class TestVerifyButtonOfflineGating:
@@ -199,7 +264,7 @@ class TestVerifyOnSave:
              "verified": True, "license_name": "Zomberg, Benjamin J",
              "gmrs_callsign": "WSLZ233", "ham_callsign": "KE8RXN"},
         ])
-        tip = dlg.table.item(0, 3).toolTip()
+        tip = dlg.table.item(0, 5).toolTip()
         assert "GMRS: WSLZ233" in tip
         assert "HAM: KE8RXN" in tip
 
