@@ -333,6 +333,57 @@ class TestVerifyOnSave:
         assert "GMRS: WSLZ233" in tip
         assert "HAM: KE8RXN" in tip
 
+    def test_get_contacts_skips_verify_for_verified_unchanged_row(self, qapp):
+        """Save shares Verify-all's gate: an already-verified row whose
+        callsign / name match what was loaded is treated as cached, so
+        clicking OK doesn't fire a redundant FCC lookup (or churn the
+        verified_at timestamp) just because the dialog was opened."""
+        dlg = _make_dialog(qapp, [
+            {"callsign": "WSLZ233", "name": "Benjamin",
+             "verified": True, "verified_at": "2026-05-10T00:00:00Z",
+             "license_name": "Zomberg, Benjamin J"},
+        ])
+
+        with patch("gmrs_tty.ui.contacts_dialog.is_online", return_value=True), \
+             patch("gmrs_tty.ui.contacts_dialog.verify_callsign") as verify:
+            rows = dlg.get_contacts()
+            verify.assert_not_called()
+        # The cached match — including its timestamp — must round-trip
+        # unchanged so 'last verified' history stays meaningful.
+        assert rows[0]["verified"] is True
+        assert rows[0]["verified_at"] == "2026-05-10T00:00:00Z"
+
+    def test_get_contacts_reverifies_cached_unverified_row(self, qapp):
+        """A row that was previously checked but came back unverified (e.g.
+        callsign_only — name mismatch against the licensee) is NOT cached
+        for skip purposes. Save retries it against the FCC database in case
+        the operator has since fixed the name or the license record has
+        updated. This mirrors what Verify-all does for the same row."""
+        dlg = _make_dialog(qapp, [
+            {"callsign": "WSLZ233", "name": "Eliza",
+             "verified": False, "verified_at": "2026-05-01T00:00:00Z",
+             "license_name": "Zomberg, Benjamin J"},
+        ])
+
+        calls = []
+
+        def fake_verify(callsign, name):
+            calls.append((callsign, name))
+            return crossref.VerificationResult(
+                status="callsign_only",
+                license_name="Zomberg, Benjamin J",
+                license_active=True,
+            )
+
+        with patch("gmrs_tty.ui.contacts_dialog.is_online", return_value=True), \
+             patch("gmrs_tty.ui.contacts_dialog.verify_callsign",
+                   side_effect=fake_verify):
+            dlg.get_contacts()
+
+        assert calls == [("WSLZ233", "Eliza")], (
+            f"cached unverified row should be re-checked on save, got {calls}"
+        )
+
     def test_get_contacts_skips_verify_when_offline(self, qapp):
         dlg = _make_dialog(qapp, [
             {"callsign": "WSLZ233", "name": "Benjamin"},
