@@ -36,7 +36,7 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
   - Spaced: `W S L Z 2 3 3`
   - With separators: `W.S.L.Z.233`, `WSLZ-233`, `WSLZ, 233`
   - NATO phonetic: `Whiskey Sierra Lima Zulu Two Three Three` (also `X-ray` / `X ray`).
-- Unknown stations appear as one-click `+ Add` pills below the chat with the detected name/location pre-filled.
+- Unknown stations appear as one-click `+ Add` pills below the chat with the detected name/location pre-filled. Right-click (or long-press) a pill to dismiss it without adding the callsign, or use the **Dismiss all** button on the right edge of the pending-stations bar to clear every pending pill at once.
 - **Known callsigns are pill-highlighted in the chat** — any callsign that matches an entry in Contacts is rendered with the amber pill palette (bold, amber background) wherever it appears in RX or TX lines. Hovering reveals every name (and location, when present) sharing that callsign, so family-shared GMRS calls expose all of their operators at a glance. New contacts retroactively re-highlight earlier transmissions.
 - Manual contact management dialog (callsign, name, location).
 
@@ -134,7 +134,7 @@ python main.py
 - **Target dropdown** — pick a callsign from your contacts, or "All" for general transmission. Entries are sorted alphabetically by callsign (ties broken by operator name); the "All" open-call entry is pinned at the top.
 - **Message box + Transmit** — type and hit Enter (or click Transmit) to speak the message through Piper.
 - **"This is" button** — sits under the Transmit row; sends a standalone station ID without needing to type anything.
-- **Pending stations bar** (between chat and input) — yellow pill buttons appear when a new GMRS callsign is detected on RX. Hover for the detected name/location preview; click to open a prefilled "Add Station" dialog.
+- **Pending stations bar** (between chat and input) — yellow pill buttons appear when a new GMRS callsign is detected on RX. Hover for the detected name/location preview; click to open a prefilled "Add Station" dialog, or right-click / long-press to dismiss a single pill without adding the callsign. As more pills arrive, the bar wraps to additional rows up to a maximum of three; past that, a vertical scrollbar appears so the chat area doesn't get squeezed. A **Dismiss all** button (Alt+D) appears on the right whenever any pending pills are present and clears them all in one click.
 
 ### Settings menu
 
@@ -167,8 +167,8 @@ GMRS-TTY/
 │   ├── stt/                # WhisperTranscriber + STTWorker orchestrator
 │   ├── text/               # callsign detection, NATO/phonetics, TTY shorthand, name/location heuristics
 │   ├── tts/                # Piper TTSSynthesisThread
-│   └── ui/                 # MainWindow, ConfigDialog, ContactsDialog, AddContactDialog, DeviceQueryThread
-├── tests/                  # pytest suites covering pure logic (text/, fcc/, persistence/, ptt/)
+│   └── ui/                 # MainWindow, ConfigDialog, ContactsDialog, AddContactDialog, DeviceQueryThread, FlowLayout
+├── tests/                  # pytest suites covering pure logic (text/, fcc/, persistence/, ptt/, ui/)
 ├── requirements.txt        # Runtime Python dependencies
 ├── requirements-dev.txt    # pytest + pytest-cov for the test suite
 ├── pyproject.toml          # pytest configuration
