@@ -37,7 +37,7 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
   - With separators: `W.S.L.Z.233`, `WSLZ-233`, `WSLZ, 233`
   - NATO phonetic: `Whiskey Sierra Lima Zulu Two Three Three` (also `X-ray` / `X ray`).
 - Unknown stations appear as one-click `+ Add` pills below the chat with the detected name/location pre-filled. Right-click (or long-press) a pill to dismiss it without adding the callsign, or use the **Dismiss all** button on the right edge of the pending-stations bar to clear every pending pill at once.
-- **Known callsigns are pill-highlighted in the chat** — any callsign that matches an entry in Contacts is rendered with the amber pill palette (bold, amber background) wherever it appears in RX or TX lines. Hovering reveals every name (and location, when present) sharing that callsign, so family-shared GMRS calls expose all of their operators at a glance. New contacts retroactively re-highlight earlier transmissions.
+- **Known callsigns are pill-highlighted in the chat** — any callsign that matches an entry in Contacts is rendered with the amber pill palette (bold, amber background) wherever it appears in RX or TX lines, in any of the recognized forms (compact, spaced, NATO phonetic, hyphenated, or period/comma-separated). Hovering reveals every name (and location, when present) sharing that callsign, so family-shared GMRS calls expose all of their operators at a glance. New contacts retroactively re-highlight earlier transmissions.
 - Manual contact management dialog (callsign, name, location).
 
 ### Cross-platform & off-grid

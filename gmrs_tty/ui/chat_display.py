@@ -4,7 +4,7 @@ from PySide6.QtWidgets import QTextEdit, QToolTip
 
 from gmrs_tty.constants import PILL_BG, PILL_BORDER, PILL_TEXT
 from gmrs_tty.persistence.contacts import format_callsign_tooltip
-from gmrs_tty.text.callsigns import CALLSIGN_RE
+from gmrs_tty.text.callsigns import find_callsign_spans
 
 
 class ChatDisplay(QTextEdit):
@@ -45,18 +45,17 @@ class ChatDisplay(QTextEdit):
             return
         doc = self.document()
         seen_spans = set()
-        for match in CALLSIGN_RE.finditer(block_text):
-            cs = match.group(1).upper()
+        for start, end, cs in find_callsign_spans(block_text):
             if cs not in self._callsign_index:
                 continue
-            span = (match.start(), match.end())
+            span = (start, end)
             if span in seen_spans:
                 continue
             seen_spans.add(span)
             cursor = QTextCursor(doc)
-            cursor.setPosition(block_start + match.start())
+            cursor.setPosition(block_start + start)
             cursor.setPosition(
-                block_start + match.end(), QTextCursor.MoveMode.KeepAnchor
+                block_start + end, QTextCursor.MoveMode.KeepAnchor
             )
             cursor.mergeCharFormat(self._pill_format(cs))
 
