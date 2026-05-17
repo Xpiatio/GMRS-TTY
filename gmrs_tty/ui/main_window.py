@@ -1891,6 +1891,15 @@ class MainWindow(QMainWindow):
         )
 
     def stop_stt(self):
+        # Flush any in-progress utterance before tearing down so callsigns
+        # that appeared in the chat from partial transcripts still land in
+        # attendance even when the session ends before VAD fires 'end'.
+        if self._open_rx_uid is not None and self._open_rx_text:
+            self.scan_for_unknown_stations(self._open_rx_text)
+        self._open_rx_uid = None
+        self._open_rx_block = None
+        self._open_rx_text = ""
+
         # Tear the spectrometer down first so its STT-signal disconnects
         # run while the worker is still alive — _stop_spectro_worker
         # reaches through self.stt_worker to undo the audio_chunk hookup.
@@ -1949,6 +1958,12 @@ class MainWindow(QMainWindow):
             return
 
         if uid != self._open_rx_uid:
+            # A new utterance is starting before the previous one received a
+            # final segment (e.g. PTT pressed mid-transmission). Scan the
+            # accumulated text now so callsigns from the abandoned utterance
+            # still reach attendance.
+            if self._open_rx_uid is not None and self._open_rx_text:
+                self.scan_for_unknown_stations(self._open_rx_text)
             ts = self._format_timestamp()
             block_number = self.chat_display.append_message(
                 f"<b>[RX {ts}]:</b> {text}", color=theme.palette().rx

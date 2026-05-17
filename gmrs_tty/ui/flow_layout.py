@@ -6,7 +6,7 @@ row whenever the next item would exceed the row's right edge.
 """
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt
-from PySide6.QtWidgets import QLayout, QSizePolicy
+from PySide6.QtWidgets import QLayout
 
 
 class FlowLayout(QLayout):

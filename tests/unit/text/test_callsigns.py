@@ -1,4 +1,3 @@
-import pytest
 
 from gmrs_tty.text.callsigns import (
     callsign_to_nato,

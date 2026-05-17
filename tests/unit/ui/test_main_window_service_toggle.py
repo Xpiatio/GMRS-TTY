@@ -7,7 +7,6 @@ clears, chat-display highlighting stops, and TX output drops the preface +
 trailing ID. The toggle has to be persistent across restarts (lives in
 config.json) and the radio buttons must reflect the saved state on startup.
 """
-import datetime
 import os
 from unittest.mock import patch
 

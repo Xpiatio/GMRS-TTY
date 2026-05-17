@@ -1,7 +1,6 @@
 import json
 from unittest.mock import patch
 
-import pytest
 
 from gmrs_tty.fcc import crossref
 

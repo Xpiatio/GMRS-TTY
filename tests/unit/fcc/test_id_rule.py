@@ -2,7 +2,7 @@ import datetime
 
 import pytest
 
-from gmrs_tty.constants import SERVICE_FRS, SERVICE_GMRS
+from gmrs_tty.constants import SERVICE_FRS
 from gmrs_tty.fcc.id_rule import (
     ID_INTERVAL_SECONDS,
     format_outgoing_message,

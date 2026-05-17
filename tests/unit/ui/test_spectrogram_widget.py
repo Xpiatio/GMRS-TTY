@@ -15,7 +15,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from gmrs_tty.audio.spectrogram import frequency_bins  # noqa: E402
 from gmrs_tty.ui.spectrogram_widget import (  # noqa: E402
     AVAILABLE_FREQ_RANGES,
     DEFAULT_TIME_WINDOW_S,

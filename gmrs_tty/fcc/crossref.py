@@ -19,7 +19,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Optional
 
 from gmrs_tty.net.online import invalidate as _invalidate_online
 from gmrs_tty.net.online import is_online

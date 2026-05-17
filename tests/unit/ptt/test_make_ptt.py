@@ -1,4 +1,4 @@
-from gmrs_tty.ptt import ManualPTT, SerialPTT, VoxPTT, make_ptt
+from gmrs_tty.ptt import ManualPTT, VoxPTT, make_ptt
 
 
 class TestMakePttModeSelection:
