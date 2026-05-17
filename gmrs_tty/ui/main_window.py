@@ -502,7 +502,7 @@ class MainWindow(QMainWindow):
         # Main chat-display surface. No hardcoded font-size so OS font-scale
         # carries through (WCAG 1.4.4).
         self.chat_display = ChatDisplay(wrapper)
-        self.chat_display.setStyleSheet(f"padding: {theme.SPACING_S}px;")
+        self.chat_display.setStyleSheet(theme.chat_display_stylesheet())
         self.chat_display.setAccessibleName("Conversation log")
         self.chat_display.setAccessibleDescription(
             "Timestamped log of incoming radio transmissions and outgoing messages. "
@@ -1086,6 +1086,7 @@ class MainWindow(QMainWindow):
             self.header_label.setStyleSheet(theme.header_stylesheet())
         self._restyle_pending_pills()
         if hasattr(self, "chat_display"):
+            self.chat_display.setStyleSheet(theme.chat_display_stylesheet())
             self.chat_display.restyle_for_theme()
         if hasattr(self, "online_indicator"):
             self._refresh_online_indicator()

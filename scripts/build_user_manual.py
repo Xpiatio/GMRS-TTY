@@ -544,8 +544,14 @@ def build_main_window(b: Builder):
                        "behavior diff."),
         ("Theme toggle (left of the cluster)", "Moon glyph in light "
                                                "mode, sun glyph in dark "
-                                               "mode. Toggles between "
-                                               "light and dark themes. "
+                                               "mode. Repaints the "
+                                               "entire UI instantly: "
+                                               "window background, "
+                                               "conversation log "
+                                               "background and text, "
+                                               "header, dock title "
+                                               "bars, menus, callsign "
+                                               "pills, and status bar. "
                                                "The glyph shows the "
                                                "<i>destination</i> "
                                                "state — a moon means "
@@ -1282,9 +1288,11 @@ def build_rx(b: Builder):
         "today&hellip;</font> — rather than as separate messages.",
         "Every partial still rides the full bandpass + denoise + "
         "hallucination-filter chain. Callsign-discovery scanning runs "
-        "once over the full accumulated text when the final segment "
-        "lands, so a callsign split across slices is detected exactly "
-        "once.",
+        "once over the full accumulated text — at the final segment, "
+        "or immediately when the utterance is abandoned (PTT pressed "
+        "mid-reception, Listen toggled off, or a new utterance "
+        "starting before the previous one completes) — so the "
+        "attendance grid always reflects what the chat shows.",
     ])
     b.note(
         "Slice length and the cut-search window are tuned constants, "
