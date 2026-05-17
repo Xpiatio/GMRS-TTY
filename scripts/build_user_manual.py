@@ -760,8 +760,11 @@ def build_main_window(b: Builder):
     b.bullets([
         ("Columns", "<b>Callsign | Name | Location | GMRS | HAM</b>. "
                     "Read-only; the grid is for reference, not editing. "
-                    "Name and Location stretch; the callsign columns "
-                    "resize to fit content."),
+                    "All columns autofit to their content each time a "
+                    "new callsign is recorded. Drag any column divider "
+                    "to adjust widths manually — the autofit on the "
+                    "next detection will refit all columns to content "
+                    "again."),
         ("Auto-population", "Unknown callsigns appear with only the "
                             "Callsign column filled. The moment that "
                             "callsign is added to (or already in) "
