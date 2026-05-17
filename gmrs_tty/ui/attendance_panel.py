@@ -48,14 +48,11 @@ class AttendancePanel(QWidget):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
-        # Callsign / GMRS / HAM size to their fixed callsign width; Name and
-        # Location expand to fill the dock since they're the variable-length
-        # operator-facing strings.
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        # Interactive so the operator can drag dividers; _render calls
+        # resizeColumnsToContents() after each data update so columns
+        # autofit to content while remaining manually adjustable.
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(False)
         self.table.setAccessibleName("Attendance grid")
         self.table.setAccessibleDescription(
             "Callsigns detected during the current listening session. "
@@ -114,3 +111,5 @@ class AttendancePanel(QWidget):
                 item = QTableWidgetItem(row[key])
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(r, c, item)
+        if rows:
+            self.table.resizeColumnsToContents()
