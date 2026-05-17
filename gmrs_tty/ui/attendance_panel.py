@@ -1,0 +1,116 @@
+"""Listening-session attendance grid widget.
+
+A read-only table of every callsign heard during the current Listen
+session. Each row carries Callsign / Name / Location / GMRS / HAM; the
+last four fill in automatically when the callsign is already in (or
+later added to) the contact list.
+
+The panel owns an ``AttendanceTracker`` (ordered de-duped set of heard
+callsigns) and a snapshot of the current contacts. MainWindow drives it
+via ``record(callsign)`` on every RX detection and ``refresh(contacts)``
+whenever the contact list changes. The Listen on→off cycle and the
+panel's own Clear button both route through ``clear()``.
+"""
+from __future__ import annotations
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QAbstractItemView, QHBoxLayout, QHeaderView, QPushButton,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+)
+
+from gmrs_tty.persistence.attendance import (
+    AttendanceTracker,
+    build_attendance_rows,
+)
+from gmrs_tty.ui import theme
+
+
+COLUMNS = ("Callsign", "Name", "Location", "GMRS", "HAM")
+
+
+class AttendancePanel(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._tracker = AttendanceTracker()
+        self._contacts: list[dict] = []
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(
+            theme.SPACING_S, theme.SPACING_XS, theme.SPACING_S, theme.SPACING_XS
+        )
+        outer.setSpacing(theme.SPACING_XS)
+
+        self.table = QTableWidget(0, len(COLUMNS), self)
+        self.table.setHorizontalHeaderLabels(COLUMNS)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.verticalHeader().setVisible(False)
+        header = self.table.horizontalHeader()
+        # Callsign / GMRS / HAM size to their fixed callsign width; Name and
+        # Location expand to fill the dock since they're the variable-length
+        # operator-facing strings.
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setAccessibleName("Attendance grid")
+        self.table.setAccessibleDescription(
+            "Callsigns detected during the current listening session. "
+            "Columns: Callsign, Name, Location, GMRS, HAM. Name and contact "
+            "columns fill in automatically when a callsign is in (or added to) contacts."
+        )
+        outer.addWidget(self.table, 1)
+
+        button_row = QHBoxLayout()
+        button_row.setContentsMargins(0, 0, 0, 0)
+        button_row.setSpacing(theme.SPACING_S)
+        button_row.addStretch(1)
+        self.clear_button = QPushButton("Clear &attendance", self)
+        self.clear_button.setToolTip(
+            "Empty the attendance grid for the current listening session."
+        )
+        self.clear_button.setAccessibleName("Clear attendance grid")
+        self.clear_button.setAccessibleDescription(
+            "Remove every row from the attendance grid. The grid keeps "
+            "collecting new callsigns as they are detected."
+        )
+        self.clear_button.clicked.connect(self.clear)
+        button_row.addWidget(self.clear_button)
+        outer.addLayout(button_row)
+
+    def record(self, callsign: str) -> None:
+        """Add `callsign` to the session. No-op when it has already been
+        recorded — repeated transmissions from the same operator don't
+        re-render the grid."""
+        if self._tracker.record(callsign):
+            self._render()
+
+    def clear(self) -> None:
+        """Empty the grid. Called by the panel's Clear button and by
+        MainWindow at the start of every fresh Listen session."""
+        self._tracker.clear()
+        self._render()
+
+    def refresh(self, contacts) -> None:
+        """Adopt a new contacts snapshot and re-render every row so a
+        callsign that was unknown when first heard fills in its Name /
+        Location / GMRS / HAM the moment it is saved to contacts."""
+        self._contacts = list(contacts or [])
+        self._render()
+
+    def callsigns(self) -> list[str]:
+        """Currently-recorded callsigns, in heard order. Exposed for tests
+        and for parity-check assertions in the MainWindow integration."""
+        return self._tracker.callsigns()
+
+    def _render(self) -> None:
+        rows = build_attendance_rows(self._tracker.callsigns(), self._contacts)
+        self.table.setRowCount(len(rows))
+        for r, row in enumerate(rows):
+            for c, key in enumerate(("callsign", "name", "location", "gmrs", "ham")):
+                item = QTableWidgetItem(row[key])
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(r, c, item)

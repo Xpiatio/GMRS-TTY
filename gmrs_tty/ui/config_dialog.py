@@ -95,6 +95,28 @@ class ConfigDialog(QDialog):
             "with asterisks. Recommended for GMRS operation."
         )
 
+        self.attendance_enabled_input = QCheckBox(
+            "Track callsigns heard during each listening session"
+        )
+        self.attendance_enabled_input.setChecked(
+            bool((self.config.get("attendance") or {}).get("enabled", False))
+        )
+        self.attendance_enabled_input.setToolTip(
+            "When enabled, the Attendance panel logs every callsign detected "
+            "during a Listen session. Rows show Callsign, Name, Location, GMRS "
+            "and HAM — the contact columns fill in automatically when a "
+            "callsign is in (or added to) contacts. Show or hide the panel "
+            "any time via View → Show attendance (Ctrl+Shift+A). GMRS only."
+        )
+        self.attendance_enabled_input.setAccessibleName(
+            "Track listening-session attendance"
+        )
+        self.attendance_enabled_input.setAccessibleDescription(
+            "When enabled, the Attendance panel records every callsign "
+            "detected during a Listen session. The panel can be shown or "
+            "hidden from the View menu."
+        )
+
         self.fuzzy_callsign_input = QCheckBox(
             "Replace near-miss callsigns with the closest contact"
         )
@@ -201,6 +223,7 @@ class ConfigDialog(QDialog):
         layout.addRow("Time &Format:", self.time_format_input)
         layout.addRow("Filter profanit&y:", self.filter_profanity_input)
         layout.addRow("F&uzzy callsigns:", self.fuzzy_callsign_input)
+        layout.addRow("&Attendance grid:", self.attendance_enabled_input)
         layout.addRow("&PTT Mode:", self.ptt_mode_input)
         layout.addRow("&Serial Port:", self.ptt_serial_port_input)
         layout.addRow("Control Lin&e:", self.ptt_serial_line_input)
@@ -249,6 +272,12 @@ class ConfigDialog(QDialog):
             "time_format": self.time_format_input.currentData(),
             "filter_profanity": self.filter_profanity_input.isChecked(),
             "fuzzy_callsign": self.fuzzy_callsign_input.isChecked(),
+            # Attendance is a nested sub-dict so future per-session settings
+            # (sort order, persistence, etc.) can land alongside ``enabled``
+            # without crowding the top-level namespace.
+            "attendance": {
+                "enabled": self.attendance_enabled_input.isChecked(),
+            },
             "ptt_mode": self.ptt_mode_input.currentData(),
             "ptt_serial_port": self.ptt_serial_port_input.text().strip(),
             "ptt_serial_line": self.ptt_serial_line_input.currentData(),

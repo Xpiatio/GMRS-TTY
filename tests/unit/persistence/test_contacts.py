@@ -1,10 +1,104 @@
 from gmrs_tty.persistence.contacts import (
+    deduplicate_ham_cross_references,
     format_callsign_tooltip,
     index_contacts_by_callsign,
     known_callsigns,
     sort_contacts,
     sort_contacts_by_suffix,
 )
+
+
+class TestDeduplicateHamCrossReferences:
+    def test_empty_input(self):
+        assert deduplicate_ham_cross_references([]) == []
+        assert deduplicate_ham_cross_references(None) == []
+
+    def test_keeps_singletons_unchanged(self):
+        rows = [
+            {"callsign": "WSLZ100", "name": "Alice"},
+            {"callsign": "KAE1234", "name": "Bob"},
+        ]
+        result = deduplicate_ham_cross_references(rows)
+        assert result == rows
+
+    def test_drops_ham_primary_duplicate(self):
+        rows = [
+            {
+                "callsign": "WSLZ100",
+                "name": "Alice",
+                "gmrs_callsign": "WSLZ100",
+                "ham_callsign": "K1ABC",
+            },
+            {"callsign": "K1ABC", "name": "Alice"},
+        ]
+        result = deduplicate_ham_cross_references(rows)
+        assert len(result) == 1
+        assert result[0]["callsign"] == "WSLZ100"
+
+    def test_preserves_family_shared_callsigns(self):
+        # Two operators sharing a GMRS callsign — different names — must
+        # both survive. They don't match each other's HAM cross-references.
+        rows = [
+            {"callsign": "WSLZ100", "name": "Alice", "ham_callsign": "K1ABC"},
+            {"callsign": "WSLZ100", "name": "Bob", "ham_callsign": "K2DEF"},
+        ]
+        result = deduplicate_ham_cross_references(rows)
+        assert [c["name"] for c in result] == ["Alice", "Bob"]
+
+    def test_keeps_ham_when_no_gmrs_canonical(self):
+        # No GMRS-primary row claims K1ABC as its HAM, so the standalone
+        # K1ABC row has nothing canonical to merge into and is kept.
+        rows = [{"callsign": "K1ABC", "name": "Alice"}]
+        result = deduplicate_ham_cross_references(rows)
+        assert result == rows
+
+    def test_case_insensitive_name_and_callsign_match(self):
+        rows = [
+            {"callsign": "wslz100", "name": "alice", "ham_callsign": "k1abc"},
+            {"callsign": "K1ABC", "name": "ALICE"},
+        ]
+        result = deduplicate_ham_cross_references(rows)
+        assert len(result) == 1
+        assert result[0]["callsign"] == "wslz100"
+
+    def test_drops_only_when_names_match(self):
+        # Different operator names — same callsigns — not a dedup target;
+        # this is a "same family-shared HAM call, different operators"
+        # scenario which is rare but should be left to the operator.
+        rows = [
+            {"callsign": "WSLZ100", "name": "Alice", "ham_callsign": "K1ABC"},
+            {"callsign": "K1ABC", "name": "Bob"},
+        ]
+        result = deduplicate_ham_cross_references(rows)
+        assert len(result) == 2
+
+    def test_skips_rows_with_blank_names(self):
+        # Blank-name rows can't be unambiguously matched — keep them.
+        rows = [
+            {"callsign": "WSLZ100", "name": "", "ham_callsign": "K1ABC"},
+            {"callsign": "K1ABC", "name": ""},
+        ]
+        result = deduplicate_ham_cross_references(rows)
+        assert len(result) == 2
+
+    def test_preserves_order_of_survivors(self):
+        rows = [
+            {"callsign": "WSLZ100", "name": "Alice", "ham_callsign": "K1ABC"},
+            {"callsign": "KAE1234", "name": "Bob"},
+            {"callsign": "K1ABC", "name": "Alice"},
+            {"callsign": "KCB777", "name": "Carol"},
+        ]
+        result = deduplicate_ham_cross_references(rows)
+        assert [c["callsign"] for c in result] == ["WSLZ100", "KAE1234", "KCB777"]
+
+    def test_does_not_drop_canonical_when_self_ham_matches_self_call(self):
+        # Edge: a row that lists itself as its own ham_callsign (rare, but
+        # possible from a hand-edited contacts.json) shouldn't qualify as
+        # a canonical owner — it's an oddly-shaped singleton, not a
+        # duplicate trigger.
+        rows = [{"callsign": "K1ABC", "name": "Alice", "ham_callsign": "K1ABC"}]
+        result = deduplicate_ham_cross_references(rows)
+        assert result == rows
 
 
 class TestIndexContactsByCallsign:

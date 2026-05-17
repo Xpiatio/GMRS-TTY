@@ -74,6 +74,67 @@ def format_callsign_tooltip(callsign, contacts):
     return "\n".join(lines)
 
 
+def deduplicate_ham_cross_references(contacts):
+    """Drop HAM-side duplicates of an existing GMRS-primary contact row.
+
+    Detects the case where the same operator is recorded twice — once
+    with their GMRS call as the primary (and HAM listed in
+    ``ham_callsign``) and again as a standalone row with their HAM call
+    as the primary. The FCC verification + auto-add flows can produce
+    this naturally: the GMRS-primary row earns a HAM cross-reference,
+    then the operator is heard giving their HAM call and a separate
+    pending-pill "+ Add" creates the second row.
+
+    A row ``B`` is treated as a duplicate of row ``A`` when:
+      * ``A`` and ``B`` have the same operator name (case-insensitive,
+        trimmed), and
+      * ``A.ham_callsign`` equals ``B.callsign`` (case-insensitive), and
+      * ``A.ham_callsign`` is *not* ``A.callsign`` (so ``A`` is the
+        GMRS-primary record, not itself a HAM-primary duplicate).
+
+    Family-shared GMRS callsigns are preserved — rows that share a
+    primary callsign but differ in operator name don't match each
+    other's HAM cross-references and are left in place. Rows with a
+    blank name or blank ham field can't be unambiguously matched and
+    are also left in place.
+
+    Returns a new list with the duplicates removed, preserving the
+    relative order of the survivors.
+    """
+    if not contacts:
+        return list(contacts or [])
+
+    def _norm(value):
+        return (value or "").strip().upper()
+
+    # (operator name, HAM callsign) → first row that owns this cross-reference
+    # as a GMRS-primary record. Subsequent rows whose primary callsign matches
+    # this HAM under the same name are duplicates.
+    canonical_owners = {}
+    for c in contacts:
+        name = _norm(c.get("name"))
+        primary = _norm(c.get("callsign"))
+        ham = _norm(c.get("ham_callsign"))
+        if not name or not ham:
+            continue
+        if primary == ham:
+            # The row's primary is itself the HAM call — it's a duplicate
+            # candidate, not the canonical GMRS-primary record.
+            continue
+        canonical_owners.setdefault((name, ham), c)
+
+    survivors = []
+    for c in contacts:
+        name = _norm(c.get("name"))
+        primary = _norm(c.get("callsign"))
+        if name and primary:
+            owner = canonical_owners.get((name, primary))
+            if owner is not None and owner is not c:
+                continue
+        survivors.append(c)
+    return survivors
+
+
 def sort_contacts(contacts):
     """Return `contacts` sorted alphabetically by callsign (case-insensitive),
     with the special 'ALL' open-call entry pinned at index 0 and ties broken
