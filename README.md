@@ -245,6 +245,7 @@ Tracked in [implementation_plan.md](implementation_plan.md):
 11. ⏳ AI-summarized session journal (on-device summaries via `ollama` + Gemma 3n E2B, with a date-stamped history viewer)
 12. ✅ Quick / common messages (one-click preset phrases like "Radio check", "Standing by", "QSY to channel {N}", editable per-user)
 13. ⏳ Parallel LoRa-mesh transmit (Meshtastic / Meshcore / other LoRa/Halo devices over USB or Bluetooth, fanned out alongside the GMRS voice TX)
+14. ⏳ Rolling audio spectrometer (live RX waterfall — visual cue for signal activity, formants, squelch breaks, and band interference for the deaf/HoH operator)
 
 ## Contributing
 
