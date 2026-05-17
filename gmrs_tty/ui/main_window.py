@@ -82,6 +82,10 @@ class MainWindow(QMainWindow):
         self._open_rx_text = ""
         self.pending_buttons = {}  # callsign -> QPushButton
         self._pending_row_height = None  # cached pill row height for scroll cap
+        # In-flight FCC auto-add lookups, keyed by callsign. A second detection
+        # of the same callsign mid-lookup is suppressed so we don't hammer the
+        # API with duplicate requests for one operator who keys up twice.
+        self._callsign_lookups = {}
         self.ptt = make_ptt(self.config)
 
         self.init_ui()
@@ -113,6 +117,19 @@ class MainWindow(QMainWindow):
             if thread is not None and thread.isRunning():
                 thread.quit()
                 thread.wait()
+        # FCC auto-add lookups sit on a 5s HTTP timeout; disconnect their
+        # signals so a late result can't touch a torn-down window, then give
+        # each thread a brief window to exit cleanly before the process tears
+        # down. They emit nothing further once disconnected so leaking the
+        # native thread is harmless.
+        for cs, worker in list(self._callsign_lookups.items()):
+            try:
+                worker.result_ready.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            if worker.isRunning():
+                worker.wait(100)
+        self._callsign_lookups.clear()
         try:
             self.ptt.close()
         except Exception:
@@ -1089,11 +1106,74 @@ class MainWindow(QMainWindow):
         my_call = self.config.get("callsign", "").upper()
         known = known_callsigns(self.contacts)
         detected = detect_callsigns(text)
+        # Online state is cached for ~60s so this is cheap; capture once per
+        # scan so a single utterance picks a consistent verdict for every
+        # callsign it surfaces.
+        online = is_online()
         for cs in detected:
             if cs == my_call or cs in known or cs in self.pending_buttons:
                 continue
             name, location = extract_name_location(text, cs)
             self.add_pending_station(cs, name, location)
+            # Only attempt auto-add when we have a transcript-derived first
+            # name to verify against — without one, the FCC name comparison
+            # in `verify_callsign` will short-circuit to a callsign_only
+            # status that we'd never auto-add anyway.
+            if online and name and cs not in self._callsign_lookups:
+                self._start_callsign_lookup(cs, name, location)
+
+    def _start_callsign_lookup(self, callsign, name, location):
+        """Kick off a background FCC lookup that can auto-add the station if
+        the licensee name matches the transcript-derived name. Imported here
+        (rather than at module load) so MainWindow's import-time graph stays
+        free of the FCC stack for users who never enable Listen."""
+        from gmrs_tty.fcc.auto_add import CallsignLookupWorker
+        worker = CallsignLookupWorker(callsign, name, location, parent=self)
+        worker.result_ready.connect(self._on_callsign_lookup_result)
+        worker.finished.connect(lambda cs=callsign: self._cleanup_callsign_lookup(cs))
+        self._callsign_lookups[callsign] = worker
+        worker.start()
+
+    def _cleanup_callsign_lookup(self, callsign):
+        worker = self._callsign_lookups.pop(callsign, None)
+        if worker is not None:
+            worker.deleteLater()
+
+    def _on_callsign_lookup_result(self, callsign, name, location, result):
+        """Handle the FCC lookup result on the UI thread.
+
+        ``verified`` means the FCC licensee name matched the transcript name,
+        so we auto-add the contact with full GMRS / HAM cross-references and
+        retire the pending pill. Any other status leaves the pill in place
+        for manual review — a name mismatch is the family-member case where
+        the operator still deserves a contact entry but not the licensee's
+        cross-references.
+        """
+        if result.status != "verified":
+            return
+        if callsign in known_callsigns(self.contacts):
+            # Lookup raced with a manual add; honor the user's edit.
+            self._remove_pending_pill(callsign)
+            return
+        if callsign not in self.pending_buttons:
+            # User dismissed the pill while the lookup was in flight — respect
+            # the dismissal rather than silently adding the contact anyway.
+            return
+        from gmrs_tty.fcc.crossref import apply_verification
+        contact = {"callsign": callsign, "name": name, "location": location}
+        now_iso = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        contact = apply_verification(contact, result, now_iso=now_iso)
+        self.contacts.append(contact)
+        self.contacts = sort_contacts(self.contacts)
+        save_json(CONTACTS_FILE, self.contacts)
+        self.populate_target_dropdown()
+        self._refresh_callsign_index()
+        self._remove_pending_pill(callsign)
+        op_name = (contact.get("name") or "").strip() or "(no name)"
+        self.append_to_chat(
+            f"<i>Auto-added contact: {callsign} ({op_name})</i>",
+            color=COLOR_RX,
+        )
 
     def add_pending_station(self, callsign, name, location):
         btn = QPushButton(f"+ Add {callsign}", self)
