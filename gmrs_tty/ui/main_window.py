@@ -93,6 +93,20 @@ class MainWindow(QMainWindow):
 
         self.voice_cache = {}
         self.stt_worker = None
+        # Listen-only / RX-only safety toggle. When True, every TX path
+        # (Transmit button, "This is" ID, Enter on message-input,
+        # quick-message presets, Ctrl+Return / Ctrl+I / Alt+1..9 shortcuts)
+        # is short-circuited at the `_transmit_text` / `transmit_id_only`
+        # entry points so a stray keystroke or hotkey can't push audio
+        # on-air. Persists across launches via config["listen_only"].
+        self.listen_only = bool(self.config.get("listen_only", False))
+        # Tracks an in-flight TX so `_refresh_tx_enabled` can disable the
+        # buttons during synthesis without losing track of the listen-only
+        # gate underneath.
+        self._tx_busy = False
+        # Quick-message preset buttons; rebuilt by populate_quick_messages_strip.
+        # Held on self so the listen-only refresh can flip their enabled state.
+        self._quick_message_buttons = []
         # Reused across Listen toggles so we don't pay the ~1–3s Whisper
         # load on every restart. Invalidated when whisper_model changes.
         self._stt_whisper = None
@@ -432,6 +446,28 @@ class MainWindow(QMainWindow):
         )
         self.listen_btn.toggled.connect(self.toggle_listening)
         listen_strip.addWidget(self.listen_btn)
+
+        # Listen-only safety toggle: when checked, every TX path is blocked.
+        # Sits adjacent to Listen because it modifies Listen's contract
+        # (microphone in, nothing out). The mnemonic 'o' avoids a clash
+        # with the Listen button's 'L'.
+        self.listen_only_btn = QPushButton("Listen &only", wrapper)
+        self.listen_only_btn.setCheckable(True)
+        self.listen_only_btn.setChecked(self.listen_only)
+        self.listen_only_btn.setToolTip(
+            "Block all transmissions (Alt+O). Microphone capture, "
+            "transcription, and chat keep working — Transmit, This is, "
+            "quick-message presets, and Enter-to-send are all disabled."
+        )
+        self.listen_only_btn.setAccessibleName("Listen only toggle")
+        self.listen_only_btn.setAccessibleDescription(
+            "Block all outgoing transmissions while still receiving. "
+            "Currently off." if not self.listen_only else
+            "Block all outgoing transmissions while still receiving. "
+            "Currently on."
+        )
+        self.listen_only_btn.toggled.connect(self._on_listen_only_toggled)
+        listen_strip.addWidget(self.listen_only_btn)
 
         self.audio_level_meter = QProgressBar(wrapper)
         self.audio_level_meter.setRange(0, 100)
@@ -1187,6 +1223,12 @@ class MainWindow(QMainWindow):
         # callsign highlighting on existing and future lines.
         self._refresh_callsign_index()
 
+        # The id_btn enabled state is owned jointly by service mode (FRS
+        # has no ID rule) and listen-only (no TX). Reconcile them through
+        # the single _refresh_tx_enabled path so the two gates can't drift.
+        if hasattr(self, "transmit_btn"):
+            self._refresh_tx_enabled()
+
     def populate_target_dropdown(self):
         """Fills the target selection combo box with current contacts.
 
@@ -1290,6 +1332,7 @@ class MainWindow(QMainWindow):
             if w is not None:
                 w.setParent(None)
                 w.deleteLater()
+        self._quick_message_buttons = []
 
         presets = self._quick_messages()
         for index, phrase in enumerate(presets):
@@ -1313,6 +1356,12 @@ class MainWindow(QMainWindow):
                 lambda _checked=False, p=phrase: self._send_preset_phrase(p)
             )
             self.quick_messages_flow.addWidget(btn)
+            self._quick_message_buttons.append(btn)
+
+        # Listen-only must reach the freshly-created buttons; existing
+        # state would otherwise only be applied on the *next* tx-state
+        # refresh, leaving newly-rebuilt presets clickable in RX-only mode.
+        self._refresh_tx_enabled()
 
         self.quick_messages_widget.setVisible(bool(presets))
         # Hide the whole dock chrome when the operator has no saved
@@ -1332,7 +1381,17 @@ class MainWindow(QMainWindow):
     def _send_preset_phrase(self, phrase):
         """Resolve any `{Name}` placeholders via inline prompts and hand the
         result to the shared TX pipeline. Cancel on any prompt aborts the
-        transmission so a half-filled placeholder never goes on-air."""
+        transmission so a half-filled placeholder never goes on-air.
+
+        Short-circuits in listen-only mode so the operator doesn't waste a
+        placeholder prompt on a preset that `_transmit_text` would refuse
+        anyway. ``_transmit_text`` still re-checks the flag as a last line
+        of defense."""
+        if self.listen_only:
+            self.statusBar().showMessage(
+                "Listen-only mode is on — transmission blocked", 4000
+            )
+            return
         placeholders = find_placeholders(phrase)
         values = {}
         for name in placeholders:
@@ -1364,7 +1423,16 @@ class MainWindow(QMainWindow):
         In FRS mode every callsign-shaped step is bypassed: no target preface,
         no station ID, and the chat label drops the 'to <CALL>' segment
         because there is no callsign to address.
+
+        Listen-only short-circuits before any framing or synthesis so a
+        bound shortcut (Ctrl+Return, Alt+1..9) can't push a transmission
+        through behind a disabled button.
         """
+        if self.listen_only:
+            self.statusBar().showMessage(
+                "Listen-only mode is on — transmission blocked", 4000
+            )
+            return False
         service = self._service_mode()
         if service == SERVICE_FRS:
             # FRS: callsigns don't exist, so we never preface, never reset
@@ -1415,6 +1483,13 @@ class MainWindow(QMainWindow):
 
     def transmit_id_only(self):
         """Transmit a standalone ID: 'This is [call], [NATO phonetic call]. [name] from [location]'."""
+        if self.listen_only:
+            # Same defense-in-depth as the FRS guard below — the Ctrl+I
+            # hotkey is window-level and fires regardless of button state.
+            self.statusBar().showMessage(
+                "Listen-only mode is on — transmission blocked", 4000
+            )
+            return
         if self._service_mode() == SERVICE_FRS:
             # FRS has no ID rule. The button is disabled, but the Ctrl+I /
             # Alt+I shortcuts are also bound at window level — guard here so
@@ -1433,8 +1508,45 @@ class MainWindow(QMainWindow):
         self._synthesize_and_play(spell_digits_in_callsigns(spoken_text))
 
     def _set_tx_buttons_enabled(self, enabled):
-        self.transmit_btn.setEnabled(enabled)
-        self.id_btn.setEnabled(enabled)
+        """Track the TX-busy state and re-evaluate the effective button-enabled
+        state. Synthesis still owns the busy flag; the listen-only toggle
+        applies on top so a "TX done" event can't re-enable Transmit while
+        the operator has chosen RX-only mode."""
+        self._tx_busy = not enabled
+        self._refresh_tx_enabled()
+
+    def _refresh_tx_enabled(self):
+        """Single source of truth for whether the TX surfaces are clickable.
+        Disabled when (a) listen-only is on, or (b) a transmission is mid-
+        synthesis/playback. The "This is" button additionally requires GMRS
+        (FRS has no station-ID rule). Quick-message preset buttons mirror
+        the same gate so they grey out in sync."""
+        is_frs = self._service_mode() == SERVICE_FRS
+        tx_enabled = not self.listen_only and not self._tx_busy
+        self.transmit_btn.setEnabled(tx_enabled)
+        self.id_btn.setEnabled(tx_enabled and not is_frs)
+        for btn in self._quick_message_buttons:
+            btn.setEnabled(tx_enabled)
+
+    def _on_listen_only_toggled(self, checked):
+        """Persist the listen-only flag and refresh every TX surface."""
+        self.listen_only = bool(checked)
+        self.config["listen_only"] = self.listen_only
+        try:
+            save_json(CONFIG_FILE, self.config)
+        except Exception:
+            # A persistence failure must not block the safety toggle from
+            # taking effect — runtime state already updated above.
+            pass
+        self.listen_only_btn.setAccessibleDescription(
+            "Block all outgoing transmissions while still receiving. "
+            f"Currently {'on' if self.listen_only else 'off'}."
+        )
+        self._refresh_tx_enabled()
+        if self.listen_only:
+            self.statusBar().showMessage("Listen-only mode: transmissions blocked", 4000)
+        else:
+            self.statusBar().showMessage("Listen-only mode off: transmissions enabled", 4000)
 
     def _synthesize_and_play(self, tts_text):
         """Kick off Piper synthesis on a background thread and hand the result
