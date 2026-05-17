@@ -21,6 +21,7 @@ from gmrs_tty.constants import (
 from gmrs_tty.fcc.id_rule import format_outgoing_message, format_standalone_id
 from gmrs_tty.net.online import is_online
 from gmrs_tty.persistence.contacts import (
+    deduplicate_ham_cross_references,
     index_contacts_by_callsign,
     known_callsigns,
     sort_contacts,
@@ -40,6 +41,7 @@ from gmrs_tty.text.shorthand import expand_tty_abbreviations
 from gmrs_tty.tts.synthesizer import TTSSynthesisThread
 from gmrs_tty.ui import theme
 from gmrs_tty.ui import dock_layout
+from gmrs_tty.ui.attendance_panel import AttendancePanel
 from gmrs_tty.ui.chat_display import ChatDisplay
 from gmrs_tty.ui.config_dialog import ConfigDialog
 from gmrs_tty.ui.contacts_dialog import AddContactDialog, ContactsDialog
@@ -84,7 +86,9 @@ class MainWindow(QMainWindow):
 
         # State Initialization
         self.config = load_json(CONFIG_FILE, {"callsign": "N0CALL", "name": "Default", "location": "Unknown"})
-        self.contacts = sort_contacts(load_json(CONTACTS_FILE, [{"callsign": "All", "name": "Everyone"}]))
+        self.contacts = sort_contacts(deduplicate_ham_cross_references(
+            load_json(CONTACTS_FILE, [{"callsign": "All", "name": "Everyone"}])
+        ))
         self.last_tx_time = None
 
         self.voice_cache = {}
@@ -117,6 +121,20 @@ class MainWindow(QMainWindow):
         self.spectro_settings = SpectroSettings.from_config(self.config)
         self.spectro_widget = None
         self.spectro_worker = None
+        # Attendance grid: feature flag persists at ``attendance.enabled``
+        # (default off) so the panel + RX-side recording are both opt-in.
+        # The dock itself is always *built* — we just hide it and skip the
+        # record() calls when disabled, so flipping the flag at runtime is
+        # cheap and doesn't require a layout rebuild.
+        self.attendance_enabled = bool(
+            (self.config.get("attendance") or {}).get("enabled", False)
+        )
+        self.attendance_panel = None
+        # Set True while we programmatically toggle dock visibility so the
+        # dock's visibilityChanged signal doesn't mistake our own hide
+        # (FRS-mode, layout reset, restore-from-saved) for a user click on
+        # the title-bar X.
+        self._suppress_attendance_visibility = False
 
         # Apply persisted theme before init_ui so the header label, pending
         # pills, and chat-display all paint in the right palette on the
@@ -141,6 +159,13 @@ class MainWindow(QMainWindow):
         # "waterfall hidden" doesn't override a user who just enabled it.
         self.spectro_widget.setVisible(self.spectro_settings.enabled)
         self.waterfall_dock.setVisible(self.spectro_settings.enabled)
+        # Attendance dock follows ``attendance.enabled`` for the same
+        # reason: a saved layout from before the feature was enabled
+        # shouldn't override the operator's later opt-in.
+        self._set_attendance_dock_visible(self.attendance_enabled)
+        # Seed the panel with the current contacts so any callsign
+        # subsequently recorded resolves immediately.
+        self.attendance_panel.refresh(self.contacts)
         self._sync_service_radios()
         self.update_header()
         self.populate_target_dropdown()
@@ -216,6 +241,7 @@ class MainWindow(QMainWindow):
         self._build_central_widget()
         self._build_station_dock()
         self._build_waterfall_dock()
+        self._build_attendance_dock()
         self._build_pending_dock()
         self._build_quick_messages_dock()
         self._build_transmit_dock()
@@ -510,6 +536,30 @@ class MainWindow(QMainWindow):
         dock.visibilityChanged.connect(self._on_waterfall_dock_visibility_changed)
         self.waterfall_dock = dock
 
+    def _build_attendance_dock(self):
+        """Listening-session attendance dock: a Callsign / Name / Location /
+        GMRS / HAM table populated from RX detections during a Listen
+        session. Visibility tracks ``attendance.enabled`` so the feature
+        is fully opt-in — when disabled the panel exists but is hidden
+        and never receives ``record`` calls."""
+        self.attendance_panel = AttendancePanel(self)
+
+        dock = QDockWidget("Attendance", self)
+        dock.setObjectName(dock_layout.DOCK_ATTENDANCE)
+        dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            | QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
+        dock.setWidget(self.attendance_panel)
+        dock.setTitleBarWidget(CompactTitleBar(dock))
+        dock_layout.install_dock_context_menu(self, dock)
+        # Closing the dock from its title-bar X mirrors the View-menu
+        # toggle: turn the feature off entirely so we don't keep
+        # recording into a hidden grid.
+        dock.visibilityChanged.connect(self._on_attendance_dock_visibility_changed)
+        self.attendance_dock = dock
+
     def _build_pending_dock(self):
         """Pending-stations dock: scrollable wrap of detection pills + a
         ``Dismiss all`` button. Empty by default — the dock itself stays
@@ -755,11 +805,15 @@ class MainWindow(QMainWindow):
 
     def _reset_layout_to_default(self):
         """View-menu / Ctrl+Shift+0 entry point: rebuild the documented
-        default arrangement, then re-apply spectrometer visibility so the
-        operator's last waterfall choice survives the reset."""
+        default arrangement, then re-apply spectrometer + attendance
+        visibility so the operator's last per-feature choice survives the
+        reset."""
         dock_layout.build_default_layout(self)
         self.waterfall_dock.setVisible(self.spectro_settings.enabled)
         self.spectro_widget.setVisible(self.spectro_settings.enabled)
+        self._set_attendance_dock_visible(
+            self.attendance_enabled and self._service_mode() != SERVICE_FRS
+        )
 
     def _on_waterfall_dock_visibility_changed(self, visible):
         """A close-button click on the waterfall dock has to also stop
@@ -834,6 +888,20 @@ class MainWindow(QMainWindow):
         )
         self._spectro_toggle_action.triggered.connect(self._on_spectro_toggle)
         view_menu.addAction(self._spectro_toggle_action)
+
+        # Attendance toggle. Same on/off semantic as the Configuration
+        # dialog's "Track listening-session attendance" checkbox — both
+        # write ``attendance.enabled`` in config.json, so the menu state,
+        # the Config dialog, and the dock visibility never diverge.
+        self._attendance_toggle_action = QAction("Show a&ttendance", self)
+        self._attendance_toggle_action.setCheckable(True)
+        self._attendance_toggle_action.setChecked(self.attendance_enabled)
+        self._attendance_toggle_action.setShortcut(QKeySequence("Ctrl+Shift+A"))
+        self._attendance_toggle_action.setStatusTip(
+            "Toggle the listening-session attendance grid. Disabled in FRS mode."
+        )
+        self._attendance_toggle_action.triggered.connect(self._on_attendance_toggle)
+        view_menu.addAction(self._attendance_toggle_action)
 
         view_menu.addSeparator()
 
@@ -1094,6 +1162,27 @@ class MainWindow(QMainWindow):
             else:
                 self.contacts_icon_btn.setToolTip("Contacts (Ctrl+B)")
 
+        # Attendance grid is GMRS-only (FRS has no callsigns to attend).
+        # Disable the View toggle and hide the dock in FRS; restore them
+        # to the operator's config-flagged choice when GMRS is active.
+        if hasattr(self, "_attendance_toggle_action"):
+            self._attendance_toggle_action.setEnabled(not is_frs)
+            if is_frs:
+                self._attendance_toggle_action.setStatusTip(
+                    "Attendance is GMRS-only — switch to GMRS to enable."
+                )
+            else:
+                self._attendance_toggle_action.setStatusTip(
+                    "Toggle the listening-session attendance grid."
+                )
+        if hasattr(self, "attendance_dock"):
+            if is_frs:
+                self._set_attendance_dock_visible(False)
+                if self.attendance_panel is not None:
+                    self.attendance_panel.clear()
+            else:
+                self._set_attendance_dock_visible(self.attendance_enabled)
+
         # Chat-display pill highlighting: clearing the index suppresses all
         # callsign highlighting on existing and future lines.
         self._refresh_callsign_index()
@@ -1133,9 +1222,19 @@ class MainWindow(QMainWindow):
                 self.config.get("ptt_serial_line", "RTS"),
             )
             old_fuzzy = bool(self.config.get("fuzzy_callsign", False))
+            old_attendance = self.attendance_enabled
             self.config = dlg.get_config()
             save_json(CONFIG_FILE, self.config)
             self.update_header()
+            new_attendance = bool(
+                (self.config.get("attendance") or {}).get("enabled", False)
+            )
+            if old_attendance != new_attendance:
+                # Push the new state through the same toggle path the View
+                # menu uses so the action's checkbox, the dock visibility,
+                # and ``self.attendance_enabled`` stay in sync.
+                self._attendance_toggle_action.setChecked(new_attendance)
+                self._on_attendance_toggle(new_attendance)
             if old_fuzzy != bool(self.config.get("fuzzy_callsign", False)):
                 # Push the new toggle state to the chat widget and rescan
                 # existing lines so the operator sees the effect immediately
@@ -1164,7 +1263,7 @@ class MainWindow(QMainWindow):
     def open_contacts_dialog(self):
         dlg = ContactsDialog(self.contacts, parent=self)
         if dlg.exec():
-            self.contacts = sort_contacts(dlg.get_contacts())
+            self.contacts = sort_contacts(deduplicate_ham_cross_references(dlg.get_contacts()))
             save_json(CONTACTS_FILE, self.contacts)
             self.populate_target_dropdown()
             self._refresh_callsign_index()
@@ -1417,6 +1516,57 @@ class MainWindow(QMainWindow):
         self.config["spectrometer"] = self.spectro_settings.to_config()
         save_json(CONFIG_FILE, self.config)
 
+    def _on_attendance_toggle(self, checked):
+        """Apply the new attendance enabled state. Persists to config so the
+        next launch comes up the same way, flips dock visibility, and resets
+        the menu / dock-visibility pair to a single source of truth.
+
+        Disabling the feature mid-session deliberately *keeps* the existing
+        rows in memory — the operator may re-enable shortly and want to
+        keep their roll-call. The next ``start_stt`` (or a manual Clear)
+        is the only path that wipes the rows."""
+        new_state = bool(checked)
+        if self._service_mode() == SERVICE_FRS and new_state:
+            # FRS has no callsigns to attend, so the action should be
+            # disabled in that mode (see _apply_service_mode). This guard
+            # keeps a stray hotkey from re-enabling mid-FRS.
+            self._attendance_toggle_action.setChecked(False)
+            return
+        self.attendance_enabled = new_state
+        self.config["attendance"] = {"enabled": new_state}
+        save_json(CONFIG_FILE, self.config)
+        self._set_attendance_dock_visible(new_state)
+
+    def _on_attendance_dock_visibility_changed(self, visible):
+        """Title-bar X on the attendance dock turns the feature off so we
+        don't keep recording into a hidden grid. Routes through
+        ``_on_attendance_toggle`` so the menu checkbox + persistence path
+        stay the single source of truth.
+
+        ``_suppress_attendance_visibility`` is set whenever we change dock
+        visibility programmatically (FRS-mode hide, layout reset, restore
+        from saved state) so this handler only reacts to genuine user
+        clicks on the title-bar X."""
+        if not hasattr(self, "_attendance_toggle_action"):
+            return  # menu not built yet (init order race)
+        if self._suppress_attendance_visibility:
+            return
+        if visible == self.attendance_enabled:
+            return
+        self._attendance_toggle_action.setChecked(visible)
+        self._on_attendance_toggle(visible)
+
+    def _set_attendance_dock_visible(self, visible):
+        """Toggle the attendance dock without firing the user-click path.
+        Use this from every programmatic visibility write (init, layout
+        reset, FRS-apply) so ``_on_attendance_dock_visibility_changed``
+        stays purely a user-input handler."""
+        self._suppress_attendance_visibility = True
+        try:
+            self.attendance_dock.setVisible(bool(visible))
+        finally:
+            self._suppress_attendance_visibility = False
+
     def _on_spectro_toggle(self, checked):
         self.spectro_settings.enabled = bool(checked)
         if self.spectro_widget is not None:
@@ -1564,7 +1714,11 @@ class MainWindow(QMainWindow):
         """Recompute the known-callsign lookup and push it to the chat widget.
         Past chat lines are re-scanned so newly-added contacts get retroactive
         pill highlighting. In FRS mode the index is forced empty — there are
-        no callsigns in FRS, so highlighting them would be misleading."""
+        no callsigns in FRS, so highlighting them would be misleading.
+
+        The attendance grid is refreshed in lockstep so a callsign that was
+        unknown when first heard fills in its Name / Location / GMRS / HAM
+        the moment it's saved to contacts."""
         if self._service_mode() == SERVICE_FRS:
             index = {}
         else:
@@ -1579,6 +1733,8 @@ class MainWindow(QMainWindow):
             and bool(self.config.get("fuzzy_callsign", False))
         )
         self.chat_display.rescan_all_blocks()
+        if self.attendance_panel is not None:
+            self.attendance_panel.refresh(self.contacts)
 
     def toggle_listening(self, on):
         if on:
@@ -1589,6 +1745,12 @@ class MainWindow(QMainWindow):
     def start_stt(self):
         if self.stt_worker and self.stt_worker.isRunning():
             return
+        # Each new Listen session starts a fresh roll-call. We clear *here*
+        # (rather than on stop) so the operator can review the previous
+        # session's attendance after toggling Listen off — the grid only
+        # resets when they re-engage.
+        if self.attendance_panel is not None:
+            self.attendance_panel.clear()
         desired_model = self.config.get("whisper_model", "small.en")
         if desired_model != self._stt_whisper_model_name:
             self._stt_whisper = None
@@ -1722,6 +1884,20 @@ class MainWindow(QMainWindow):
         online = is_online()
         fuzzy_on = bool(self.config.get("fuzzy_callsign", False))
         for cs in detected:
+            # Attendance recording runs *before* the unknown/known split so
+            # the grid logs every detected station regardless of whether
+            # the operator already has them saved. Fuzzy-rewrite the
+            # callsign to its canonical form so the grid row joins cleanly
+            # against contacts. Skip own-call and the FRS-already-returned
+            # case (early return above).
+            canonical = cs
+            if fuzzy_on:
+                match = fuzzy_match_callsign(cs, known)
+                if match:
+                    canonical = match
+            if self.attendance_enabled and self.attendance_panel is not None and canonical != my_call:
+                self.attendance_panel.record(canonical)
+
             if cs == my_call or cs in known or cs in self.pending_buttons:
                 continue
             # With fuzzy logic on, an off-by-one detection is treated as a
@@ -1782,7 +1958,7 @@ class MainWindow(QMainWindow):
         now_iso = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         contact = apply_verification(contact, result, now_iso=now_iso)
         self.contacts.append(contact)
-        self.contacts = sort_contacts(self.contacts)
+        self.contacts = sort_contacts(deduplicate_ham_cross_references(self.contacts))
         save_json(CONTACTS_FILE, self.contacts)
         self.populate_target_dropdown()
         self._refresh_callsign_index()
@@ -1891,7 +2067,7 @@ class MainWindow(QMainWindow):
                     break
             else:
                 self.contacts.append(contact)
-            self.contacts = sort_contacts(self.contacts)
+            self.contacts = sort_contacts(deduplicate_ham_cross_references(self.contacts))
             save_json(CONTACTS_FILE, self.contacts)
             self.populate_target_dropdown()
             self._refresh_callsign_index()

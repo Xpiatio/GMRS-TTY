@@ -38,7 +38,10 @@ from PySide6.QtWidgets import (
 from gmrs_tty.ui import theme
 
 
-DEFAULT_LAYOUT_VERSION = 1
+# v2 adds the Attendance dock; v1 saved states would resurrect without
+# that panel and leave it floating off-screen, so we discard old layouts
+# rather than half-restoring into the wrong shape.
+DEFAULT_LAYOUT_VERSION = 2
 
 # Stable object names. Qt's saveState/restoreState matches docks by
 # objectName, so renaming any of these breaks state restoration — bump
@@ -48,6 +51,7 @@ DOCK_PENDING = "dock.pending"
 DOCK_QUICK = "dock.quick"
 DOCK_WATERFALL = "dock.waterfall"
 DOCK_TRANSMIT = "dock.transmit"
+DOCK_ATTENDANCE = "dock.attendance"
 TOOLBAR_SERVICE = "toolbar.service"
 
 # Iteration order used by the F6 focus-cycle and the View menu's "show
@@ -56,6 +60,7 @@ TOOLBAR_SERVICE = "toolbar.service"
 ALL_DOCK_NAMES = (
     DOCK_STATION,
     DOCK_WATERFALL,
+    DOCK_ATTENDANCE,
     DOCK_PENDING,
     DOCK_QUICK,
     DOCK_TRANSMIT,
@@ -235,6 +240,7 @@ def build_default_layout(window: QMainWindow) -> None:
 
     station = docks.get(DOCK_STATION)
     waterfall = docks.get(DOCK_WATERFALL)
+    attendance = docks.get(DOCK_ATTENDANCE)
     pending = docks.get(DOCK_PENDING)
     quick = docks.get(DOCK_QUICK)
     transmit = docks.get(DOCK_TRANSMIT)
@@ -261,6 +267,18 @@ def build_default_layout(window: QMainWindow) -> None:
         quick.show()
         if pending is not None:
             window.tabifyDockWidget(pending, quick)
+            pending.raise_()
+
+    # Attendance dock joins the bottom tab stack alongside Pending /
+    # Quick Messages so it shares vertical space with the other
+    # roll-call surfaces rather than crowding the chat. Visibility
+    # tracks ``attendance.enabled`` and the View → Show attendance
+    # toggle; MainWindow applies that after the layout settles.
+    if attendance is not None:
+        window.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, attendance)
+        attendance.setFloating(False)
+        if pending is not None:
+            window.tabifyDockWidget(pending, attendance)
             pending.raise_()
 
     if transmit is not None:
