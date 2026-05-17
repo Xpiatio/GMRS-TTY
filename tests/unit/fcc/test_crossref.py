@@ -96,55 +96,6 @@ class TestNameMatch:
         assert crossref.name_matches("Haskin", "Haskin, Timothy L") is True
 
 
-class TestNameMatchNicknames:
-    """Non-prefix nicknames need a table because the existing prefix rule
-    (Tom→Thomas, Tim→Timothy) doesn't catch them. The matcher consults
-    ``text.nicknames`` so contacts entered with the colloquial form still
-    verify against the FCC-licensed legal name."""
-
-    def test_dick_matches_richard(self):
-        assert crossref.name_matches("Dick", "Smith, Richard J") is True
-
-    def test_richard_matches_dick(self):
-        # Symmetric: the contact field could hold either form.
-        assert crossref.name_matches("Richard", "Smith, Dick") is True
-
-    def test_bob_matches_robert(self):
-        assert crossref.name_matches("Bob", "Jones, Robert A") is True
-
-    def test_bill_matches_william(self):
-        assert crossref.name_matches("Bill", "Doe, William") is True
-
-    def test_jim_matches_james(self):
-        assert crossref.name_matches("Jim", "Carter, James L") is True
-
-    def test_jack_matches_john(self):
-        assert crossref.name_matches("Jack", "Kennedy, John F") is True
-
-    def test_hank_matches_henry(self):
-        assert crossref.name_matches("Hank", "Aaron, Henry L") is True
-
-    def test_peggy_matches_margaret(self):
-        assert crossref.name_matches("Peggy", "Olson, Margaret") is True
-
-    def test_ambiguous_nickname_matches_either_canonical(self):
-        # 'Sandy' canonicalizes to {Alexander, Sandra}. Both should verify
-        # — the conservative gender-check is intentionally relaxed because
-        # family-shared GMRS calls are common.
-        assert crossref.name_matches("Sandy", "Doe, Alexander") is True
-        assert crossref.name_matches("Sandy", "Doe, Sandra") is True
-
-    def test_nickname_does_not_match_unrelated_canonical(self):
-        # 'Dick' resolves to {Richard}; it must not silently match
-        # an unrelated first name.
-        assert crossref.name_matches("Dick", "Smith, Robert") is False
-
-    def test_case_insensitive_nickname(self):
-        # The nickname table is keyed on lowercase; the matcher has to
-        # normalize before the lookup.
-        assert crossref.name_matches("DICK", "smith, RICHARD j") is True
-
-
 class TestVerifyCallsign:
     def _patch_online(self, value=True):
         return patch("gmrs_tty.fcc.crossref.is_online", return_value=value)

@@ -2,10 +2,11 @@ from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QTextEdit, QToolTip
 
-from gmrs_tty.constants import VERIFIED_GLYPH
+from gmrs_tty.constants import (
+    PILL_BG, PILL_BORDER, PILL_TEXT, VERIFIED_COLOR, VERIFIED_GLYPH,
+)
 from gmrs_tty.persistence.contacts import format_callsign_tooltip
 from gmrs_tty.text.callsigns import find_callsign_spans
-from gmrs_tty.ui import theme
 
 # Trailing glyph appended after a verified callsign. Leading space keeps the
 # checkmark visually detached from the pill's amber background so it reads
@@ -133,72 +134,23 @@ class ChatDisplay(QTextEdit):
         cursor = QTextCursor(self.document())
         cursor.setPosition(position)
         fmt = QTextCharFormat()
-        fmt.setForeground(QColor(theme.palette().verified))
+        fmt.setForeground(QColor(VERIFIED_COLOR))
         fmt.setFontWeight(QFont.Weight.Bold)
         fmt.setToolTip("FCC license verified for this callsign.")
         cursor.insertText(_VERIFIED_SUFFIX, fmt)
 
     def _pill_format(self, callsign):
-        p = theme.palette()
         fmt = QTextCharFormat()
-        fmt.setBackground(QColor(p.pill_bg))
-        fmt.setForeground(QColor(p.pill_text))
+        fmt.setBackground(QColor(PILL_BG))
+        fmt.setForeground(QColor(PILL_TEXT))
         fmt.setFontWeight(QFont.Weight.Bold)
         # A subtle bottom border via underline gives the rectangle some "pill"
         # affordance — QTextEdit's HTML subset rejects border-radius, so this
         # is the closest visual hint that the run is a distinct token.
         fmt.setFontUnderline(True)
-        fmt.setUnderlineColor(QColor(p.pill_border))
+        fmt.setUnderlineColor(QColor(PILL_BORDER))
         fmt.setToolTip(format_callsign_tooltip(callsign, self._callsign_index.get(callsign, [])))
         return fmt
-
-    def restyle_for_theme(self):
-        """Recolor already-rendered text spans to match the active theme.
-
-        The chat document bakes hex foreground colors into HTML spans at
-        append-time, so a theme flip doesn't touch existing RX / TX / WARN /
-        ERROR text. Walk every fragment, look up its foreground in a
-        light↔dark remap, and rewrite the format in place. Pill spans
-        (those with a non-transparent background) are skipped here because
-        ``rescan_all_blocks`` rebuilds them from the live ``palette()``.
-        """
-        if theme.is_dark():
-            remap = theme.color_remap_light_to_dark()
-        else:
-            remap = theme.color_remap_dark_to_light()
-        if not remap:
-            return
-        doc = self.document()
-        block = doc.firstBlock()
-        while block.isValid():
-            it = block.begin()
-            while not it.atEnd():
-                frag = it.fragment()
-                if frag.isValid():
-                    fmt = frag.charFormat()
-                    bg = fmt.background()
-                    # Pill spans set a real background brush — leave them to
-                    # rescan_all_blocks which knows the full pill format.
-                    if bg.style() != Qt.BrushStyle.NoBrush:
-                        it += 1
-                        continue
-                    cur_hex = fmt.foreground().color().name().lower()
-                    new_hex = remap.get(cur_hex)
-                    if new_hex is not None:
-                        cursor = QTextCursor(doc)
-                        cursor.setPosition(frag.position())
-                        cursor.setPosition(
-                            frag.position() + frag.length(),
-                            QTextCursor.MoveMode.KeepAnchor,
-                        )
-                        replacement = QTextCharFormat()
-                        replacement.setForeground(QColor(new_hex))
-                        cursor.mergeCharFormat(replacement)
-                it += 1
-            block = block.next()
-        # Pill backgrounds + verified glyph color follow the live palette,
-        # so a re-scan picks up the new values for every existing pill.
-        self.rescan_all_blocks()
 
     def event(self, ev):
         if ev.type() == QEvent.Type.ToolTip:
