@@ -232,6 +232,15 @@ def header_stylesheet() -> str:
     )
 
 
+def chat_display_stylesheet() -> str:
+    """Stylesheet for the ChatDisplay widget. Must include background-color
+    so Qt doesn't fall back to a transparent/default background when the
+    palette changes — once setStyleSheet has been called on a widget, the
+    QPalette Base role is no longer used for the background."""
+    p = palette()
+    return f"padding: {SPACING_S}px; background-color: {p.base_bg};"
+
+
 def pill_stylesheet() -> str:
     """Stylesheet for pending-station pill buttons. Same WCAG goals as the
     chat-display pill spans: ≥4.5:1 text-to-background, distinguishable
