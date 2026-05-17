@@ -13,6 +13,7 @@
     "ptt_serial_line": "RTS",
     "filter_profanity": true,
     "fuzzy_callsign": false,
+    "listen_only": false,
     "quick_messages": [
         "Radio check",
         "Loud and clear",
