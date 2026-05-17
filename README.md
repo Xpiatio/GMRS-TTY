@@ -8,6 +8,7 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
 
 ### Receive (Rx)
 - Live microphone capture with **Silero VAD** — only transcribes when a human is speaking; ignores static and kerchunks. VAD sensitivity is tunable in Configuration. After ~30 s of continuous silence the VAD is automatically re-baselined so detection stays responsive on long-quiet channels.
+- **Squelch-open pre-trigger** — a peak-amplitude edge detector starts buffering audio the moment a remote operator's carrier opens (well before voice arrives), so the leading syllables of a transmission survive Silero's onset latency and reach Whisper intact. If the carrier drops without VAD ever firing — i.e., a kerchunk, accidental key, or noise burst — the buffered audio is discarded so nothing reaches the chat. When VAD does fire, the full pre-voice buffer (capped at ~2 s) is prepended to the utterance before bandpass + denoise + transcription.
 - **Auto-pause during TX** — listening pauses automatically while the app is transmitting so your own TTS isn't transcribed back; resumes immediately after the unkey, with VAD state reset so no in-progress speech bleeds across the boundary.
 - **300–3000 Hz bandpass filter** applied per utterance — matches the narrowband-FM voice band, strips hum and out-of-band hiss before denoising.
 - **Noise reduction** (spectral gating) applied per utterance after bandpass and before transcription.
