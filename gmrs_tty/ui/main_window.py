@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from gmrs_tty.audio.playback import AudioPlayerThread
+from gmrs_tty.audio.spectro_worker import SpectrogramWorker
 from gmrs_tty.constants import (
     CONFIG_FILE, CONTACTS_FILE,
     SERVICE_FRS, SERVICE_GMRS, normalize_service,
@@ -38,6 +39,11 @@ from gmrs_tty.ui.config_dialog import ConfigDialog
 from gmrs_tty.ui.contacts_dialog import AddContactDialog, ContactsDialog
 from gmrs_tty.ui.flow_layout import FlowLayout
 from gmrs_tty.ui.quick_messages_dialog import QuickMessagesDialog
+from gmrs_tty.ui.spectro_colormap import AVAILABLE_COLORMAPS
+from gmrs_tty.ui.spectrogram_widget import (
+    AVAILABLE_FREQ_RANGES, FREQ_RANGE_FULL, FREQ_RANGE_VOICE,
+    SpectrogramWidget, SpectroSettings, TIME_WINDOWS_S,
+)
 
 PENDING_PILL_MAX_ROWS = 3
 QUICK_MESSAGE_SHORTCUT_COUNT = 9
@@ -92,6 +98,14 @@ class MainWindow(QMainWindow):
         # API with duplicate requests for one operator who keys up twice.
         self._callsign_lookups = {}
         self.ptt = make_ptt(self.config)
+        # Rolling-spectrometer state. Settings are read from config so the
+        # operator's last choice (enabled, colormap, range, window) persists
+        # across launches. The widget + FFT worker are created lazily in
+        # init_ui / start_spectrometer so the spectrometer never costs CPU
+        # until the operator actually turns it on.
+        self.spectro_settings = SpectroSettings.from_config(self.config)
+        self.spectro_widget = None
+        self.spectro_worker = None
 
         # Apply persisted theme before init_ui so the header label, pending
         # pills, and chat-display all paint in the right palette on the
@@ -124,7 +138,11 @@ class MainWindow(QMainWindow):
             )
 
     def closeEvent(self, event):
+        # stop_stt already runs _stop_spectro_worker, but call it directly
+        # too so a window close that races with start_stt mid-flight can't
+        # leave the FFT thread orphaned.
         self.stop_stt()
+        self._stop_spectro_worker()
         for attr in ('tts_thread', 'audio_thread'):
             thread = getattr(self, attr, None)
             if thread is not None and thread.isRunning():
@@ -337,6 +355,23 @@ class MainWindow(QMainWindow):
             "Known callsigns are highlighted; hover for the operator names linked to each one."
         )
         main_layout.addWidget(self.chat_display)
+
+        # 2a. Rolling RX spectrometer (waterfall). Sits below the chat so it
+        # reads as a *visual companion* to the transcript — high frequencies
+        # at the top, time scrolling right-to-left, latest column at the
+        # right edge. Hidden by default; toggled from the View menu and
+        # persisted as ``spectrometer.enabled`` in config.json. The widget
+        # also acts as the row-consumer for SpectrogramWorker so a slow
+        # paint can never back-pressure the FFT/STT pipeline.
+        self.spectro_widget = SpectrogramWidget(
+            sample_rate=STTWorker.SAMPLE_RATE,
+            frame_size=1024,
+            settings=self.spectro_settings,
+            parent=self,
+        )
+        self.spectro_widget.activity_text_changed.connect(self._on_spectro_activity)
+        self.spectro_widget.setVisible(self.spectro_settings.enabled)
+        main_layout.addWidget(self.spectro_widget)
 
         # 2b. Pending stations bar (populates when STT detects unknown callsigns).
         # Layout: [QScrollArea wrapping a FlowLayout of pills] [Dismiss all].
@@ -551,6 +586,67 @@ class MainWindow(QMainWindow):
         )
         clear_chat_action.triggered.connect(self.clear_chat)
         settings_menu.addAction(clear_chat_action)
+
+        # View Menu — Alt+V mnemonic. Houses the rolling RX spectrometer
+        # toggle plus its presentation options (color map, frequency range,
+        # time window). All actions persist their choice to config.json so
+        # the next launch comes up the same way the operator left it.
+        view_menu = menubar.addMenu("&View")
+
+        self._spectro_toggle_action = QAction("Show &waterfall", self)
+        self._spectro_toggle_action.setCheckable(True)
+        self._spectro_toggle_action.setChecked(self.spectro_settings.enabled)
+        self._spectro_toggle_action.setShortcut(QKeySequence("Ctrl+Shift+W"))
+        self._spectro_toggle_action.setStatusTip(
+            "Toggle the rolling RX spectrometer (waterfall) below the chat."
+        )
+        self._spectro_toggle_action.triggered.connect(self._on_spectro_toggle)
+        view_menu.addAction(self._spectro_toggle_action)
+
+        view_menu.addSeparator()
+
+        # Color map submenu — Viridis (perceptually uniform, colorblind-safe;
+        # default) or Grayscale (hue-free).
+        cmap_menu = view_menu.addMenu("&Color map")
+        self._spectro_cmap_actions = {}
+        for name in AVAILABLE_COLORMAPS:
+            act = QAction(name.capitalize(), self)
+            act.setCheckable(True)
+            act.setChecked(self.spectro_settings.colormap == name)
+            act.triggered.connect(
+                lambda _checked=False, n=name: self._set_spectro_colormap(n)
+            )
+            cmap_menu.addAction(act)
+            self._spectro_cmap_actions[name] = act
+
+        # Frequency-range submenu — voice band (300–3.4 kHz, narrowband-FM
+        # speech) or full Nyquist (diagnostics: splatter, intermod, carrier).
+        freq_menu = view_menu.addMenu("&Frequency range")
+        self._spectro_freq_actions = {}
+        freq_labels = {FREQ_RANGE_VOICE: "&Voice band (300–3400 Hz)",
+                       FREQ_RANGE_FULL: "&Full band (0–Nyquist)"}
+        for key in AVAILABLE_FREQ_RANGES:
+            act = QAction(freq_labels[key], self)
+            act.setCheckable(True)
+            act.setChecked(self.spectro_settings.freq_range == key)
+            act.triggered.connect(
+                lambda _checked=False, k=key: self._set_spectro_freq_range(k)
+            )
+            freq_menu.addAction(act)
+            self._spectro_freq_actions[key] = act
+
+        # Time-window submenu — visible history length.
+        win_menu = view_menu.addMenu("&Time window")
+        self._spectro_window_actions = {}
+        for sec in TIME_WINDOWS_S:
+            act = QAction(f"{sec} seconds", self)
+            act.setCheckable(True)
+            act.setChecked(self.spectro_settings.time_window_s == sec)
+            act.triggered.connect(
+                lambda _checked=False, s=sec: self._set_spectro_time_window(s)
+            )
+            win_menu.addAction(act)
+            self._spectro_window_actions[sec] = act
 
     def update_header(self):
         """Updates the top bar with current user info. In FRS mode the
@@ -1015,6 +1111,115 @@ class MainWindow(QMainWindow):
         self.append_to_chat(f"<i>TTS Error: {error_msg}</i>", color=theme.palette().error)
         self._set_tx_buttons_enabled(True)
 
+    # ----- Spectrometer wiring ----------------------------------------
+    def _persist_spectro_settings(self):
+        """Round-trip ``self.spectro_settings`` to config.json. Called by every
+        View-menu setter so the operator's preference survives the next launch."""
+        self.config["spectrometer"] = self.spectro_settings.to_config()
+        save_json(CONFIG_FILE, self.config)
+
+    def _on_spectro_toggle(self, checked):
+        self.spectro_settings.enabled = bool(checked)
+        if self.spectro_widget is not None:
+            self.spectro_widget.setVisible(self.spectro_settings.enabled)
+        if self.spectro_settings.enabled:
+            # Mirror the STT lifecycle: if listening is active when the
+            # operator turns the waterfall on, start the FFT worker too so
+            # rows appear immediately rather than waiting for a Listen
+            # toggle cycle.
+            if self.stt_worker is not None and self.stt_worker.isRunning():
+                self._start_spectro_worker()
+        else:
+            self._stop_spectro_worker()
+        self._persist_spectro_settings()
+
+    def _set_spectro_colormap(self, name):
+        if name not in AVAILABLE_COLORMAPS:
+            return
+        self.spectro_settings.colormap = name
+        for action_name, act in self._spectro_cmap_actions.items():
+            act.setChecked(action_name == name)
+        if self.spectro_widget is not None:
+            self.spectro_widget.apply_settings(self.spectro_settings)
+        self._persist_spectro_settings()
+
+    def _set_spectro_freq_range(self, key):
+        if key not in AVAILABLE_FREQ_RANGES:
+            return
+        self.spectro_settings.freq_range = key
+        for action_key, act in self._spectro_freq_actions.items():
+            act.setChecked(action_key == key)
+        if self.spectro_widget is not None:
+            self.spectro_widget.apply_settings(self.spectro_settings)
+        self._persist_spectro_settings()
+
+    def _set_spectro_time_window(self, seconds):
+        if seconds not in TIME_WINDOWS_S:
+            return
+        self.spectro_settings.time_window_s = int(seconds)
+        for action_sec, act in self._spectro_window_actions.items():
+            act.setChecked(action_sec == seconds)
+        if self.spectro_widget is not None:
+            self.spectro_widget.apply_settings(self.spectro_settings)
+        self._persist_spectro_settings()
+
+    def _start_spectro_worker(self):
+        """Spin up the FFT worker and wire it to the STT audio tap. Idempotent.
+
+        We connect via Qt's default (auto) connection so the cross-thread
+        slot delivery uses a queued connection — the STT capture loop never
+        blocks waiting for the spectrogram worker, and the worker's ring
+        buffer drops oldest samples first if it falls behind. That keeps
+        the "never starve VAD/STT" promise from the implementation plan.
+        """
+        if not self.spectro_settings.enabled:
+            return
+        if self.spectro_worker is not None and self.spectro_worker.isRunning():
+            return
+        self.spectro_worker = SpectrogramWorker(
+            sample_rate=STTWorker.SAMPLE_RATE,
+            frame_size=1024,
+            hop_size=512,
+            parent=self,
+        )
+        self.spectro_worker.row_ready.connect(self.spectro_widget.push_row)
+        if self.stt_worker is not None:
+            self.stt_worker.audio_chunk.connect(self.spectro_worker.push_chunk)
+            self.stt_worker.capture_event.connect(self.spectro_widget.mark_event)
+        self.spectro_worker.start()
+
+    def _stop_spectro_worker(self):
+        """Tear down the FFT worker, disconnecting the STT tap first so a
+        late-arriving chunk can't touch a halted ring."""
+        if self.stt_worker is not None:
+            try:
+                self.stt_worker.audio_chunk.disconnect(
+                    self.spectro_worker.push_chunk
+                )
+            except (TypeError, RuntimeError, AttributeError):
+                pass
+            try:
+                self.stt_worker.capture_event.disconnect(
+                    self.spectro_widget.mark_event
+                )
+            except (TypeError, RuntimeError, AttributeError):
+                pass
+        worker = self.spectro_worker
+        self.spectro_worker = None
+        if worker is not None:
+            worker.stop()
+            if worker.isRunning():
+                worker.wait(2000)
+            worker.deleteLater()
+
+    def _on_spectro_activity(self, text):
+        """Surface the spectrometer's per-row activity description in the
+        status bar so the same cue a screen reader hears is also visible to
+        sighted operators (and gives the widget a no-op-equivalent text
+        sink for unit tests)."""
+        if self.spectro_settings.enabled:
+            self.statusBar().showMessage(f"Waterfall: {text}", 2500)
+
     def _pause_stt_for_tx(self):
         if self.stt_worker and self.stt_worker.isRunning():
             self.stt_worker.pause()
@@ -1089,12 +1294,21 @@ class MainWindow(QMainWindow):
         self.stt_worker.status.connect(self.on_stt_status)
         self.stt_worker.audio_level.connect(self.audio_level_meter.setValue)
         self.stt_worker.start()
+        # Bring the waterfall online too if the operator has it enabled.
+        # Done after stt_worker.start() so the audio_chunk signal already
+        # exists by the time we connect it through _start_spectro_worker.
+        if self.spectro_settings.enabled:
+            self._start_spectro_worker()
         self.listen_btn.setText("&Listening…")
         self.listen_btn.setAccessibleDescription(
             "Microphone capture and live transcription are active. Toggle off to stop."
         )
 
     def stop_stt(self):
+        # Tear the spectrometer down first so its STT-signal disconnects
+        # run while the worker is still alive — _stop_spectro_worker
+        # reaches through self.stt_worker to undo the audio_chunk hookup.
+        self._stop_spectro_worker()
         worker = self.stt_worker
         self.stt_worker = None
         if worker is not None:

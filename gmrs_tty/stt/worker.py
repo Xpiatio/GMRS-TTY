@@ -41,6 +41,17 @@ class STTWorker(QThread):
     # the UI can show a level meter — useful for confirming the mic / radio
     # audio is actually reaching the app during hardware setup.
     audio_level = Signal(int)
+    # Read-only fan-out of the raw float32 capture chunk for downstream
+    # consumers that want the time-domain signal (e.g. the rolling
+    # spectrometer). Emitted on every captured chunk, including while
+    # paused — pause is for VAD/STT correctness, not visualization. The
+    # receiver MUST treat the array as read-only and copy if it needs to
+    # retain it; a slow consumer must drop frames rather than backpressure
+    # this loop or VAD/STT will starve.
+    audio_chunk = Signal(object)
+    # Capture-loop events the spectrometer overlays as vertical markers:
+    # 'vad_start' / 'vad_end' / 'squelch_opened' / 'squelch_closed'.
+    capture_event = Signal(str)
 
     SAMPLE_RATE = 16000
     CHUNK_SAMPLES = 512   # required by Silero VAD at 16kHz
@@ -179,6 +190,13 @@ class STTWorker(QThread):
                 # from a VU-style indicator and reacts fast to short syllables.
                 peak = float(np.max(np.abs(chunk))) if chunk.size else 0.0
                 self.audio_level.emit(min(100, int(peak * 100)))
+                # Fan the raw chunk out to any spectrometer consumer. Done
+                # before the pause / VAD branches so the waterfall keeps
+                # scrolling during TX (the operator wants to see their own
+                # carrier and any breakthrough RX while transmitting).
+                # Receivers are responsible for dropping frames if they
+                # can't keep up — this emit must stay non-blocking.
+                self.audio_chunk.emit(chunk)
 
                 if self._paused:
                     if not was_paused:
@@ -204,11 +222,14 @@ class STTWorker(QThread):
                 squelch_event = squelch.update(peak)
                 if squelch_event == 'opened':
                     squelch_buffer.clear()
-                elif squelch_event == 'closed' and not in_speech:
-                    # Carrier dropped without VAD ever firing — kerchunk or
-                    # noise burst with no human voice. Drop the buffer so it
-                    # never reaches the transcriber.
-                    squelch_buffer.clear()
+                    self.capture_event.emit('squelch_opened')
+                elif squelch_event == 'closed':
+                    self.capture_event.emit('squelch_closed')
+                    if not in_speech:
+                        # Carrier dropped without VAD ever firing — kerchunk or
+                        # noise burst with no human voice. Drop the buffer so it
+                        # never reaches the transcriber.
+                        squelch_buffer.clear()
 
                 try:
                     speech_dict = vad_iter(chunk, return_seconds=False)
@@ -227,12 +248,14 @@ class STTWorker(QThread):
                         collected = list(rolling) + [chunk]
                     squelch_buffer.clear()
                     silence_watchdog.note_speech()
+                    self.capture_event.emit('vad_start')
                 elif speech_dict and 'end' in speech_dict:
                     collected.append(chunk)
                     audio = np.concatenate(collected)
                     in_speech = False
                     collected = []
                     silence_watchdog.note_speech()
+                    self.capture_event.emit('vad_end')
                     # Drop the trailing piece only when we never emitted any
                     # partial for this utterance — a long monologue's tail can
                     # be much shorter than the kerchunk threshold yet still
