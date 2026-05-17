@@ -4,7 +4,7 @@ from PySide6.QtWidgets import QTextEdit, QToolTip
 
 from gmrs_tty.constants import VERIFIED_GLYPH
 from gmrs_tty.persistence.contacts import format_callsign_tooltip
-from gmrs_tty.text.callsigns import find_callsign_spans
+from gmrs_tty.text.callsigns import find_callsign_spans, fuzzy_match_callsign
 from gmrs_tty.ui import theme
 
 # Trailing glyph appended after a verified callsign. Leading space keeps the
@@ -26,9 +26,18 @@ class ChatDisplay(QTextEdit):
         self.setReadOnly(True)
         self.setMouseTracking(True)
         self._callsign_index = {}
+        self._fuzzy_enabled = False
 
     def set_callsign_index(self, index):
         self._callsign_index = dict(index or {})
+
+    def set_fuzzy_enabled(self, enabled):
+        """Toggle the 'fuzzy callsign logic' behavior: when on, a detected
+        callsign that differs from a known one by exactly one character is
+        treated as a hit and rewritten in the chat to the known canonical
+        form. Off-by-default — STT corrections are silent edits to the
+        operator's traffic log, so the opt-in is deliberate."""
+        self._fuzzy_enabled = bool(enabled)
 
     def append_message(self, html, color="black"):
         """Append a chat line and pill-highlight any known callsigns inside it.
@@ -91,6 +100,13 @@ class ChatDisplay(QTextEdit):
         if not block_text or not self._callsign_index:
             return
         doc = self.document()
+        if self._fuzzy_enabled:
+            # Rewrite off-by-one detections to their canonical neighbor BEFORE
+            # the pill / verified-glyph pass so that downstream code sees the
+            # corrected text in both the document and the cached string.
+            block_text = self._apply_fuzzy_replacements(block_start, block_text)
+            if not block_text:
+                return
         seen_spans = set()
         spans = []
         for start, end, cs in find_callsign_spans(block_text):
@@ -115,6 +131,41 @@ class ChatDisplay(QTextEdit):
                 block_text, end
             ):
                 self._insert_verified_glyph(block_start + end)
+
+    def _apply_fuzzy_replacements(self, block_start, block_text):
+        """Find detected callsigns that aren't a direct contact hit but sit one
+        character away from a known one; rewrite the spanned text in-place to
+        the canonical form. Returns the updated block text rebuilt from the
+        document so the caller's downstream offsets stay valid.
+
+        Iterates replacements end-first because each rewrite can resize the
+        block — applying later spans first leaves earlier spans' offsets
+        untouched, identical to the verified-glyph insertion path."""
+        known = self._callsign_index.keys()
+        replacements = []
+        for start, end, cs in find_callsign_spans(block_text):
+            if cs in self._callsign_index:
+                continue
+            match = fuzzy_match_callsign(cs, known)
+            if not match or match == cs:
+                continue
+            replacements.append((start, end, match))
+        if not replacements:
+            return block_text
+        doc = self.document()
+        for start, end, new_text in reversed(replacements):
+            cursor = QTextCursor(doc)
+            cursor.setPosition(block_start + start)
+            cursor.setPosition(
+                block_start + end, QTextCursor.MoveMode.KeepAnchor
+            )
+            # insertText with an active selection replaces it; the inserted
+            # run inherits the cursor's char format, which carries the
+            # line's RX / TX color but not the (yet-to-be-applied) pill
+            # background — that gets layered on in the main pass below.
+            cursor.insertText(new_text)
+        block = doc.findBlock(block_start)
+        return block.text() if block.isValid() else block_text
 
     def _is_verified(self, callsign):
         """True if any contact under `callsign` has a confirmed FCC match.

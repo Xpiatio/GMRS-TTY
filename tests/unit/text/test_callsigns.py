@@ -4,6 +4,7 @@ from gmrs_tty.text.callsigns import (
     callsign_to_nato,
     detect_callsigns,
     find_callsign_spans,
+    fuzzy_match_callsign,
     spell_digits_in_callsigns,
 )
 
@@ -264,3 +265,60 @@ class TestFindCallsignSpansPhonetic:
         # 'Sierraleone' should not contribute a callsign — the NATO branch
         # requires the word to stand alone.
         assert find_callsign_spans("Whiskey Sierraleone Lima Zulu Two Three Three") == []
+
+
+class TestFuzzyMatchCallsign:
+    def test_exact_match_returns_input(self):
+        assert fuzzy_match_callsign("WSLZ233", {"WSLZ233"}) == "WSLZ233"
+
+    def test_off_by_one_letter_matches(self):
+        # Common Whisper miss: 'L' vs 'I' look identical and sound similar.
+        assert fuzzy_match_callsign("WSIZ233", {"WSLZ233"}) == "WSLZ233"
+
+    def test_off_by_one_digit_matches(self):
+        # STT regularly swaps adjacent digits — 'two' / 'three' / 'four'.
+        assert fuzzy_match_callsign("WSLZ234", {"WSLZ233"}) == "WSLZ233"
+
+    def test_case_insensitive(self):
+        assert fuzzy_match_callsign("wslz234", {"wslz233"}) == "WSLZ233"
+
+    def test_two_or_more_diffs_rejected(self):
+        # Two characters off is not "off by one"; it's a different call.
+        assert fuzzy_match_callsign("WSLZ244", {"WSLZ233"}) is None
+
+    def test_different_length_rejected(self):
+        # Edit distance via deletion/insertion is not a one-character swap;
+        # an extra/missing char usually means STT split a digit-word wrong.
+        assert fuzzy_match_callsign("WSLZ2333", {"WSLZ233"}) is None
+        assert fuzzy_match_callsign("WSLZ23", {"WSLZ233"}) is None
+
+    def test_letter_in_digit_slot_rejected(self):
+        # 'WSLZ23A' would technically be one char off from 'WSLZ233', but the
+        # diff is letter-vs-digit — that's not a single-character mishear, it's
+        # a different callsign shape. Reject.
+        assert fuzzy_match_callsign("WSLZ23A", {"WSLZ233"}) is None
+
+    def test_digit_in_letter_slot_rejected(self):
+        assert fuzzy_match_callsign("WSL3233", {"WSLZ233"}) is None
+
+    def test_ambiguous_match_returns_none(self):
+        # Two known callsigns both one edit away — picking either silently
+        # would be wrong as often as it is right.
+        assert fuzzy_match_callsign(
+            "WSLZ234", {"WSLZ233", "WSLZ235"}
+        ) is None
+
+    def test_unrelated_known_callsigns_dont_interfere(self):
+        assert fuzzy_match_callsign(
+            "WSLZ234", {"WSLZ233", "KAE1234", "K1ABC"}
+        ) == "WSLZ233"
+
+    def test_empty_detected_returns_none(self):
+        assert fuzzy_match_callsign("", {"WSLZ233"}) is None
+
+    def test_empty_known_returns_none(self):
+        assert fuzzy_match_callsign("WSLZ233", set()) is None
+
+    def test_none_inputs_return_none(self):
+        assert fuzzy_match_callsign(None, {"WSLZ233"}) is None
+        assert fuzzy_match_callsign("WSLZ233", None) is None

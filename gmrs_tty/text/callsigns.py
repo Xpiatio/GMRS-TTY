@@ -141,6 +141,51 @@ def find_callsign_spans(text):
     return spans
 
 
+def fuzzy_match_callsign(detected, known_callsigns):
+    """Return the single known callsign that differs from ``detected`` in
+    exactly one character (same length, same letter-vs-digit shape at the
+    differing position), or ``None`` when there is no candidate or when two
+    or more known callsigns are equally close.
+
+    Used by the "fuzzy callsign logic" toggle: STT sometimes mishears a
+    single letter or digit (``WSLZ233`` → ``WSLZ235``). When the toggle is
+    on, an off-by-one detection is treated as a hit on the known call so
+    the chat shows the corrected token rather than a stray near-miss.
+
+    Ambiguity is disqualifying on purpose: when two known calls both sit
+    one edit away, picking either silently would be wrong as often as it
+    was right, so the caller falls back to its non-fuzzy behavior."""
+    if not detected or not known_callsigns:
+        return None
+    detected = detected.upper()
+    if detected in known_callsigns:
+        return detected
+    best = None
+    for known in known_callsigns:
+        known = known.upper()
+        if len(known) != len(detected):
+            continue
+        diff_index = -1
+        for i, (a, b) in enumerate(zip(detected, known)):
+            if a != b:
+                if diff_index != -1:
+                    diff_index = -2
+                    break
+                diff_index = i
+        if diff_index < 0:
+            continue
+        a, b = detected[diff_index], known[diff_index]
+        # Only swap like-for-like — a letter STT'd as a letter, or a digit
+        # STT'd as a digit. A digit-in-letter-slot is usually a different
+        # callsign shape, not a one-character typo.
+        if a.isalpha() != b.isalpha() or a.isdigit() != b.isdigit():
+            continue
+        if best is not None and best != known:
+            return None
+        best = known
+    return best
+
+
 def spell_digits_in_callsigns(text):
     """Insert spaces around every digit in any detected callsign so TTS reads
     them one at a time. 'WSLZ233' -> 'WSLZ 2 3 3', 'K1ABC' -> 'K 1 ABC'.
