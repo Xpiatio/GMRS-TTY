@@ -23,6 +23,7 @@ from typing import Optional
 
 from gmrs_tty.net.online import invalidate as _invalidate_online
 from gmrs_tty.net.online import is_online
+from gmrs_tty.text.nicknames import canonical_forms
 
 API_BASE = "https://api.ke8rxnwx.net/crossref/"
 REQUEST_TIMEOUT_SECONDS = 5.0
@@ -57,10 +58,25 @@ def _tokens(name):
 
 
 def name_matches(contact_name, license_name):
-    """Return True iff any alphabetic token from `contact_name` appears as a
-    prefix of any alphabetic token in `license_name`. Token-boundary matching
-    keeps 'Tim' from matching 'Smith' (no shared token) while still letting
-    'Tim' match 'Timothy'."""
+    """Return True iff any alphabetic token from `contact_name` corresponds
+    to any alphabetic token in `license_name`.
+
+    Two kinds of correspondence count:
+      • **Prefix** — either token is a prefix of the other. Catches the
+        common diminutives that are literally prefixes ("Tim"→"Timothy",
+        "Ben"→"Benjamin", "Tom"→"Thomas") plus exact equality.
+      • **Nickname canonicalization** — both tokens are expanded to their
+        canonical legal-name forms (see ``text.nicknames``) and the
+        resulting sets are intersected, then a final prefix check is run
+        over every cross-pair so a canonical-vs-canonical comparison
+        ("Richard" vs "Richardson") still matches via the prefix rule
+        after expansion. This is what lets "Dick" verify against
+        "Richard", "Bob" against "Robert", "Bill" against "William",
+        and so on.
+
+    Last-name tokens have no nickname mapping, so they pass straight
+    through to the prefix check and behave exactly as before.
+    """
     if not contact_name or not license_name:
         return False
     contact_tokens = _tokens(contact_name)
@@ -68,9 +84,15 @@ def name_matches(contact_name, license_name):
     if not contact_tokens or not license_tokens:
         return False
     for ct in contact_tokens:
+        ct_forms = canonical_forms(ct)
         for lt in license_tokens:
-            if lt.startswith(ct) or ct.startswith(lt):
+            lt_forms = canonical_forms(lt)
+            if ct_forms & lt_forms:
                 return True
+            for cf in ct_forms:
+                for lf in lt_forms:
+                    if cf.startswith(lf) or lf.startswith(cf):
+                        return True
     return False
 
 
