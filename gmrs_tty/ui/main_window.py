@@ -372,20 +372,53 @@ class MainWindow(QMainWindow):
         self._service_toolbar = tb
 
     def _build_central_widget(self):
-        """Central area = chat-toolbar above chat-display. Both stay
-        permanently visible because the chat is the load-bearing surface
-        of the app; only sections that an operator might reasonably
-        rearrange or hide live in docks.
+        """Central area = listen/level strip + chat-display.
+
+        The Listen toggle and live mic-level meter live here, above the
+        conversation log they feed. They were previously wedged into the
+        leftmost column of the Transmit dock, which mixed RX controls into
+        a TX surface and squeezed the message-input width. Hosting them in
+        the always-visible central widget keeps them reachable regardless
+        of dock state and groups them with the chat they drive.
         """
         wrapper = QWidget(self)
         layout = QVBoxLayout(wrapper)
         layout.setContentsMargins(theme.SPACING_S, theme.SPACING_S, theme.SPACING_S, theme.SPACING_S)
         layout.setSpacing(theme.SPACING_S)
 
-        # Chat-toolbar row. Right-aligned Clear-chat button sits above the
-        # chat so it's visibly associated with the log it controls.
-        chat_toolbar = QHBoxLayout()
-        chat_toolbar.addStretch(1)
+        # Listen strip: Listen toggle on the left, live mic-level bar
+        # stretching across the middle, Clear-chat on the right. One row
+        # keeps the vertical chrome above the chat to a single line.
+        listen_strip = QHBoxLayout()
+        listen_strip.setContentsMargins(0, 0, 0, 0)
+        listen_strip.setSpacing(theme.SPACING_S)
+
+        self.listen_btn = QPushButton("&Listen", wrapper)
+        self.listen_btn.setCheckable(True)
+        self.listen_btn.setToolTip("Toggle microphone capture / live transcription (Alt+L, Ctrl+L)")
+        self.listen_btn.setAccessibleName("Listen toggle")
+        self.listen_btn.setAccessibleDescription(
+            "Start or stop transcribing incoming radio audio. Currently stopped."
+        )
+        self.listen_btn.toggled.connect(self.toggle_listening)
+        listen_strip.addWidget(self.listen_btn)
+
+        self.audio_level_meter = QProgressBar(wrapper)
+        self.audio_level_meter.setRange(0, 100)
+        self.audio_level_meter.setValue(0)
+        self.audio_level_meter.setTextVisible(False)
+        self.audio_level_meter.setFixedHeight(8)
+        self.audio_level_meter.setToolTip(
+            "Microphone input level. Moves when audio is reaching the app — "
+            "use this to verify your radio / cable / input device is wired up."
+        )
+        self.audio_level_meter.setAccessibleName("Microphone input level")
+        self.audio_level_meter.setAccessibleDescription(
+            "Real-time peak amplitude of the captured audio. Stays at zero "
+            "when Listen is off or no audio is arriving."
+        )
+        listen_strip.addWidget(self.audio_level_meter, 1, Qt.AlignmentFlag.AlignVCenter)
+
         self.clear_chat_btn = QPushButton("Clear &chat", wrapper)
         self.clear_chat_btn.setToolTip(
             "Erase every message from the conversation log (Ctrl+K). "
@@ -397,8 +430,8 @@ class MainWindow(QMainWindow):
             "Chat history is in-memory only and cannot be recovered after clearing."
         )
         self.clear_chat_btn.clicked.connect(self.clear_chat)
-        chat_toolbar.addWidget(self.clear_chat_btn)
-        layout.addLayout(chat_toolbar)
+        listen_strip.addWidget(self.clear_chat_btn)
+        layout.addLayout(listen_strip)
 
         # Main chat-display surface. No hardcoded font-size so OS font-scale
         # carries through (WCAG 1.4.4).
@@ -555,16 +588,13 @@ class MainWindow(QMainWindow):
         self.quick_dock = dock
 
     def _build_transmit_dock(self):
-        """TX controls dock: Listen toggle + mic level + target + message
-        input + Transmit + 'This is' (ID).
+        """TX controls dock: target + message input + Transmit + 'This is' (ID).
 
         The ID button is folded into the same row as Transmit (audit F-008)
         so it sits adjacent to the action it complements instead of
-        stranded on its own row.
-
-        Audit F-006: the audio-level meter moves under the Listen button
-        in a sub-vertical-layout so the message-input box keeps a usable
-        width at the 720 px minimum window size.
+        stranded on its own row. Listen toggle + live mic-level meter used
+        to share this dock; they now live above the chat in the central
+        widget so RX controls aren't wedged into a TX surface.
 
         Operationally critical — the dock is movable + floatable but
         **not** closable so an accidental dismiss can't leave the
@@ -574,36 +604,6 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout(content)
         row.setContentsMargins(theme.SPACING_S, theme.SPACING_S, theme.SPACING_S, theme.SPACING_S)
         row.setSpacing(theme.SPACING_S)
-
-        listen_column = QVBoxLayout()
-        listen_column.setContentsMargins(0, 0, 0, 0)
-        listen_column.setSpacing(theme.SPACING_XS)
-        self.listen_btn = QPushButton("&Listen", content)
-        self.listen_btn.setCheckable(True)
-        self.listen_btn.setToolTip("Toggle microphone capture / live transcription (Alt+L, Ctrl+L)")
-        self.listen_btn.setAccessibleName("Listen toggle")
-        self.listen_btn.setAccessibleDescription(
-            "Start or stop transcribing incoming radio audio. Currently stopped."
-        )
-        self.listen_btn.toggled.connect(self.toggle_listening)
-        listen_column.addWidget(self.listen_btn)
-
-        self.audio_level_meter = QProgressBar(content)
-        self.audio_level_meter.setRange(0, 100)
-        self.audio_level_meter.setValue(0)
-        self.audio_level_meter.setTextVisible(False)
-        self.audio_level_meter.setFixedHeight(8)
-        self.audio_level_meter.setToolTip(
-            "Microphone input level. Moves when audio is reaching the app — "
-            "use this to verify your radio / cable / input device is wired up."
-        )
-        self.audio_level_meter.setAccessibleName("Microphone input level")
-        self.audio_level_meter.setAccessibleDescription(
-            "Real-time peak amplitude of the captured audio. Stays at zero "
-            "when Listen is off or no audio is arriving."
-        )
-        listen_column.addWidget(self.audio_level_meter)
-        row.addLayout(listen_column)
 
         self.target_dropdown = QComboBox(content)
         self.target_dropdown.setMinimumWidth(120)
@@ -641,8 +641,9 @@ class MainWindow(QMainWindow):
         row.addWidget(self.id_btn)
 
         # Explicit tab order so keyboard users get a predictable traversal:
-        # Listen, target, message, Transmit, This is. Each call is local
-        # to the dock content so a future float doesn't break the chain.
+        # Listen (above chat) → target → message → Transmit → This is.
+        # setTabOrder is window-level so the central-widget Listen button
+        # chains cleanly into the dock-hosted TX widgets.
         self.setTabOrder(self.listen_btn, self.target_dropdown)
         self.setTabOrder(self.target_dropdown, self.message_input)
         self.setTabOrder(self.message_input, self.transmit_btn)
