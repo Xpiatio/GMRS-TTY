@@ -16,6 +16,16 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
 - Offline transcription via **faster-whisper** (`small.en` by default, int8 CPU).
 - Drops short blips (<400 ms) and common Whisper hallucinations on silence.
 
+### Rolling RX spectrometer (waterfall)
+- **Live audio waterfall** below the chat log gives the deaf/HoH operator a *visual* readout of incoming RX audio — squelch breaks, voice formants, carrier whistles, and neighbor-channel splatter become visible the moment they arrive on the channel, complementing the transcription pane. The widget runs the same audio stream that feeds VAD/STT, so there is no second capture pipeline to maintain.
+- **View → Show waterfall** (Ctrl+Shift+W, default off) toggles the widget on a per-launch basis. The choice — along with color map, frequency range, and time window — persists to `config.json` under `spectrometer` so the operator's last preference comes back on the next run. The widget starts and stops alongside the **Listen** toggle, so it never spends CPU while listening is off.
+- **Color map** — Viridis (perceptually uniform, colorblind-safe; default) or Grayscale (hue-free). Both are available from **View → Color map**.
+- **Frequency range** — voice band (300–3400 Hz, the narrowband-FM speech window) or full Nyquist (0–8 kHz, diagnostics for splatter / intermod / carrier whistles). Pick from **View → Frequency range**.
+- **Time window** — 10 / 30 / 60 second history strip; **View → Time window**.
+- **VAD + squelch overlays** — vertical markers draw on the waterfall at every VAD on/off transition (white) and every squelch-open/close edge (amber) so the operator can correlate the spectrogram with the existing transcription pipeline events.
+- **Performance** — the FFT runs on its own QThread at 1024-sample frames with 50 % overlap (~32 ms hop at 16 kHz) and writes one column per frame into a `QImage`. The audio tap drops oldest samples first if the consumer falls behind, so the spectrometer can never starve VAD/STT. Designed to hold under 10 % CPU on a Raspberry Pi 4 at default settings.
+- **Accessibility** — the widget is *for* deaf/HoH operators, but it never becomes the only indicator of an event (the chat log still gives a non-visual fallback). `accessibleName` and `accessibleDescription` summarize the current band, window, and color map. A "describe current activity" line (e.g., "Strong signal at 1.2 kHz") echoes in the status bar so screen readers (NVDA / JAWS / Orca / VoiceOver) announce meaningful changes rather than a stream of pixel updates. Up / Down arrow keys adjust the dB ceiling, Left / Right adjust the floor — keyboard-only operators tune the contrast without leaving the main window.
+
 ### Transmit (Tx)
 - Offline TTS via **Piper** with local ONNX voice models.
 - **Voice preview** — the Configuration dialog has a Test button next to the voice dropdown that plays a short sample so you can audition each voice before saving.
@@ -192,7 +202,7 @@ GMRS-TTY/
 ├── gmrs_tty/               # Application package
 │   ├── app.py              # QApplication wiring
 │   ├── constants.py        # WCAG palette, pill colors, config/contacts paths
-│   ├── audio/              # capture (parec/PortAudio), DSP (bandpass + denoise), VAD, playback
+│   ├── audio/              # capture (parec/PortAudio), DSP (bandpass + denoise), VAD, playback, spectrogram (FFT + ring buffer + QThread worker)
 │   ├── fcc/                # Part 95 ID-rule formatting (15-min timer, preface, standalone ID) + crossref callsign verification
 │   ├── net/                # Online-status probe (cached) for opt-in network features
 │   ├── persistence/        # JSON store + contact sort/sort-by-suffix
@@ -200,7 +210,7 @@ GMRS-TTY/
 │   ├── stt/                # WhisperTranscriber + STTWorker orchestrator
 │   ├── text/               # callsign detection, NATO/phonetics, TTY shorthand, PG-13 profanity filter, name/location heuristics
 │   ├── tts/                # Piper TTSSynthesisThread
-│   └── ui/                 # MainWindow, ConfigDialog, ContactsDialog, AddContactDialog, DeviceQueryThread, FlowLayout
+│   └── ui/                 # MainWindow, ConfigDialog, ContactsDialog, AddContactDialog, DeviceQueryThread, FlowLayout, SpectrogramWidget
 ├── tests/                  # pytest suites covering pure logic (text/, fcc/, persistence/, ptt/, ui/)
 ├── requirements.txt        # Runtime Python dependencies
 ├── requirements-dev.txt    # pytest + pytest-cov for the test suite
@@ -245,7 +255,7 @@ Tracked in [implementation_plan.md](implementation_plan.md):
 11. ⏳ AI-summarized session journal (on-device summaries via `ollama` + Gemma 3n E2B, with a date-stamped history viewer)
 12. ✅ Quick / common messages (one-click preset phrases like "Radio check", "Standing by", "QSY to channel {N}", editable per-user)
 13. ⏳ Parallel LoRa-mesh transmit (Meshtastic / Meshcore / other LoRa/Halo devices over USB or Bluetooth, fanned out alongside the GMRS voice TX)
-14. ⏳ Rolling audio spectrometer (live RX waterfall — visual cue for signal activity, formants, squelch breaks, and band interference for the deaf/HoH operator)
+14. ✅ Rolling audio spectrometer (live RX waterfall — visual cue for signal activity, formants, squelch breaks, and band interference for the deaf/HoH operator)
 
 ## Contributing
 
