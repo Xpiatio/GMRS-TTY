@@ -38,17 +38,45 @@ class ChatDisplay(QTextEdit):
         viewing the latest message — new lines stay in view as a live tail.
         If they had scrolled up to read older context, their position is
         preserved so an incoming transmission doesn't yank the view away.
+
+        Returns the block number of the appended line so callers can later
+        grow that line with append_to_block (used by streaming RX
+        transcription to keep one chat line per utterance).
         """
         sb = self.verticalScrollBar()
-        # Treat "within a couple pixels of max" as at-bottom: Qt sometimes
-        # leaves a sub-pixel gap after layout that would otherwise make us
-        # think the user had scrolled up.
         was_at_bottom = sb is None or sb.value() >= sb.maximum() - 2
         self.append(f"<span style='color:{color};'>{html}</span>")
         block = self.document().lastBlock()
         self._apply_pill_format(block.position(), block.text())
         if was_at_bottom and sb is not None:
             sb.setValue(sb.maximum())
+        return block.blockNumber()
+
+    def append_to_block(self, block_number, text, color="black"):
+        """Append plain text to the end of an existing block and re-apply
+        pill formatting on the whole block so newly-arrived callsign tokens
+        light up. Used by streaming RX transcription so a single chat line
+        grows as partials arrive instead of fragmenting into one line per
+        slice. Returns True on success, False if the block is no longer
+        valid (e.g., the chat was cleared between partials).
+        """
+        if not text:
+            return False
+        doc = self.document()
+        block = doc.findBlockByNumber(int(block_number))
+        if not block.isValid():
+            return False
+        sb = self.verticalScrollBar()
+        was_at_bottom = sb is None or sb.value() >= sb.maximum() - 2
+        cursor = QTextCursor(block)
+        cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(color))
+        cursor.insertText(text, fmt)
+        self._apply_pill_format(block.position(), block.text())
+        if was_at_bottom and sb is not None:
+            sb.setValue(sb.maximum())
+        return True
 
     def rescan_all_blocks(self):
         """Re-walk every block and apply pill formatting under the current index.

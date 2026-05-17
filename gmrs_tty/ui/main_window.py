@@ -72,6 +72,14 @@ class MainWindow(QMainWindow):
         self._stt_whisper = None
         self._stt_vad_model = None
         self._stt_whisper_model_name = None
+        # Streaming-RX state: long utterances arrive as multiple partial
+        # transcription_segment signals under one utterance_id. We hold the
+        # block number of the currently-growing chat line plus the
+        # accumulated text so callsign scanning runs once on the full
+        # utterance when the final segment arrives.
+        self._open_rx_uid = None
+        self._open_rx_block = None
+        self._open_rx_text = ""
         self.pending_buttons = {}  # callsign -> QPushButton
         self._pending_row_height = None  # cached pill row height for scroll cap
         self.ptt = make_ptt(self.config)
@@ -934,6 +942,13 @@ class MainWindow(QMainWindow):
         )
         if reply == QMessageBox.StandardButton.Yes:
             self.chat_display.clear()
+            # Streaming RX would otherwise try to grow a block that no
+            # longer exists. The fallback in on_transcription_segment
+            # catches it, but resetting here keeps the next partial from
+            # appearing under a misleading uid match.
+            self._open_rx_uid = None
+            self._open_rx_block = None
+            self._open_rx_text = ""
 
     def _refresh_callsign_index(self):
         """Recompute the known-callsign lookup and push it to the chat widget.
@@ -968,7 +983,7 @@ class MainWindow(QMainWindow):
             vad_model=self._stt_vad_model,
             parent=self,
         )
-        self.stt_worker.transcribed.connect(self.on_transcription)
+        self.stt_worker.transcribed_segment.connect(self.on_transcription_segment)
         self.stt_worker.error.connect(self.on_stt_error)
         self.stt_worker.status.connect(self.on_stt_status)
         self.stt_worker.audio_level.connect(self.audio_level_meter.setValue)
@@ -983,7 +998,7 @@ class MainWindow(QMainWindow):
         self.stt_worker = None
         if worker is not None:
             try:
-                worker.transcribed.disconnect(self.on_transcription)
+                worker.transcribed_segment.disconnect(self.on_transcription_segment)
                 worker.error.disconnect(self.on_stt_error)
                 worker.status.disconnect(self.on_stt_status)
                 worker.audio_level.disconnect(self.audio_level_meter.setValue)
@@ -1016,12 +1031,50 @@ class MainWindow(QMainWindow):
             return f"{h12}:{now.minute:02d}:{now.second:02d} {suffix}"
         return now.strftime("%H:%M:%S")
 
-    def on_transcription(self, text):
+    def on_transcription_segment(self, uid, text, is_final):
+        """Render a streaming RX segment into the chat.
+
+        Partials with a new utterance_id open a fresh `[RX HH:MM:SS]:` line
+        and remember its block number. Subsequent partials with the same
+        uid grow that same line in place, so a long transmission reads as
+        one continuous chat line instead of a stack of fragments. On the
+        final segment, callsign discovery runs once over the accumulated
+        text — the same one-scan-per-utterance behavior as the old
+        non-streaming path.
+        """
         if self.config.get("filter_profanity", True):
             text = mask_profanity(text)
-        ts = self._format_timestamp()
-        self.append_to_chat(f"<b>[RX {ts}]:</b> {text}", color=COLOR_RX)
-        self.scan_for_unknown_stations(text)
+        if not text:
+            return
+
+        if uid != self._open_rx_uid:
+            ts = self._format_timestamp()
+            block_number = self.chat_display.append_message(
+                f"<b>[RX {ts}]:</b> {text}", color=COLOR_RX
+            )
+            self._open_rx_uid = uid
+            self._open_rx_block = block_number
+            self._open_rx_text = text
+        else:
+            appended = self.chat_display.append_to_block(
+                self._open_rx_block, " " + text, color=COLOR_RX
+            )
+            if not appended:
+                # The block went away (chat cleared mid-utterance). Start
+                # a fresh line so the rest of the utterance still surfaces.
+                ts = self._format_timestamp()
+                self._open_rx_block = self.chat_display.append_message(
+                    f"<b>[RX {ts}]:</b> {text}", color=COLOR_RX
+                )
+                self._open_rx_text = text
+            else:
+                self._open_rx_text += " " + text
+
+        if is_final:
+            self.scan_for_unknown_stations(self._open_rx_text)
+            self._open_rx_uid = None
+            self._open_rx_block = None
+            self._open_rx_text = ""
 
     def scan_for_unknown_stations(self, text):
         # `known` spans every callsign field on every contact (primary + GMRS
