@@ -1,10 +1,12 @@
-"""Quick-access icons on the service-toggle row.
+"""Quick-access icons on the service toolbar.
 
-Three icon buttons sit at the right edge of the top row, left-to-right:
-a bold "Q" that opens Quick Messages, a person-head icon that opens
-Contacts, and a cog wheel that opens Configuration. They are
+Three icon buttons sit at the right edge of the service toolbar,
+left-to-right: a bold "Q" that opens Quick Messages, a person-head icon
+that opens Contacts, and a cog wheel that opens Configuration. They are
 discoverability affordances — operators shouldn't have to learn the menu
-paths to reach these dialogs."""
+paths to reach these dialogs. Phase B moved the service row from a
+QHBoxLayout into a movable QToolBar, so structural assertions now walk
+the toolbar's widget chain rather than a nested-layout tree."""
 import os
 from unittest.mock import patch
 
@@ -13,7 +15,20 @@ import pytest
 pytest.importorskip("PySide6")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QToolBar  # noqa: E402
+
+
+def _service_toolbar_widgets(window):
+    """Return the ordered list of widgets hosted by the service toolbar.
+
+    QToolBar wraps every addWidget() call in a QAction whose
+    defaultWidget() points back at the widget; iterating actions in
+    insertion order recovers the visual left-to-right sequence.
+    """
+    toolbar = window.findChild(QToolBar, "toolbar.service")
+    if toolbar is None:
+        return []
+    return [a.defaultWidget() for a in toolbar.actions()]
 
 
 @pytest.fixture(scope="module")
@@ -54,27 +69,12 @@ def main_window(qapp):
 
 class TestContactsIconButton:
     def test_button_exists_on_service_row(self, main_window):
-        # The icon must be wired into the service-toggle row's layout so it
-        # ends up on the top row alongside the GMRS / FRS radios. Walk the
-        # parent chain rather than relying on a private layout reference.
+        # The icon must live on the service toolbar so it sits on the top
+        # bar alongside the GMRS / FRS radios.
         btn = main_window.contacts_icon_btn
-        layout = btn.parent().layout()
-        # The button's parent widget is the central widget; its layout chain
-        # contains the service_row HBoxLayout. We just need to confirm the
-        # button is reachable through the layout tree.
-        found = False
-        for i in range(layout.count() if layout else 0):
-            item = layout.itemAt(i)
-            sub = item.layout() if item is not None else None
-            if sub is None:
-                continue
-            for j in range(sub.count()):
-                if sub.itemAt(j).widget() is btn:
-                    found = True
-                    break
-            if found:
-                break
-        assert found, "contacts icon must live inside the service-row layout"
+        assert btn in _service_toolbar_widgets(main_window), (
+            "contacts icon must be hosted by the service toolbar"
+        )
 
     def test_button_text_is_a_person_glyph(self, main_window):
         # The button is icon-only — the glyph IS the affordance. If the
@@ -101,47 +101,20 @@ class TestContactsIconButton:
 class TestConfigIconButton:
     def test_button_exists_on_service_row(self, main_window):
         btn = main_window.config_icon_btn
-        layout = btn.parent().layout()
-        found = False
-        for i in range(layout.count() if layout else 0):
-            item = layout.itemAt(i)
-            sub = item.layout() if item is not None else None
-            if sub is None:
-                continue
-            for j in range(sub.count()):
-                if sub.itemAt(j).widget() is btn:
-                    found = True
-                    break
-            if found:
-                break
-        assert found, "config cog must live inside the service-row layout"
+        assert btn in _service_toolbar_widgets(main_window), (
+            "config cog must be hosted by the service toolbar"
+        )
 
     def test_cog_is_rightmost_in_service_row(self, main_window):
         # The "settings is last" convention on toolbars is well-established;
         # the cog must sit to the right of the contacts icon (not the other
         # way around) so it's where operators expect to find it.
-        contacts_btn = main_window.contacts_icon_btn
-        config_btn = main_window.config_icon_btn
-        layout = config_btn.parent().layout()
-        # Find the service row sub-layout that contains both buttons, then
-        # confirm the contacts index < config index within it.
-        for i in range(layout.count()):
-            sub = layout.itemAt(i).layout()
-            if sub is None:
-                continue
-            indices = {}
-            for j in range(sub.count()):
-                w = sub.itemAt(j).widget()
-                if w is contacts_btn:
-                    indices["contacts"] = j
-                elif w is config_btn:
-                    indices["config"] = j
-            if len(indices) == 2:
-                assert indices["contacts"] < indices["config"], (
-                    "config cog should be rightmost on the row"
-                )
-                return
-        pytest.fail("could not locate both icon buttons in the service row")
+        widgets = _service_toolbar_widgets(main_window)
+        assert main_window.contacts_icon_btn in widgets
+        assert main_window.config_icon_btn in widgets
+        assert widgets.index(main_window.contacts_icon_btn) < widgets.index(
+            main_window.config_icon_btn
+        ), "config cog should be rightmost on the toolbar"
 
     def test_button_text_is_a_gear_glyph(self, main_window):
         # U+2699 is the canonical gear/cog codepoint. If the text drifts the
@@ -169,20 +142,9 @@ class TestConfigIconButton:
 class TestQuickMessagesIconButton:
     def test_button_exists_on_service_row(self, main_window):
         btn = main_window.quick_messages_icon_btn
-        layout = btn.parent().layout()
-        found = False
-        for i in range(layout.count() if layout else 0):
-            item = layout.itemAt(i)
-            sub = item.layout() if item is not None else None
-            if sub is None:
-                continue
-            for j in range(sub.count()):
-                if sub.itemAt(j).widget() is btn:
-                    found = True
-                    break
-            if found:
-                break
-        assert found, "Q icon must live inside the service-row layout"
+        assert btn in _service_toolbar_widgets(main_window), (
+            "Q icon must be hosted by the service toolbar"
+        )
 
     def test_button_text_is_q(self, main_window):
         # The letter Q is the affordance — the button has no other label.
@@ -206,29 +168,17 @@ class TestQuickMessagesIconButton:
         assert main_window.quick_messages_icon_btn.isEnabled() is True
 
     def test_icon_trio_order_q_then_contacts_then_config(self, main_window):
-        """Left-to-right ordering on the service row: Q | 👤 | ⚙️.
+        """Left-to-right ordering on the service toolbar: Q | 👤 | ⚙️.
         Q sits leftmost (closest to the chat surface it feeds), Contacts
         in the middle, Configuration rightmost ("settings last")."""
+        widgets = _service_toolbar_widgets(main_window)
         q_btn = main_window.quick_messages_icon_btn
         contacts_btn = main_window.contacts_icon_btn
         config_btn = main_window.config_icon_btn
-        layout = q_btn.parent().layout()
-        for i in range(layout.count()):
-            sub = layout.itemAt(i).layout()
-            if sub is None:
-                continue
-            indices = {}
-            for j in range(sub.count()):
-                w = sub.itemAt(j).widget()
-                if w is q_btn:
-                    indices["q"] = j
-                elif w is contacts_btn:
-                    indices["contacts"] = j
-                elif w is config_btn:
-                    indices["config"] = j
-            if len(indices) == 3:
-                assert indices["q"] < indices["contacts"] < indices["config"], (
-                    f"icon order must be Q → contacts → config, got {indices}"
-                )
-                return
-        pytest.fail("could not locate all three icon buttons in the service row")
+        for btn in (q_btn, contacts_btn, config_btn):
+            assert btn in widgets, f"missing {btn.accessibleName()} from toolbar"
+        assert (
+            widgets.index(q_btn)
+            < widgets.index(contacts_btn)
+            < widgets.index(config_btn)
+        ), "icon order must be Q → contacts → config"

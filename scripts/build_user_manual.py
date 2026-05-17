@@ -335,7 +335,7 @@ def build_about(b: Builder):
         "the FCC Part 95 rule set so operators can stay legal without "
         "memorizing the regulations.")
     b.p("The manual is organized as a reference rather than a tutorial. "
-        "Section 5 walks every region of the main window in left-to-right, "
+        "Section 5 walks every region of the main window in "
         "top-to-bottom order. Sections 6–9 document each dialog. "
         "Section 10 is the keyboard cheat sheet. Sections 11–16 cover "
         "the deeper behaviors (service mode, PTT modes, the audio "
@@ -473,7 +473,7 @@ def build_first_run(b: Builder):
         "directory. If your callsign is still "
         "<font face=\"Courier\">YOUR_CALL</font> the header will display "
         "that literal string — open Settings → Configuration "
-        "(or click the gear icon in the top-right of the service row) "
+        "(or click the gear icon on the right side of the service toolbar) "
         "and fill in:")
     b.bullets([
         ("Callsign", "Your FCC GMRS callsign (e.g. "
@@ -515,16 +515,27 @@ def build_first_run(b: Builder):
 
 def build_main_window(b: Builder):
     b.h1("5. Main window tour")
-    b.p("The main window is laid out top-to-bottom in five horizontal "
-        "bands: the <b>service toggle row</b>, the <b>header strip</b>, "
-        "the <b>chat area</b> with its toolbar, the <b>pending stations "
-        "and quick-messages strip</b>, and the <b>transmit row</b> with "
-        "the <b>This is</b> button beneath it. The menubar holds Settings, "
-        "and the status bar carries the live online/offline indicator. "
+    b.p("The main window is built on Qt's dockable-panel system: a "
+        "movable <b>Service toolbar</b> at the top, a <b>Chat surface</b> "
+        "in the center, four rearrangeable docked panels "
+        "(<b>Station</b>, <b>Waterfall</b>, <b>Pending Stations</b>, "
+        "<b>Quick Messages</b>), and a <b>Transmit</b> panel that stays "
+        "pinned to the bottom by default but can also be moved or "
+        "floated. The menubar holds Settings + View, and the status bar "
+        "carries the live online/offline indicator on its right edge. "
+        "The layout (dock positions, sizes, tabs, floats, window "
+        "geometry) persists to "
+        "<font face=\"Courier\">config.json</font> under "
+        "<font face=\"Courier\">ui_layout</font> on close and restores "
+        "on the next launch — see section 5.5 for customization details. "
         "Minimum window size is 720×520 to guarantee no clipping at "
-        "high-DPI / large-font settings; the default is 800×600.")
+        "high-DPI / large-font settings; the default is 960×720.")
 
-    b.h3("5.1 Service toggle row (top)")
+    b.h3("5.1 Service toolbar (top by default)")
+    b.p("A movable <font face=\"Courier\">QToolBar</font>. Drag the "
+        "left-edge handle to relocate it to any of the four toolbar "
+        "areas (top, bottom, left, right). Hide via the View menu if "
+        "you want to keep service-mode controls keyboard-only.")
     b.bullets([
         ("Service:", "Label."),
         ("GMRS / FRS", "Segmented radio buttons (Alt+G / Alt+F). Choose "
@@ -532,9 +543,21 @@ def build_main_window(b: Builder):
                        "<font face=\"Courier\">radio_service</font> in "
                        "config.json. See section 11 for the full "
                        "behavior diff."),
-        ("Q icon (right cluster)", "Bold capital Q. Opens the Quick "
-                                   "Messages editor — same destination "
-                                   "as Settings → Quick Messages."),
+        ("Theme toggle (left of the cluster)", "Moon glyph in light "
+                                               "mode, sun glyph in dark "
+                                               "mode. Toggles between "
+                                               "light and dark themes. "
+                                               "The glyph shows the "
+                                               "<i>destination</i> "
+                                               "state — a moon means "
+                                               "click for dark. "
+                                               "Persists in "
+                                               "<font face=\"Courier"
+                                               "\">dark_mode</font>; "
+                                               "stays enabled in both "
+                                               "modes."),
+        ("Q icon", "Bold capital Q. Opens the Quick Messages editor — "
+                   "same destination as Settings → Quick Messages."),
         ("Person icon", "Bust-in-silhouette glyph. Opens Contacts — "
                         "same destination as Settings → Contacts or "
                         "Ctrl+B. Disabled in FRS mode (no callsigns)."),
@@ -543,12 +566,15 @@ def build_main_window(b: Builder):
                       "Ctrl+,. Enabled in both modes."),
     ])
 
-    b.h3("5.2 Header strip")
-    b.p("Bold panel just under the service row. In GMRS mode it reads "
+    b.h3("5.2 Station panel (dock — Ctrl+Shift+S)")
+    b.p("Docked at the top by default. Drag its title bar to move it to "
+        "any side of the chat surface, float it as a separate window, or "
+        "tab it with another panel. The panel content is a bold strip: "
+        "in GMRS mode it reads "
         "<font face=\"Courier\">Station: WSLZ233 | Operator: Benjamin | "
-        "Location: Lansing, MI</font>. In FRS mode the station segment is "
-        "replaced with <font face=\"Courier\">FRS Mode</font> because FRS "
-        "has no callsign requirement.")
+        "Location: Lansing, MI</font>. In FRS mode the station segment "
+        "is replaced with <font face=\"Courier\">FRS Mode</font> because "
+        "FRS has no callsign requirement.")
 
     b.h3("5.3 Chat area")
     b.bullets([
@@ -579,22 +605,36 @@ def build_main_window(b: Builder):
                            "for the FCC license verified tooltip)."),
     ])
 
-    b.h3("5.4 Transmit row")
+    b.h3("5.4 Transmit panel (dock — Ctrl+Shift+T)")
+    b.p("Pinned to the bottom by default. Movable and floatable but "
+        "<b>not closable</b> — the input row is operationally critical, "
+        "so an accidental dismiss cannot leave the operator with no TX "
+        "path. The dock holds, left-to-right: <b>Listen</b> (with the "
+        "input level meter stacked underneath it), <b>Target</b>, "
+        "<b>Message box</b>, <b>Transmit</b>, and the standalone "
+        "<b>This is</b> ID button.")
     b.bullets([
-        ("Listen button", "Toggle button (Alt+L or Ctrl+L). Starts/stops "
-                          "microphone capture and live transcription. "
-                          "Loads the Whisper model from "
-                          "<font face=\"Courier\">Models/STT/&lt;model&gt;/"
-                          "</font> on first start; subsequent toggles are "
-                          "instant."),
-        ("Input level meter", "Thin progress bar immediately to the "
-                              "right of Listen. Real-time peak amplitude "
-                              "of the captured audio. Use it to verify "
-                              "your mic / cable / device is wired up "
-                              "— if it stays at zero while you key "
-                              "audio into the radio, the app isn't "
-                              "getting audio. Stays at zero when Listen "
-                              "is off."),
+        ("Listen button + input level meter", "Toggle button (Alt+L or "
+                                              "Ctrl+L). Starts/stops "
+                                              "microphone capture and "
+                                              "live transcription. Loads "
+                                              "the Whisper model from "
+                                              "<font face=\"Courier\">"
+                                              "Models/STT/&lt;model&gt;/"
+                                              "</font> on first start; "
+                                              "subsequent toggles are "
+                                              "instant. A thin progress "
+                                              "bar under the button "
+                                              "shows real-time peak "
+                                              "amplitude of the captured "
+                                              "audio — use it to verify "
+                                              "your mic / cable / device "
+                                              "is wired up; if it stays "
+                                              "at zero while you key "
+                                              "audio into the radio, the "
+                                              "app isn't getting audio. "
+                                              "Stays at zero when Listen "
+                                              "is off."),
         ("Target dropdown", "Pick a contact callsign or <i>All</i>. "
                             "Entries are sorted alphabetically; <i>All</i> "
                             "is pinned at the top. Family-shared GMRS "
@@ -612,20 +652,49 @@ def build_main_window(b: Builder):
                             "callsign framing, 15-minute ID check, PTT "
                             "keying, TTS synthesis, and STT auto-pause "
                             "until the unkey."),
+        ("This is button", "Alt+I or Ctrl+I. Sends a standalone station "
+                           "ID — <font face=\"Courier\">This is "
+                           "&lt;CALL&gt;, &lt;NATO phonetic&gt;. "
+                           "&lt;name&gt; from &lt;location&gt;.</font> "
+                           "— without needing to type anything. Resets "
+                           "the 15-minute ID timer. Disabled in FRS "
+                           "mode (FRS has no ID rule); hover the "
+                           "disabled button for the explanation."),
     ])
 
-    b.h3("5.5 Standalone “This is” button")
-    b.p("Sits in its own row beneath Transmit. Alt+I or Ctrl+I. Sends a "
-        "standalone station ID — <font face=\"Courier\">This is "
-        "&lt;CALL&gt;, &lt;NATO phonetic&gt;. &lt;name&gt; from "
-        "&lt;location&gt;.</font> — without needing to type anything. "
-        "Resets the 15-minute ID timer. Disabled in FRS mode (FRS has no "
-        "ID rule); hover the disabled button for the explanation.")
+    b.h3("5.5 Customizing the layout")
+    b.p("Drag any panel's title bar to dock it on the left, right, top, "
+        "or bottom of the chat surface — or release it outside the main "
+        "window to float it as a separate window. Drop one title bar "
+        "onto another to tab two panels together. Drag the splitters "
+        "between docked areas to resize.")
+    b.p("Right-click a panel's title bar — or press the <b>Menu</b> key "
+        "while the title bar has focus — for a keyboard-accessible "
+        "<b>Move to Left / Right / Top / Bottom</b>, <b>Float / Re-dock</b>, "
+        "and <b>Hide</b> menu. The keyboard path mirrors the mouse drag "
+        "for operators who can't drag. <b>F6</b> / <b>Shift+F6</b> walks "
+        "keyboard focus across visible panel title bars so you can land "
+        "on a panel and open its menu in two key presses.")
+    b.p("Shortcuts: <b>Ctrl+Shift+S / P / Q / T</b> show or hide the "
+        "Station / Pending / Quick Messages / Transmit panels "
+        "(Transmit, having no Close, refocuses instead of hiding). "
+        "<b>Ctrl+Shift+W</b> toggles the Waterfall (also at "
+        "View → Show waterfall). <b>Ctrl+Shift+0</b> snaps everything "
+        "back to the documented default arrangement while preserving "
+        "your dark-mode and waterfall preferences.")
+    b.p("The layout is saved to "
+        "<font face=\"Courier\">config.json</font> under "
+        "<font face=\"Courier\">ui_layout</font> on close — only on "
+        "close, so dragging doesn't churn the file. If the saved state "
+        "is missing, malformed, or from a different schema version, the "
+        "default arrangement is used and re-written on next close. "
+        "Forward-only migration: no user action needed when upgrading.")
 
-    b.h3("5.6 Pending stations bar")
-    b.p("Sits between the chat log and the quick-messages strip. Hidden "
-        "when no pills are pending. Yellow pill buttons appear when a "
-        "new GMRS callsign is detected on RX:")
+    b.h3("5.6 Pending Stations panel (dock — Ctrl+Shift+P)")
+    b.p("Docked at the bottom by default, tabbed with Quick Messages. "
+        "Hidden when no pills are pending so an empty titled frame "
+        "doesn't sit on screen. Yellow pill buttons appear when a new "
+        "GMRS callsign is detected on RX:")
     b.bullets([
         "<b>Click</b> a pill to open the Add Station dialog (section 9) "
         "pre-filled with the detected name and location.",
@@ -638,13 +707,14 @@ def build_main_window(b: Builder):
         "squeezed.",
     ])
 
-    b.h3("5.7 Quick-messages strip")
-    b.p("Strip of one-click buttons between the pending bar and the "
-        "transmit row. Each button rides the standard TX pipeline. "
-        "Curly-brace tokens like <font face=\"Courier\">{N}</font> "
-        "in <font face=\"Courier\">QSY to channel {N}</font> prompt for "
-        "a value before transmitting. The first nine buttons are bound "
-        "to <b>Alt+1</b> through <b>Alt+9</b>. Edit the list from "
+    b.h3("5.7 Quick Messages panel (dock — Ctrl+Shift+Q)")
+    b.p("Docked at the bottom by default, tabbed with Pending Stations. "
+        "Hidden when the preset list is empty. Each button rides the "
+        "standard TX pipeline. Curly-brace tokens like "
+        "<font face=\"Courier\">{N}</font> in "
+        "<font face=\"Courier\">QSY to channel {N}</font> prompt for a "
+        "value before transmitting. The first nine buttons are bound to "
+        "<b>Alt+1</b> through <b>Alt+9</b>. Edit the list from "
         "Settings → Quick Messages or the Q icon.")
     b.p("The seed list is: <i>Radio check, Loud and clear, Standing by, "
         "Acknowledged, Say again, QSY to channel {N}, Clear, Monitoring, "
@@ -652,14 +722,18 @@ def build_main_window(b: Builder):
 
     b.h3("5.8 Status bar")
     b.p("Carries a permanent <b>Online</b> / <b>Offline</b> indicator on "
-        "the right edge. Green ● for online, amber ○ for "
-        "offline. Updates every 30 seconds. The indicator is the "
-        "user-visible side of the contract for opt-in network features "
-        "— when offline, the FCC verification button disables and "
-        "save-time verification is skipped. Hidden in FRS mode.")
+        "the right edge (matching the OS taskbar convention). Green ● "
+        "for online, amber ○ for offline. Updates every 30 seconds. The "
+        "indicator is the user-visible side of the contract for opt-in "
+        "network features — when offline, the FCC verification button "
+        "disables and save-time verification is skipped. Hidden in FRS "
+        "mode where FCC lookups don't apply. The left side of the "
+        "status bar shows transient messages (Ready, STT status, "
+        "waterfall activity).")
 
     b.h3("5.9 Menubar")
-    b.p("Single <b>Settings</b> menu (Alt+S). Contains:")
+    b.p("Two menus: <b>Settings</b> (Alt+S) and <b>View</b> (Alt+V).")
+    b.p("Settings contains:")
     b.bullets([
         ("Configuration… (Alt+C or Ctrl+,)", "Opens the Configuration "
                                                    "dialog (section 6)."),
@@ -671,6 +745,12 @@ def build_main_window(b: Builder):
         ("Clear chat (Alt+R or Ctrl+K)", "Erases every message from the "
                                           "log after a Yes/No confirmation."),
     ])
+    b.p("View contains the waterfall toggle (Show waterfall, Ctrl+Shift+W) "
+        "and its three submenus (Color map, Frequency range, Time "
+        "window), plus a <b>Panels</b> submenu carrying the show/hide "
+        "checkboxes for Station, Pending Stations, Quick Messages, and "
+        "Transmit, and a <b>Reset layout to default</b> action "
+        "(Ctrl+Shift+0).")
 
 
 def build_config_dialog(b: Builder):
@@ -813,8 +893,8 @@ def build_contacts_dialog(b: Builder):
 
 def build_quick_messages_dialog(b: Builder):
     b.h1("8. Quick Messages dialog")
-    b.p("Opened from Settings → Quick Messages or the Q icon in the "
-        "top-right of the service row. Minimum size 520×360. "
+    b.p("Opened from Settings → Quick Messages or the Q icon on the "
+        "right side of the service toolbar. Minimum size 520×360. "
         "Single-column editable table of phrases plus four management "
         "buttons.")
     b.bullets([
@@ -844,7 +924,7 @@ def build_quick_messages_dialog(b: Builder):
 
 def build_add_station_dialog(b: Builder):
     b.h1("9. Add Station dialog")
-    b.p("Opens when you click a yellow pill on the pending-stations bar. "
+    b.p("Opens when you click a yellow pill on the Pending Stations panel. "
         "Compact three-field form with three QLineEdit inputs:")
     b.bullets([
         ("Callsign (Alt+C)", "Pre-filled with the detected callsign in "
@@ -874,6 +954,13 @@ def build_keyboard(b: Builder):
             ["Open Configuration dialog", "Ctrl+,"],
             ["Open Contacts dialog", "Ctrl+B"],
             ["Send quick message preset 1–9", "Alt+1 … Alt+9"],
+            ["Toggle Waterfall panel", "Ctrl+Shift+W"],
+            ["Toggle Station panel", "Ctrl+Shift+S"],
+            ["Toggle Pending Stations panel", "Ctrl+Shift+P"],
+            ["Toggle Quick Messages panel", "Ctrl+Shift+Q"],
+            ["Focus / re-show Transmit panel", "Ctrl+Shift+T"],
+            ["Reset layout to default", "Ctrl+Shift+0"],
+            ["Cycle keyboard focus across docks", "F6 / Shift+F6"],
         ],
         col_widths=[3.6 * inch, 2.4 * inch],
     )
@@ -1159,7 +1246,7 @@ def build_callsign_detection(b: Builder):
         "<i>X ray</i>).",
     ])
     b.h3("Pending pills")
-    b.p("Unknown stations earn a yellow pill on the pending bar. The "
+    b.p("Unknown stations earn a yellow pill on the Pending Stations panel. The "
         "“unknown” check considers all three callsign fields "
         "on every contact (<font face=\"Courier\">callsign</font>, "
         "<font face=\"Courier\">gmrs_callsign</font>, "

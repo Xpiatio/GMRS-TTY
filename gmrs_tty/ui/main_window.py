@@ -6,9 +6,10 @@ from piper.voice import PiperVoice
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QInputDialog,
-    QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar,
-    QPushButton, QRadioButton, QScrollArea, QToolButton, QVBoxLayout, QWidget,
+    QApplication, QButtonGroup, QComboBox, QDockWidget, QFrame, QHBoxLayout,
+    QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
+    QProgressBar, QPushButton, QRadioButton, QScrollArea, QSizePolicy,
+    QToolBar, QToolButton, QVBoxLayout, QWidget,
 )
 
 from gmrs_tty.audio.playback import AudioPlayerThread
@@ -34,9 +35,11 @@ from gmrs_tty.text.placeholders import find_placeholders, substitute_placeholder
 from gmrs_tty.text.shorthand import expand_tty_abbreviations
 from gmrs_tty.tts.synthesizer import TTSSynthesisThread
 from gmrs_tty.ui import theme
+from gmrs_tty.ui import dock_layout
 from gmrs_tty.ui.chat_display import ChatDisplay
 from gmrs_tty.ui.config_dialog import ConfigDialog
 from gmrs_tty.ui.contacts_dialog import AddContactDialog, ContactsDialog
+from gmrs_tty.ui.dock_layout import CompactTitleBar
 from gmrs_tty.ui.flow_layout import FlowLayout
 from gmrs_tty.ui.quick_messages_dialog import QuickMessagesDialog
 from gmrs_tty.ui.spectro_colormap import AVAILABLE_COLORMAPS
@@ -69,7 +72,11 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("GMRS-TTY")
-        self.resize(800, 600)
+        # Slightly larger default than the pre-dock layout so the operator
+        # has elbow room for the bottom-area dock stack without immediate
+        # resizing. Persisted geometry restores over this on subsequent
+        # launches via dock_layout.restore_layout.
+        self.resize(960, 720)
 
         # State Initialization
         self.config = load_json(CONFIG_FILE, {"callsign": "N0CALL", "name": "Default", "location": "Unknown"})
@@ -116,6 +123,20 @@ class MainWindow(QMainWindow):
         )
 
         self.init_ui()
+        # Layout restore happens after init_ui — saveState/restoreState
+        # match docks by objectName, so every dock must already exist with
+        # its stable name before we hand Qt the byte blob. If the saved
+        # state is absent, malformed, or from a different schema version
+        # we fall back to the documented default arrangement so first-
+        # launch users (and anyone upgrading past a layout schema bump)
+        # see the intended UI rather than an empty central area.
+        if not dock_layout.restore_layout(self, self.config):
+            dock_layout.build_default_layout(self)
+        # Spectrometer visibility honors its own config key independent of
+        # the layout state — re-apply after restore so a saved-state
+        # "waterfall hidden" doesn't override a user who just enabled it.
+        self.spectro_widget.setVisible(self.spectro_settings.enabled)
+        self.waterfall_dock.setVisible(self.spectro_settings.enabled)
         self._sync_service_radios()
         self.update_header()
         self.populate_target_dropdown()
@@ -165,25 +186,70 @@ class MainWindow(QMainWindow):
             self.ptt.close()
         except Exception:
             pass
+        # Persist dock placements + window geometry so the next launch
+        # lands the operator back in the layout they were using. Saves
+        # only on close (not every drag) so config.json doesn't churn
+        # during normal use; existing dark_mode + spectrometer + radio
+        # service keys ride alongside.
+        try:
+            dock_layout.save_layout(self, self.config)
+            save_json(CONFIG_FILE, self.config)
+        except Exception:
+            # A failed save here must never block window close —
+            # next launch falls back to the default layout instead.
+            pass
         super().closeEvent(event)
 
     def init_ui(self):
-        # Central Widget
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
+        # Build order: service toolbar, central widget (chat), every dock,
+        # status bar, shortcuts, menus. Docks are *created* here but their
+        # placement (which dock area, tabbed-vs-not, visible-vs-hidden) is
+        # owned by dock_layout.{restore,build_default}_layout, called from
+        # __init__ after this method returns. That separation lets the
+        # operator's persisted layout decide initial state without any
+        # ``addDockWidget`` call here racing the restore.
+        self._build_service_toolbar()
+        self._build_central_widget()
+        self._build_station_dock()
+        self._build_waterfall_dock()
+        self._build_pending_dock()
+        self._build_quick_messages_dock()
+        self._build_transmit_dock()
+        self._build_status_bar()
+        self._install_global_shortcuts()
+        self.create_menus()
 
-        # 0. Service-mode toggle. Sits above the header so the active radio
-        # service is the first thing the user sees — switching to FRS disables
-        # every callsign-dependent feature in this app, which is a big enough
-        # behavioral shift that it earns top-of-window placement.
-        service_row = QHBoxLayout()
-        service_label = QLabel("Service:", self)
+        # Online-connectivity refresh kicks off here because init_ui owns
+        # the periodic-timer setup. The first probe runs synchronously so
+        # the status bar shows the right state on the first paint.
+        self._refresh_online_indicator()
+        self._online_timer = QTimer(self)
+        self._online_timer.setInterval(ONLINE_REFRESH_MS)
+        self._online_timer.timeout.connect(self._refresh_online_indicator)
+        self._online_timer.start()
+
+        # Reasonable minimum so high-DPI / large-font users don't get clipping.
+        self.setMinimumSize(720, 520)
+
+    # ---- Section builders ------------------------------------------------
+
+    def _build_service_toolbar(self):
+        """Service-mode toggle + quick-access icon strip, hosted on a top
+        ``QToolBar`` so the operator can drag it to any of the four toolbar
+        areas (or hide it via the View menu)."""
+        tb = QToolBar("Service", self)
+        tb.setObjectName(dock_layout.TOOLBAR_SERVICE)
+        tb.setMovable(True)
+        tb.setFloatable(False)
+        tb.setStyleSheet(theme.toolbar_focus_stylesheet())
+
+        service_label = QLabel("Service:", tb)
         service_label.setAccessibleName("Radio service")
-        service_row.addWidget(service_label)
+        tb.addWidget(service_label)
+
         self._service_group = QButtonGroup(self)
         self._service_group.setExclusive(True)
-        self.gmrs_radio = QRadioButton("&GMRS", self)
+        self.gmrs_radio = QRadioButton("&GMRS", tb)
         self.gmrs_radio.setAccessibleName("Operate in GMRS mode")
         self.gmrs_radio.setAccessibleDescription(
             "FCC-licensed General Mobile Radio Service. Callsign framing, "
@@ -193,7 +259,7 @@ class MainWindow(QMainWindow):
         self.gmrs_radio.setToolTip(
             "FCC-licensed GMRS operation. All callsign features active."
         )
-        self.frs_radio = QRadioButton("&FRS", self)
+        self.frs_radio = QRadioButton("&FRS", tb)
         self.frs_radio.setAccessibleName("Operate in FRS mode")
         self.frs_radio.setAccessibleDescription(
             "Unlicensed Family Radio Service. All callsign-specific features "
@@ -206,24 +272,29 @@ class MainWindow(QMainWindow):
         )
         self._service_group.addButton(self.gmrs_radio)
         self._service_group.addButton(self.frs_radio)
-        service_row.addWidget(self.gmrs_radio)
-        service_row.addWidget(self.frs_radio)
-        service_row.addStretch(1)
+        tb.addWidget(self.gmrs_radio)
+        tb.addWidget(self.frs_radio)
+
+        # Expanding spacer pushes the icon strip to the right edge of the
+        # toolbar — mirrors the QHBoxLayout-with-stretch pattern from the
+        # pre-dock layout so the visual rhythm survives the move to QToolBar.
+        spacer = QWidget(tb)
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        tb.addWidget(spacer)
+
         # Right-anchored quick-access icon strip: 🌙/☀️ (theme) | Q (Quick
         # Messages) | 👤 (Contacts) | ⚙️ (Configuration). Theme sits leftmost
-        # because it's the only item that isn't "open a dialog" — placing it
-        # next to the stretch keeps the dialog-launching icons visually
-        # grouped on the right. The cog stays rightmost per the established
-        # "settings last on a toolbar" convention. All icons share one font
-        # bump so the row height stays balanced.
-        icon_font = QFont(self.font())
-        icon_font.setPointSize(icon_font.pointSize() + 4)
+        # because it's the only item that isn't "open a dialog"; the three
+        # dialog-launchers stay grouped on the right with the cog rightmost
+        # per the established "settings last" toolbar convention. All icons
+        # share one font bump so the row height stays balanced.
+        icon_font = theme.font_icon()
 
         # Theme (dark-mode) toggle. The glyph reflects the *destination*
         # state — moon when in light, sun when in dark — so the affordance
         # reads as "click to become this". Stays enabled in FRS mode; the
         # theme is service-agnostic.
-        self.theme_toggle_btn = QToolButton(self)
+        self.theme_toggle_btn = QToolButton(tb)
         self.theme_toggle_btn.setFont(icon_font)
         self.theme_toggle_btn.setAutoRaise(True)
         self.theme_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -234,12 +305,12 @@ class MainWindow(QMainWindow):
         )
         self.theme_toggle_btn.clicked.connect(self.toggle_theme)
         self._refresh_theme_toggle_glyph()
-        service_row.addWidget(self.theme_toggle_btn)
+        tb.addWidget(self.theme_toggle_btn)
 
         # Quick Messages icon. Plain bold "Q" — the operator already learns
         # "Q" as the symbol for this strip via the menu mnemonic, so the
         # letter doubles as its own affordance. Usable in both GMRS and FRS.
-        self.quick_messages_icon_btn = QToolButton(self)
+        self.quick_messages_icon_btn = QToolButton(tb)
         self.quick_messages_icon_btn.setText("Q")
         qm_font = QFont(icon_font)
         qm_font.setBold(True)
@@ -254,12 +325,12 @@ class MainWindow(QMainWindow):
         )
         self.quick_messages_icon_btn.setToolTip("Quick Messages")
         self.quick_messages_icon_btn.clicked.connect(self.open_quick_messages_dialog)
-        service_row.addWidget(self.quick_messages_icon_btn)
+        tb.addWidget(self.quick_messages_icon_btn)
 
         # Contacts icon. Same destination as Settings → Contacts (Ctrl+B).
         # Disabled in FRS mode (no callsigns, no contacts) by the same code
         # path that disables the Contacts menu action.
-        self.contacts_icon_btn = QToolButton(self)
+        self.contacts_icon_btn = QToolButton(tb)
         self.contacts_icon_btn.setText("\U0001F464")  # 👤 bust-in-silhouette
         self.contacts_icon_btn.setFont(icon_font)
         self.contacts_icon_btn.setAutoRaise(True)
@@ -271,12 +342,12 @@ class MainWindow(QMainWindow):
         )
         self.contacts_icon_btn.setToolTip("Contacts (Ctrl+B)")
         self.contacts_icon_btn.clicked.connect(self.open_contacts_dialog)
-        service_row.addWidget(self.contacts_icon_btn)
+        tb.addWidget(self.contacts_icon_btn)
 
         # Configuration cog. Rightmost — "settings last" convention. Stays
         # enabled in FRS mode because Configuration is service-agnostic
         # (voice, audio devices, PTT mode all apply to both modes).
-        self.config_icon_btn = QToolButton(self)
+        self.config_icon_btn = QToolButton(tb)
         self.config_icon_btn.setText("⚙️")  # gear
         self.config_icon_btn.setFont(icon_font)
         self.config_icon_btn.setAutoRaise(True)
@@ -289,49 +360,33 @@ class MainWindow(QMainWindow):
         )
         self.config_icon_btn.setToolTip("Configuration (Ctrl+,)")
         self.config_icon_btn.clicked.connect(self.open_config_dialog)
-        service_row.addWidget(self.config_icon_btn)
-
-        # Internet-connectivity indicator. Sits at the far-right of the
-        # service row (after the action icons) so it reads as a status
-        # display rather than a button — matches the OS taskbar convention
-        # where network status lives in the corner. Online features
-        # (FCC callsign verification) gate on this state; the indicator is
-        # the user-visible side of that contract. Hidden in FRS mode.
-        self.online_indicator = QLabel(ONLINE_LABEL_ONLINE, self)
-        self.online_indicator.setAccessibleName("Internet connectivity status")
-        self.online_indicator.setAccessibleDescription(
-            "Indicates whether online features (FCC callsign verification) "
-            "are available. Updates every 30 seconds."
-        )
-        service_row.addWidget(self.online_indicator)
+        tb.addWidget(self.config_icon_btn)
 
         # toggled fires on both selection AND deselection within the group;
         # we only care about the newly-checked button, so guard inside the
         # handler by reading the group state.
         self.gmrs_radio.toggled.connect(self._on_service_toggled)
         self.frs_radio.toggled.connect(self._on_service_toggled)
-        main_layout.addLayout(service_row)
 
-        # 1. Header (User Info). Bold via QFont so size scales with system font (WCAG 1.4.4).
-        self.header_label = QLabel("Loading...", self)
-        header_font = QFont(self.font())
-        header_font.setBold(True)
-        header_font.setPointSize(header_font.pointSize() + 2)
-        self.header_label.setFont(header_font)
-        self.header_label.setStyleSheet(theme.header_stylesheet())
-        self.header_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.header_label.setAccessibleName("Station information")
-        self.header_label.setAccessibleDescription(
-            "Your configured callsign, operator name, and location."
-        )
-        main_layout.addWidget(self.header_label)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, tb)
+        self._service_toolbar = tb
 
-        # 2. Chat-toolbar row. Right-aligned Clear-chat button sits above the
-        # chat so it's visibly associated with the log it controls, without
-        # crowding the TX input row below.
+    def _build_central_widget(self):
+        """Central area = chat-toolbar above chat-display. Both stay
+        permanently visible because the chat is the load-bearing surface
+        of the app; only sections that an operator might reasonably
+        rearrange or hide live in docks.
+        """
+        wrapper = QWidget(self)
+        layout = QVBoxLayout(wrapper)
+        layout.setContentsMargins(theme.SPACING_S, theme.SPACING_S, theme.SPACING_S, theme.SPACING_S)
+        layout.setSpacing(theme.SPACING_S)
+
+        # Chat-toolbar row. Right-aligned Clear-chat button sits above the
+        # chat so it's visibly associated with the log it controls.
         chat_toolbar = QHBoxLayout()
         chat_toolbar.addStretch(1)
-        self.clear_chat_btn = QPushButton("Clear &chat", self)
+        self.clear_chat_btn = QPushButton("Clear &chat", wrapper)
         self.clear_chat_btn.setToolTip(
             "Erase every message from the conversation log (Ctrl+K). "
             "Chat history isn't saved between runs."
@@ -343,26 +398,57 @@ class MainWindow(QMainWindow):
         )
         self.clear_chat_btn.clicked.connect(self.clear_chat)
         chat_toolbar.addWidget(self.clear_chat_btn)
-        main_layout.addLayout(chat_toolbar)
+        layout.addLayout(chat_toolbar)
 
-        # 2. Main Chat Room (Rx Section). No hardcoded font-size so the OS font-scale
-        # setting carries through.
-        self.chat_display = ChatDisplay(self)
-        self.chat_display.setStyleSheet("padding: 5px;")
+        # Main chat-display surface. No hardcoded font-size so OS font-scale
+        # carries through (WCAG 1.4.4).
+        self.chat_display = ChatDisplay(wrapper)
+        self.chat_display.setStyleSheet(f"padding: {theme.SPACING_S}px;")
         self.chat_display.setAccessibleName("Conversation log")
         self.chat_display.setAccessibleDescription(
             "Timestamped log of incoming radio transmissions and outgoing messages. "
             "Known callsigns are highlighted; hover for the operator names linked to each one."
         )
-        main_layout.addWidget(self.chat_display)
+        layout.addWidget(self.chat_display, 1)
 
-        # 2a. Rolling RX spectrometer (waterfall). Sits below the chat so it
-        # reads as a *visual companion* to the transcript — high frequencies
-        # at the top, time scrolling right-to-left, latest column at the
-        # right edge. Hidden by default; toggled from the View menu and
-        # persisted as ``spectrometer.enabled`` in config.json. The widget
-        # also acts as the row-consumer for SpectrogramWorker so a slow
-        # paint can never back-pressure the FFT/STT pipeline.
+        self.setCentralWidget(wrapper)
+
+    def _build_station_dock(self):
+        """Station-info dock: callsign / operator / location card. Docked
+        at the top by default but the operator may move it to a side
+        column if they want more vertical space for chat."""
+        content = QWidget(self)
+        layout = QHBoxLayout(content)
+        layout.setContentsMargins(theme.SPACING_S, theme.SPACING_XS, theme.SPACING_S, theme.SPACING_XS)
+        layout.setSpacing(theme.SPACING_S)
+
+        self.header_label = QLabel("Loading...", content)
+        self.header_label.setFont(theme.font_header())
+        self.header_label.setStyleSheet(theme.header_stylesheet())
+        self.header_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.header_label.setAccessibleName("Station information")
+        self.header_label.setAccessibleDescription(
+            "Your configured callsign, operator name, and location."
+        )
+        layout.addWidget(self.header_label, 1)
+
+        dock = QDockWidget("Station", self)
+        dock.setObjectName(dock_layout.DOCK_STATION)
+        dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            | QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
+        dock.setWidget(content)
+        dock.setTitleBarWidget(CompactTitleBar(dock))
+        dock_layout.install_dock_context_menu(self, dock)
+        self.station_dock = dock
+
+    def _build_waterfall_dock(self):
+        """Rolling RX spectrometer dock. Initial visibility tracks
+        ``spectro_settings.enabled`` — applied after layout restore in
+        __init__ so a saved-state hidden never overrides a freshly-
+        enabled-by-config waterfall."""
         self.spectro_widget = SpectrogramWidget(
             sample_rate=STTWorker.SAMPLE_RATE,
             frame_size=1024,
@@ -370,21 +456,37 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         self.spectro_widget.activity_text_changed.connect(self._on_spectro_activity)
-        self.spectro_widget.setVisible(self.spectro_settings.enabled)
-        main_layout.addWidget(self.spectro_widget)
 
-        # 2b. Pending stations bar (populates when STT detects unknown callsigns).
-        # Layout: [QScrollArea wrapping a FlowLayout of pills] [Dismiss all].
-        # The flow layout wraps pills to the next row when horizontal space
-        # runs out; the scroll area caps visible height to PENDING_PILL_MAX_ROWS
-        # rows and exposes a vertical scrollbar past that.
-        self.pending_bar = QHBoxLayout()
-        self.pending_bar.setSpacing(5)
+        dock = QDockWidget("Waterfall", self)
+        dock.setObjectName(dock_layout.DOCK_WATERFALL)
+        dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            | QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
+        dock.setWidget(self.spectro_widget)
+        dock.setTitleBarWidget(CompactTitleBar(dock))
+        dock_layout.install_dock_context_menu(self, dock)
+        # Mirror the persistent View-menu toggle: a manual close of the
+        # dock has to stop the FFT worker so we don't keep paying CPU on
+        # an invisible widget.
+        dock.visibilityChanged.connect(self._on_waterfall_dock_visibility_changed)
+        self.waterfall_dock = dock
 
-        self.pending_pills_widget = QWidget()
-        self.pending_flow = FlowLayout(self.pending_pills_widget, margin=0, spacing=5)
+    def _build_pending_dock(self):
+        """Pending-stations dock: scrollable wrap of detection pills + a
+        ``Dismiss all`` button. Empty by default — the dock itself stays
+        visible so the operator can see "no pending stations" rather than
+        wondering where the panel went."""
+        content = QWidget(self)
+        bar = QHBoxLayout(content)
+        bar.setContentsMargins(theme.SPACING_S, theme.SPACING_XS, theme.SPACING_S, theme.SPACING_XS)
+        bar.setSpacing(theme.SPACING_S)
 
-        self.pending_scroll = QScrollArea(self)
+        self.pending_pills_widget = QWidget(content)
+        self.pending_flow = FlowLayout(self.pending_pills_widget, margin=0, spacing=theme.SPACING_S)
+
+        self.pending_scroll = QScrollArea(content)
         self.pending_scroll.setWidgetResizable(True)
         self.pending_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.pending_scroll.setHorizontalScrollBarPolicy(
@@ -395,9 +497,9 @@ class MainWindow(QMainWindow):
         )
         self.pending_scroll.setWidget(self.pending_pills_widget)
         self.pending_scroll.hide()
-        self.pending_bar.addWidget(self.pending_scroll, 1)
+        bar.addWidget(self.pending_scroll, 1)
 
-        self.clear_pending_btn = QPushButton("&Dismiss all", self)
+        self.clear_pending_btn = QPushButton("&Dismiss all", content)
         self.clear_pending_btn.setToolTip(
             "Dismiss every pending station pill without adding any callsigns."
         )
@@ -407,32 +509,76 @@ class MainWindow(QMainWindow):
         )
         self.clear_pending_btn.clicked.connect(self._clear_all_pending_pills)
         self.clear_pending_btn.hide()
-        self.pending_bar.addWidget(self.clear_pending_btn, 0, Qt.AlignmentFlag.AlignTop)
-        main_layout.addLayout(self.pending_bar)
+        bar.addWidget(self.clear_pending_btn, 0, Qt.AlignmentFlag.AlignTop)
+        # pending_bar is preserved as an attribute (some legacy paths
+        # walked the layout); now it's owned by the dock content widget.
+        self.pending_bar = bar
 
-        # 2c. Quick-messages preset strip. Sits between the pending bar and
-        # the TX row so common phrases ("Radio check", "Standing by", "QSY to
-        # channel {N}") are one click away. Presets ride the same TX pipeline
-        # as the typed message-input box, so callsign framing, the 15-minute
-        # ID rule, PTT keying, and STT auto-pause all still apply.
+        dock = QDockWidget("Pending Stations", self)
+        dock.setObjectName(dock_layout.DOCK_PENDING)
+        dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            | QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
+        dock.setWidget(content)
+        dock.setTitleBarWidget(CompactTitleBar(dock))
+        dock_layout.install_dock_context_menu(self, dock)
+        self.pending_dock = dock
+
+    def _build_quick_messages_dock(self):
+        """Quick-message preset strip. Presets ride the same TX pipeline
+        as the typed message-input box, so callsign framing, the 15-minute
+        ID rule, PTT keying, and STT auto-pause all still apply."""
         self.quick_messages_widget = QWidget(self)
         self.quick_messages_flow = FlowLayout(
-            self.quick_messages_widget, margin=0, spacing=5
+            self.quick_messages_widget,
+            margin=theme.SPACING_S,
+            spacing=theme.SPACING_S,
         )
         self.quick_messages_widget.setAccessibleName("Quick message presets")
         self.quick_messages_widget.setAccessibleDescription(
             "Row of one-click preset phrases. Edit the list from "
             "Settings, Quick Messages."
         )
-        main_layout.addWidget(self.quick_messages_widget)
-        # Will be repopulated by populate_quick_messages_strip(); start hidden
-        # so users without saved presets don't see an empty band.
-        self.quick_messages_widget.hide()
 
-        # 3. Input Area (Tx Section). Mnemonics: Alt+L Listen, Alt+T Transmit, Alt+I This is.
-        input_layout = QHBoxLayout()
+        dock = QDockWidget("Quick Messages", self)
+        dock.setObjectName(dock_layout.DOCK_QUICK)
+        dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            | QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
+        dock.setWidget(self.quick_messages_widget)
+        dock.setTitleBarWidget(CompactTitleBar(dock))
+        dock_layout.install_dock_context_menu(self, dock)
+        self.quick_dock = dock
 
-        self.listen_btn = QPushButton("&Listen", self)
+    def _build_transmit_dock(self):
+        """TX controls dock: Listen toggle + mic level + target + message
+        input + Transmit + 'This is' (ID).
+
+        The ID button is folded into the same row as Transmit (audit F-008)
+        so it sits adjacent to the action it complements instead of
+        stranded on its own row.
+
+        Audit F-006: the audio-level meter moves under the Listen button
+        in a sub-vertical-layout so the message-input box keeps a usable
+        width at the 720 px minimum window size.
+
+        Operationally critical — the dock is movable + floatable but
+        **not** closable so an accidental dismiss can't leave the
+        operator with no way to transmit.
+        """
+        content = QWidget(self)
+        row = QHBoxLayout(content)
+        row.setContentsMargins(theme.SPACING_S, theme.SPACING_S, theme.SPACING_S, theme.SPACING_S)
+        row.setSpacing(theme.SPACING_S)
+
+        listen_column = QVBoxLayout()
+        listen_column.setContentsMargins(0, 0, 0, 0)
+        listen_column.setSpacing(theme.SPACING_XS)
+        self.listen_btn = QPushButton("&Listen", content)
         self.listen_btn.setCheckable(True)
         self.listen_btn.setToolTip("Toggle microphone capture / live transcription (Alt+L, Ctrl+L)")
         self.listen_btn.setAccessibleName("Listen toggle")
@@ -440,17 +586,13 @@ class MainWindow(QMainWindow):
             "Start or stop transcribing incoming radio audio. Currently stopped."
         )
         self.listen_btn.toggled.connect(self.toggle_listening)
-        input_layout.addWidget(self.listen_btn)
+        listen_column.addWidget(self.listen_btn)
 
-        # Live mic-input level meter. Sits next to Listen so the user can
-        # confirm at a glance that audio is reaching the app — the most
-        # common hardware-troubleshooting question is "is my cable / device
-        # actually wired up?"
-        self.audio_level_meter = QProgressBar(self)
+        self.audio_level_meter = QProgressBar(content)
         self.audio_level_meter.setRange(0, 100)
         self.audio_level_meter.setValue(0)
         self.audio_level_meter.setTextVisible(False)
-        self.audio_level_meter.setFixedWidth(80)
+        self.audio_level_meter.setFixedHeight(8)
         self.audio_level_meter.setToolTip(
             "Microphone input level. Moves when audio is reaching the app — "
             "use this to verify your radio / cable / input device is wired up."
@@ -460,59 +602,99 @@ class MainWindow(QMainWindow):
             "Real-time peak amplitude of the captured audio. Stays at zero "
             "when Listen is off or no audio is arriving."
         )
-        input_layout.addWidget(self.audio_level_meter)
+        listen_column.addWidget(self.audio_level_meter)
+        row.addLayout(listen_column)
 
-        self.target_dropdown = QComboBox(self)
+        self.target_dropdown = QComboBox(content)
         self.target_dropdown.setMinimumWidth(120)
         self.target_dropdown.setAccessibleName("Transmission target")
         self.target_dropdown.setAccessibleDescription(
             "Pick a contact callsign to address, or All for an open call."
         )
         self.target_dropdown.setToolTip("Recipient callsign for the next transmission")
-        input_layout.addWidget(self.target_dropdown)
+        row.addWidget(self.target_dropdown)
 
-        self.message_input = QLineEdit(self)
+        self.message_input = QLineEdit(content)
         self.message_input.setPlaceholderText("Type your message here...")
         self.message_input.setAccessibleName("Outgoing message")
         self.message_input.setAccessibleDescription(
             "Text to speak as the next transmission. Press Enter or use Transmit."
         )
         self.message_input.returnPressed.connect(self.transmit_message)
-        input_layout.addWidget(self.message_input)
+        row.addWidget(self.message_input, 1)
 
-        self.transmit_btn = QPushButton("&Transmit", self)
+        self.transmit_btn = QPushButton("&Transmit", content)
         self.transmit_btn.setToolTip("Speak the message through the configured voice (Alt+T, Ctrl+Return)")
         self.transmit_btn.setAccessibleName("Transmit message")
         self.transmit_btn.clicked.connect(self.transmit_message)
-        input_layout.addWidget(self.transmit_btn)
+        row.addWidget(self.transmit_btn)
 
-        main_layout.addLayout(input_layout)
-
-        # 3b. Standalone ID button row (sits under Transmit)
-        id_layout = QHBoxLayout()
-        id_layout.addStretch()
-        self.id_btn = QPushButton("Th&is is", self)
-        self.id_btn.setToolTip("Transmit station ID: This is [callsign]. [name] from [location] (Alt+I, Ctrl+I)")
+        # Standalone ID button. Audit F-008: folded into the input row so
+        # it sits adjacent to Transmit rather than stranded on a dedicated
+        # right-aligned row.
+        self.id_btn = QPushButton("Th&is is", content)
+        self.id_btn.setToolTip(
+            "Transmit station ID: This is [callsign]. [name] from [location] (Alt+I, Ctrl+I)"
+        )
         self.id_btn.setAccessibleName("Send station ID")
         self.id_btn.clicked.connect(self.transmit_id_only)
-        id_layout.addWidget(self.id_btn)
-        main_layout.addLayout(id_layout)
+        row.addWidget(self.id_btn)
 
-        # Explicit tab order so keyboard users get a predictable traversal: Listen,
-        # target, message, Transmit, This is.
+        # Explicit tab order so keyboard users get a predictable traversal:
+        # Listen, target, message, Transmit, This is. Each call is local
+        # to the dock content so a future float doesn't break the chain.
         self.setTabOrder(self.listen_btn, self.target_dropdown)
         self.setTabOrder(self.target_dropdown, self.message_input)
         self.setTabOrder(self.message_input, self.transmit_btn)
         self.setTabOrder(self.transmit_btn, self.id_btn)
 
-        # Global keyboard shortcuts (in addition to menu shortcuts).
+        dock = QDockWidget("Transmit", self)
+        dock.setObjectName(dock_layout.DOCK_TRANSMIT)
+        # No Closable — the input row is operationally critical, hiding
+        # it would strand the operator with no TX path.
+        dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+        )
+        dock.setWidget(content)
+        dock.setTitleBarWidget(CompactTitleBar(dock))
+        dock_layout.install_dock_context_menu(self, dock)
+        self.transmit_dock = dock
+
+    def _build_status_bar(self):
+        """Status bar: online indicator on the right (matches OS taskbar
+        convention), transient `Ready`/event messages on the left."""
+        sb = self.statusBar()
+
+        # Internet-connectivity indicator. F-010: NoFocus so keyboard tab
+        # traversal skips this purely-informational widget.
+        self.online_indicator = QLabel(ONLINE_LABEL_ONLINE, sb)
+        self.online_indicator.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.online_indicator.setAccessibleName("Internet connectivity status")
+        self.online_indicator.setAccessibleDescription(
+            "Indicates whether online features (FCC callsign verification) "
+            "are available. Updates every 30 seconds."
+        )
+        sb.addPermanentWidget(self.online_indicator)
+        sb.showMessage("Ready")
+
+    def _install_global_shortcuts(self):
+        """Window-level keyboard shortcuts. Existing reservations:
+        Ctrl+L Listen, Ctrl+Return/Enter Transmit, Ctrl+I This-is,
+        Ctrl+K Clear chat (on menu), Ctrl+B Contacts (on menu),
+        Ctrl+, Configuration (on menu), Alt+1..9 quick-message presets,
+        Ctrl+Shift+W waterfall toggle (on menu).
+
+        Phase B adds the dock-management bindings: Ctrl+Shift+{S,P,Q,T}
+        toggle the four user-hideable docks, Ctrl+Shift+0 resets layout,
+        F6 / Shift+F6 walks keyboard focus across visible dock title bars
+        so operators who cannot drag with a mouse can still open the
+        per-dock Move-to / Float / Hide context menu via the Menu key.
+        """
         QShortcut(QKeySequence("Ctrl+L"), self, activated=self.listen_btn.toggle)
         QShortcut(QKeySequence("Ctrl+Return"), self, activated=self.transmit_message)
         QShortcut(QKeySequence("Ctrl+Enter"), self, activated=self.transmit_message)
         QShortcut(QKeySequence("Ctrl+I"), self, activated=self.transmit_id_only)
-        # Ctrl+K (clear chat) lives on the Settings → Clear chat menu action so
-        # the shortcut shows up next to the menu label and double-binding is
-        # avoided.
 
         # Alt+1 … Alt+9 fire the first nine quick-message presets, in order.
         # User-defined phrases can't carry unique alphabetic mnemonics so we
@@ -524,23 +706,68 @@ class MainWindow(QMainWindow):
                 activated=lambda index=i: self._send_preset(index),
             )
 
-        # Online/offline indicator was built into the service row above so
-        # it lives next to the action icons rather than down in the status
-        # bar. The refresh timer is owned here because init_ui is also
-        # responsible for the periodic re-probe schedule.
-        self._refresh_online_indicator()
-        self._online_timer = QTimer(self)
-        self._online_timer.setInterval(ONLINE_REFRESH_MS)
-        self._online_timer.timeout.connect(self._refresh_online_indicator)
-        self._online_timer.start()
+        QShortcut(
+            QKeySequence("Ctrl+Shift+S"), self,
+            activated=lambda: self._toggle_dock(self.station_dock),
+        )
+        QShortcut(
+            QKeySequence("Ctrl+Shift+P"), self,
+            activated=lambda: self._toggle_dock(self.pending_dock),
+        )
+        QShortcut(
+            QKeySequence("Ctrl+Shift+Q"), self,
+            activated=lambda: self._toggle_dock(self.quick_dock),
+        )
+        QShortcut(
+            QKeySequence("Ctrl+Shift+T"), self,
+            activated=lambda: self._toggle_dock(self.transmit_dock),
+        )
+        QShortcut(
+            QKeySequence("Ctrl+Shift+0"), self,
+            activated=self._reset_layout_to_default,
+        )
+        QShortcut(
+            QKeySequence("F6"), self,
+            activated=lambda: dock_layout.cycle_dock_focus(self, forward=True),
+        )
+        QShortcut(
+            QKeySequence("Shift+F6"), self,
+            activated=lambda: dock_layout.cycle_dock_focus(self, forward=False),
+        )
 
-        self.statusBar().showMessage("Ready")
+    def _toggle_dock(self, dock):
+        """Show/hide a dock via keyboard shortcut. For docks that aren't
+        Closable (Transmit) this simply re-shows when hidden, never hides."""
+        if dock.isVisible():
+            if dock.features() & QDockWidget.DockWidgetFeature.DockWidgetClosable:
+                dock.hide()
+            else:
+                dock.raise_()
+                dock.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        else:
+            dock.show()
+            dock.raise_()
 
-        # Reasonable minimum so high-DPI / large-font users don't get clipping.
-        self.setMinimumSize(720, 520)
+    def _reset_layout_to_default(self):
+        """View-menu / Ctrl+Shift+0 entry point: rebuild the documented
+        default arrangement, then re-apply spectrometer visibility so the
+        operator's last waterfall choice survives the reset."""
+        dock_layout.build_default_layout(self)
+        self.waterfall_dock.setVisible(self.spectro_settings.enabled)
+        self.spectro_widget.setVisible(self.spectro_settings.enabled)
 
-        # 4. Menus
-        self.create_menus()
+    def _on_waterfall_dock_visibility_changed(self, visible):
+        """A close-button click on the waterfall dock has to also stop
+        the FFT worker — invisible widgets don't get paint events but the
+        worker would keep producing rows. Mirrors the View-menu toggle."""
+        if not hasattr(self, "_spectro_toggle_action"):
+            return  # menu not built yet (init order race)
+        if visible == self.spectro_settings.enabled:
+            return
+        # Route through _on_spectro_toggle so persistence + worker
+        # lifecycle paths stay in one place.
+        self._spectro_toggle_action.setChecked(visible)
+        self._on_spectro_toggle(visible)
 
     def create_menus(self):
         menubar = self.menuBar()
@@ -648,6 +875,43 @@ class MainWindow(QMainWindow):
             win_menu.addAction(act)
             self._spectro_window_actions[sec] = act
 
+        # Panels submenu — every user-hideable dock gets a toggle action,
+        # plus a "Reset layout" entry that snaps everything back to the
+        # documented default arrangement. Built from the live dock
+        # instances so the labels follow ``setWindowTitle`` and a future
+        # rename doesn't drift the menu.
+        view_menu.addSeparator()
+        panels_menu = view_menu.addMenu("&Panels")
+        # Pair every dock that owns a toggleViewAction with its keyboard
+        # shortcut so the menu surfaces the binding next to the label.
+        dock_shortcuts = {
+            self.station_dock: "Ctrl+Shift+S",
+            self.waterfall_dock: "",  # Already on Ctrl+Shift+W via the action above
+            self.pending_dock: "Ctrl+Shift+P",
+            self.quick_dock: "Ctrl+Shift+Q",
+            self.transmit_dock: "Ctrl+Shift+T",
+        }
+        for dock, sequence in dock_shortcuts.items():
+            if dock is self.waterfall_dock:
+                # Waterfall toggling is owned by _spectro_toggle_action so
+                # the FFT worker lifecycle stays bound to the action. Use
+                # that action here too rather than the dock's toggleView.
+                continue
+            action = dock.toggleViewAction()
+            if sequence:
+                action.setShortcut(QKeySequence(sequence))
+            panels_menu.addAction(action)
+
+        panels_menu.addSeparator()
+        reset_action = QAction("&Reset layout to default", self)
+        reset_action.setShortcut(QKeySequence("Ctrl+Shift+0"))
+        reset_action.setStatusTip(
+            "Snap every panel back to the default arrangement. "
+            "Keeps your dark-mode and waterfall preferences."
+        )
+        reset_action.triggered.connect(self._reset_layout_to_default)
+        panels_menu.addAction(reset_action)
+
     def update_header(self):
         """Updates the top bar with current user info. In FRS mode the
         callsign segment is replaced with a 'FRS Mode' label since FRS has
@@ -705,8 +969,9 @@ class MainWindow(QMainWindow):
 
         Called from the toggle path. Touches: theme-icon glyph, header
         label stylesheet, pending-pill stylesheets, chat-display fragment
-        recoloring, online indicator. Idempotent — safe to call from any
-        path that just rebuilt the palette."""
+        recoloring, online indicator, every dock's compact title bar,
+        and the service toolbar's focus-ring style. Idempotent — safe to
+        call from any path that just rebuilt the palette."""
         self._refresh_theme_toggle_glyph()
         if hasattr(self, "header_label"):
             self.header_label.setStyleSheet(theme.header_stylesheet())
@@ -715,6 +980,15 @@ class MainWindow(QMainWindow):
             self.chat_display.restyle_for_theme()
         if hasattr(self, "online_indicator"):
             self._refresh_online_indicator()
+        # Dock title bars and the service toolbar have their own stylesheets;
+        # both need a refresh because they reference palette colors
+        # (focus ring, title-bar background) that flip with the theme.
+        for dock in self.findChildren(QDockWidget):
+            bar = dock.titleBarWidget()
+            if isinstance(bar, CompactTitleBar):
+                bar.refresh_palette()
+        if hasattr(self, "_service_toolbar"):
+            self._service_toolbar.setStyleSheet(theme.toolbar_focus_stylesheet())
 
     def _refresh_theme_toggle_glyph(self):
         """Set the toggle's glyph + tooltip to advertise the next theme.
@@ -778,10 +1052,18 @@ class MainWindow(QMainWindow):
         self.online_indicator.setVisible(not is_frs)
 
         # Pending bar: hide and clear in FRS so old pills don't linger.
+        # Also hide the dock chrome itself so the operator doesn't see an
+        # empty "Pending Stations" frame whose only mode is invisible.
         if is_frs:
             self._clear_all_pending_pills()
         self.pending_scroll.setVisible(not is_frs and bool(self.pending_buttons))
         self.clear_pending_btn.setVisible(not is_frs and bool(self.pending_buttons))
+        if hasattr(self, "pending_dock"):
+            # GMRS with zero pills also collapses the dock to keep an empty
+            # titled panel from sitting on screen at startup.
+            self.pending_dock.setVisible(
+                not is_frs and bool(self.pending_buttons)
+            )
 
         # Contacts menu action — disable with explanatory tooltip so users
         # discover the feature exists and know how to re-enable it.
@@ -922,6 +1204,11 @@ class MainWindow(QMainWindow):
             self.quick_messages_flow.addWidget(btn)
 
         self.quick_messages_widget.setVisible(bool(presets))
+        # Hide the whole dock chrome when the operator has no saved
+        # presets — keeping the dock visible would leave an empty
+        # "Quick Messages" frame on screen with no actionable content.
+        if hasattr(self, "quick_dock"):
+            self.quick_dock.setVisible(bool(presets))
 
     def _send_preset(self, index):
         """Alt+N hotkey path: pick the Nth preset (0-indexed) and send it
@@ -1122,6 +1409,11 @@ class MainWindow(QMainWindow):
         self.spectro_settings.enabled = bool(checked)
         if self.spectro_widget is not None:
             self.spectro_widget.setVisible(self.spectro_settings.enabled)
+        if hasattr(self, "waterfall_dock"):
+            # The dock holds the widget; toggling the inner widget alone
+            # leaves an empty dock chrome on screen. Hide the dock too so
+            # the View → Show waterfall action surfaces a coherent state.
+            self.waterfall_dock.setVisible(self.spectro_settings.enabled)
         if self.spectro_settings.enabled:
             # Mirror the STT lifecycle: if listening is active when the
             # operator turns the waterfall on, start the FFT worker too so
@@ -1535,6 +1827,11 @@ class MainWindow(QMainWindow):
         has_pills = bool(self.pending_buttons)
         self.clear_pending_btn.setVisible(has_pills)
         self.pending_scroll.setVisible(has_pills)
+        # Hide the dock chrome too when empty so the operator doesn't
+        # see a titled-but-empty "Pending Stations" panel. _apply_service_mode
+        # owns the FRS-hide path, so only flip visibility from GMRS here.
+        if hasattr(self, "pending_dock") and self._service_mode() != SERVICE_FRS:
+            self.pending_dock.setVisible(has_pills)
 
     def _cap_pending_scroll_height(self, sample_btn):
         """Lock the pending-pill scroll area to PENDING_PILL_MAX_ROWS rows.

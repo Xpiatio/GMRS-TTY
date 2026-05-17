@@ -1,12 +1,12 @@
 """Dark-mode toggle on MainWindow.
 
-A 🌙 / ☀️ QToolButton sits on the service row, between the FRS radio's
-stretch spacer and the Q quick-messages icon. Clicking it flips the
-active palette, persists ``dark_mode`` to config.json, and repaints
+A 🌙 / ☀️ QToolButton sits on the service toolbar, between the FRS
+radio's stretch spacer and the Q quick-messages icon. Clicking it flips
+the active palette, persists ``dark_mode`` to config.json, and repaints
 every widget that hardcodes colors outside QPalette (header label,
-pending-station pills, chat display, online indicator). On startup the
-persisted preference is honored so the user lands in the theme they
-last selected.
+pending-station pills, chat display, online indicator, dock title bars).
+On startup the persisted preference is honored so the user lands in the
+theme they last selected.
 """
 import os
 from unittest.mock import patch
@@ -16,9 +16,17 @@ import pytest
 pytest.importorskip("PySide6")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QToolBar  # noqa: E402
 
 from gmrs_tty.ui import theme  # noqa: E402
+
+
+def _service_toolbar_widgets(window):
+    """Return the widgets hosted by the service toolbar, left-to-right."""
+    toolbar = window.findChild(QToolBar, "toolbar.service")
+    if toolbar is None:
+        return []
+    return [a.defaultWidget() for a in toolbar.actions()]
 
 
 @pytest.fixture(scope="module")
@@ -74,64 +82,37 @@ def reset_theme():
 
 class TestThemeToggleButtonExists:
     def test_button_lives_on_service_row(self, qapp, reset_theme):
-        # The toggle has to be reachable from the same top-row layout as
-        # the GMRS/FRS radios and the icon strip — we don't want it
-        # buried in a menu where its discoverability collapses.
+        # The toggle has to be reachable from the service toolbar so it
+        # sits alongside the GMRS/FRS radios and the icon strip — we
+        # don't want it buried in a menu where discoverability collapses.
         window = _make_window(qapp)
         try:
-            btn = window.theme_toggle_btn
-            layout = btn.parent().layout()
-            found = False
-            for i in range(layout.count() if layout else 0):
-                item = layout.itemAt(i)
-                sub = item.layout() if item is not None else None
-                if sub is None:
-                    continue
-                for j in range(sub.count()):
-                    if sub.itemAt(j).widget() is btn:
-                        found = True
-                        break
-                if found:
-                    break
-            assert found, "theme toggle must live inside the service-row layout"
+            assert window.theme_toggle_btn in _service_toolbar_widgets(window), (
+                "theme toggle must be hosted by the service toolbar"
+            )
         finally:
             window.close()
 
     def test_button_is_leftmost_in_icon_strip(self, qapp, reset_theme):
-        # Layout intent: [🌙] | [Q] | [👤] | [⚙️]. The theme toggle goes first
-        # because it's the only icon that isn't "open a dialog" — grouping
-        # the three dialog-launchers on the right keeps the visual rhythm.
+        # Layout intent: [🌙] | [Q] | [👤] | [⚙️]. The theme toggle goes
+        # first because it's the only icon that isn't "open a dialog" —
+        # grouping the three dialog-launchers on the right keeps the
+        # visual rhythm.
         window = _make_window(qapp)
         try:
+            widgets = _service_toolbar_widgets(window)
             theme_btn = window.theme_toggle_btn
             q_btn = window.quick_messages_icon_btn
             contacts_btn = window.contacts_icon_btn
             config_btn = window.config_icon_btn
-            layout = theme_btn.parent().layout()
-            for i in range(layout.count()):
-                sub = layout.itemAt(i).layout()
-                if sub is None:
-                    continue
-                indices = {}
-                for j in range(sub.count()):
-                    w = sub.itemAt(j).widget()
-                    if w is theme_btn:
-                        indices["theme"] = j
-                    elif w is q_btn:
-                        indices["q"] = j
-                    elif w is contacts_btn:
-                        indices["contacts"] = j
-                    elif w is config_btn:
-                        indices["config"] = j
-                if len(indices) == 4:
-                    assert (
-                        indices["theme"]
-                        < indices["q"]
-                        < indices["contacts"]
-                        < indices["config"]
-                    ), f"icon order must be theme → Q → contacts → config, got {indices}"
-                    return
-            pytest.fail("could not locate all four icons in the service row")
+            for btn in (theme_btn, q_btn, contacts_btn, config_btn):
+                assert btn in widgets, f"missing {btn.accessibleName()} from toolbar"
+            assert (
+                widgets.index(theme_btn)
+                < widgets.index(q_btn)
+                < widgets.index(contacts_btn)
+                < widgets.index(config_btn)
+            ), "icon order must be theme → Q → contacts → config"
         finally:
             window.close()
 
