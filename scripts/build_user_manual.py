@@ -592,6 +592,23 @@ def build_main_window(b: Builder):
                           "while active so the state is visible at a "
                           "glance, and the accessible description updates "
                           "for screen readers."),
+        ("Listen only (RX-only safety)", "Sits immediately right of the "
+                          "Listen toggle. Mnemonic Alt+O. Checkable: when "
+                          "on, every TX path is blocked — Transmit, "
+                          "<b>This is</b>, Enter-to-send in the message "
+                          "box, the quick-message preset buttons, and the "
+                          "Ctrl+Return / Ctrl+I / Alt+1…Alt+9 global "
+                          "shortcuts all refuse to fire (the buttons grey "
+                          "out so the gate is visible). Microphone "
+                          "capture, transcription, callsign detection, "
+                          "attendance, and the chat surface keep working "
+                          "normally. Persists to "
+                          "<font face=\"Courier\">config.json</font> "
+                          "under <font face=\"Courier\">listen_only"
+                          "</font>, so an operator who finishes a session "
+                          "in RX-only mode comes back up the same way. "
+                          "Toggling back off re-enables transmission "
+                          "instantly."),
         ("Live input-level meter", "Thin horizontal bar stretching across "
                                    "the middle of the strip — real-time "
                                    "peak amplitude of the captured audio. "
@@ -724,7 +741,46 @@ def build_main_window(b: Builder):
         "Acknowledged, Say again, QSY to channel {N}, Clear, Monitoring, "
         "Net check-in, Emergency traffic</i>.")
 
-    b.h3("5.8 Status bar")
+    b.h3("5.8 Attendance panel (dock — Ctrl+Shift+A)")
+    b.p("A roll-call grid that records every callsign detected during "
+        "the current Listen session. Docked at the bottom by default, "
+        "tabbed with Pending Stations and Quick Messages. "
+        "<b>Off by default</b> — enable it from "
+        "<b>View → Show attendance</b> or "
+        "<b>Settings → Configuration → Attendance grid</b> (Alt+A in "
+        "the dialog). Persists at "
+        "<font face=\"Courier\">attendance.enabled</font> in "
+        "<font face=\"Courier\">config.json</font>. Disabled in FRS "
+        "mode alongside every other callsign-dependent surface.")
+    b.bullets([
+        ("Columns", "<b>Callsign | Name | Location | GMRS | HAM</b>. "
+                    "Read-only; the grid is for reference, not editing. "
+                    "Name and Location stretch; the callsign columns "
+                    "resize to fit content."),
+        ("Auto-population", "Unknown callsigns appear with only the "
+                            "Callsign column filled. The moment that "
+                            "callsign is added to (or already in) "
+                            "Contacts, the remaining four columns fill "
+                            "in automatically from the contact row — "
+                            "adding a station retroactively fills its "
+                            "attendance row."),
+        ("Order", "Insertion order, deduplicated — the first station "
+                  "heard sits at the top. Re-hearing a callsign within "
+                  "the same session does not add a second row."),
+        ("Reset on Listen cycle", "The grid clears on every Listen "
+                                   "off→on transition so each session "
+                                   "starts fresh. Stopping Listen "
+                                   "preserves the current grid for "
+                                   "review until the next session "
+                                   "begins."),
+        ("Clear attendance button", "Sits below the table. Mnemonic "
+                                     "Alt+A when the panel has focus. "
+                                     "Empties the grid immediately; "
+                                     "future detections still log "
+                                     "normally."),
+    ])
+
+    b.h3("5.9 Status bar")
     b.p("Carries a permanent <b>Online</b> / <b>Offline</b> indicator on "
         "the right edge (matching the OS taskbar convention). Green ● "
         "for online, amber ○ for offline. Updates every 30 seconds. The "
@@ -735,7 +791,7 @@ def build_main_window(b: Builder):
         "status bar shows transient messages (Ready, STT status, "
         "waterfall activity).")
 
-    b.h3("5.9 Menubar")
+    b.h3("5.10 Menubar")
     b.p("Two menus: <b>Settings</b> (Alt+S) and <b>View</b> (Alt+V).")
     b.p("Settings contains:")
     b.bullets([
@@ -749,12 +805,16 @@ def build_main_window(b: Builder):
         ("Clear chat (Alt+R or Ctrl+K)", "Erases every message from the "
                                           "log after a Yes/No confirmation."),
     ])
-    b.p("View contains the waterfall toggle (Show waterfall, Ctrl+Shift+W) "
-        "and its three submenus (Color map, Frequency range, Time "
-        "window), plus a <b>Panels</b> submenu carrying the show/hide "
-        "checkboxes for Station, Pending Stations, Quick Messages, and "
-        "Transmit, and a <b>Reset layout to default</b> action "
-        "(Ctrl+Shift+0).")
+    b.p("View contains the waterfall toggle (Show waterfall, "
+        "Ctrl+Shift+W) and its three submenus (Color map, Frequency "
+        "range, Time window), the attendance toggle "
+        "(<b>Show attendance</b>, Ctrl+Shift+A — keeps "
+        "<font face=\"Courier\">attendance.enabled</font> in sync with "
+        "the Configuration dialog checkbox so both surfaces are "
+        "interchangeable), a <b>Panels</b> submenu carrying the "
+        "show/hide checkboxes for Station, Pending Stations, Quick "
+        "Messages, and Transmit, and a <b>Reset layout to default</b> "
+        "action (Ctrl+Shift+0).")
 
 
 def build_config_dialog(b: Builder):
@@ -800,6 +860,21 @@ def build_config_dialog(b: Builder):
              "Mask strong language with asterisks. Default on. Applies "
              "to both RX transcripts and TX messages before TTS speaks "
              "them."],
+            ["Fuzzy callsigns (Alt+U)", "Checkbox",
+             "Default off. When on, an incoming callsign that differs "
+             "from a saved contact by exactly one same-class character "
+             "(letter-for-letter or digit-for-digit) is rewritten in "
+             "the chat to the canonical contact callsign and the "
+             "pending-station pill is suppressed. Ambiguous near-misses "
+             "(two contacts equally one character away) are left alone. "
+             "See section 15.4."],
+            ["Attendance grid (Alt+A)", "Checkbox",
+             "Default off. Enables the Attendance dock — a roll-call "
+             "grid of every callsign detected in the current Listen "
+             "session. Persists at "
+             "<font face=\"Courier\">attendance.enabled</font>. Also "
+             "toggleable from View → Show attendance "
+             "(Ctrl+Shift+A). GMRS only."],
             ["PTT Mode (Alt+P)", "Dropdown",
              "Manual / VOX / USB FTDI / Serial. See section 12."],
             ["Serial Port (Alt+S)", "Text",
@@ -959,6 +1034,7 @@ def build_keyboard(b: Builder):
             ["Open Contacts dialog", "Ctrl+B"],
             ["Send quick message preset 1–9", "Alt+1 … Alt+9"],
             ["Toggle Waterfall panel", "Ctrl+Shift+W"],
+            ["Toggle Attendance panel", "Ctrl+Shift+A"],
             ["Toggle Station panel", "Ctrl+Shift+S"],
             ["Toggle Pending Stations panel", "Ctrl+Shift+P"],
             ["Toggle Quick Messages panel", "Ctrl+Shift+Q"],
@@ -976,6 +1052,7 @@ def build_keyboard(b: Builder):
             ["FRS radio", "Alt+F"],
             ["Clear chat button", "Alt+C"],
             ["Listen button", "Alt+L"],
+            ["Listen only toggle (RX-only safety)", "Alt+O"],
             ["Transmit button", "Alt+T"],
             ["This is button", "Alt+I"],
             ["Dismiss all (pending pills)", "Alt+D"],
@@ -1009,6 +1086,8 @@ def build_keyboard(b: Builder):
             ["VAD Threshold", "Alt+D"],
             ["Time Format", "Alt+F"],
             ["Filter profanity", "Alt+Y"],
+            ["Fuzzy callsigns", "Alt+U"],
+            ["Attendance grid", "Alt+A"],
             ["PTT Mode", "Alt+P"],
             ["Serial Port", "Alt+S"],
             ["Control Line", "Alt+E"],
@@ -1128,6 +1207,22 @@ def build_rx(b: Builder):
         "Anywhere else (or if you've selected a specific input device "
         "index in Configuration), PortAudio is used directly.",
     ])
+    b.h3("Squelch-open pre-trigger")
+    b.p("A peak-amplitude edge detector watches every captured chunk so "
+        "the leading syllables of a transmission survive Silero VAD's "
+        "onset latency. The moment a remote operator's carrier opens — "
+        "audio jumps above the noise floor for two consecutive ~32 ms "
+        "chunks — the app starts buffering chunks in a rolling deque "
+        "capped at roughly 2 s. When VAD then fires on real speech, the "
+        "entire pre-voice buffer is prepended to the utterance before "
+        "bandpass, denoise, and Whisper. When the carrier instead closes "
+        "again (peak below threshold for ~500 ms) without VAD ever "
+        "firing — a kerchunk, accidental key, or stray noise burst — "
+        "the buffer is discarded and nothing reaches the chat.")
+    b.p("The detector's thresholds and hysteresis are tuned defaults, "
+        "not user-configurable. Operators should not need to think about "
+        "this stage; it exists so the first word of a transmission "
+        "isn't clipped.")
     b.h3("Voice activity detection (VAD)")
     b.bullets([
         ("Silero VAD", "Neural VAD. Only audio it scores as speech is "
@@ -1169,6 +1264,35 @@ def build_rx(b: Builder):
                               "masked with asterisks before it lands "
                               "in the chat log."),
     ])
+    b.h3("Streaming transcription for long utterances")
+    b.p("Short transmissions are transcribed in one shot — the operator "
+        "sees a single RX line drop into the chat at the unkey. Anything "
+        "that runs longer than about 5 s is sliced and transcribed "
+        "incrementally so the chat doesn't sit blank during a long "
+        "monologue:")
+    b.bullets([
+        "Once the captured speech crosses ~5 s, the capture loop scans "
+        "the next 500 ms for the quietest point and cuts there — slice "
+        "boundaries land between words, not mid-syllable.",
+        "Each slice is handed to a background Whisper thread under a "
+        "shared utterance id so the capture loop never blocks waiting "
+        "for inference.",
+        "Partials arrive in order and the chat renders them as a single "
+        "growing line — "
+        "<font face=\"Courier\">[RX 14:32:01]: hello bob how are you "
+        "today&hellip;</font> — rather than as separate messages.",
+        "Every partial still rides the full bandpass + denoise + "
+        "hallucination-filter chain. Callsign-discovery scanning runs "
+        "once over the full accumulated text when the final segment "
+        "lands, so a callsign split across slices is detected exactly "
+        "once.",
+    ])
+    b.note(
+        "Slice length and the cut-search window are tuned constants, "
+        "not configuration knobs. The operator-facing contract is "
+        "simple: short utterances arrive whole at unkey, long ones "
+        "stream in as they're spoken."
+    )
 
 
 def build_tx(b: Builder):
@@ -1293,6 +1417,46 @@ def build_callsign_detection(b: Builder):
         "<font face=\"Courier\">verified_at</font> timestamp. Newly "
         "added rows, in-dialog edits, and previously-failed lookups "
         "all earn a fresh round trip."
+    )
+    b.h3("15.4 Fuzzy callsign matching (opt-in)")
+    b.p("Whisper occasionally mishears a single character of a "
+        "callsign — <font face=\"Courier\">WSLZ233</font> arriving as "
+        "<font face=\"Courier\">WSLZ235</font>, or "
+        "<font face=\"Courier\">WSIZ233</font> with an "
+        "<i>L</i>/<i>I</i> swap. The <b>Fuzzy callsigns</b> checkbox in "
+        "Configuration (Alt+U; off by default) rewrites these near-"
+        "misses to the canonical contact callsign so the chat doesn't "
+        "fragment a single operator into half a dozen near-duplicates.")
+    b.p("Match rules:")
+    b.bullets([
+        "Same length as a saved contact's callsign.",
+        "Exactly one character differs.",
+        "The differing characters are the same class — letter-for-"
+        "letter or digit-for-digit. A digit misheard as a letter "
+        "(or vice-versa) is rejected because it usually indicates a "
+        "genuinely different callsign rather than a transcription "
+        "slip.",
+        "Unambiguous — if two saved contacts are equally one "
+        "character away, the detected token is left alone so the "
+        "operator can resolve it manually.",
+    ])
+    b.p("Effects when a rewrite fires:")
+    b.bullets([
+        "The chat line shows the canonical callsign and picks up the "
+        "amber contact pill, FCC ✓ check, and hover tooltip.",
+        "The pending-station pill is suppressed — no spurious "
+        "“+ Add” prompt for a near-miss of a known operator.",
+        "Toggling the checkbox mid-session retroactively rewrites "
+        "near-misses in chat lines already on screen. Toggling it back "
+        "off does not undo prior rewrites; the canonical form is "
+        "already visible and accurate.",
+    ])
+    b.note(
+        "Fuzzy matching only ever rewrites <i>toward</i> a callsign "
+        "you've already saved. It cannot invent a new callsign or "
+        "merge two contacts. The opt-in default keeps the app's "
+        "received-text contract literal by default — turn it on only "
+        "if your STT environment regularly chews a single character."
     )
 
 
@@ -1481,6 +1645,9 @@ def build_files(b: Builder):
         '    "vad_threshold": 0.5,\n'
         '    "time_format": "24h",\n'
         '    "filter_profanity": true,\n'
+        '    "fuzzy_callsign": false,\n'
+        '    "listen_only": false,\n'
+        '    "attendance": { "enabled": false },\n'
         '    "ptt_mode": "manual",\n'
         '    "ptt_serial_port": "",\n'
         '    "ptt_serial_line": "RTS",\n'
@@ -1505,6 +1672,20 @@ def build_files(b: Builder):
                                           "PortAudio device index."),
         ("tts_length_scale", "0.70–1.50. Higher is slower."),
         ("vad_threshold", "0.10–0.95. Higher is stricter."),
+        ("listen_only", "Boolean. When true the app blocks every TX "
+                        "path at launch (matches the Alt+O toggle on the "
+                        "Listen strip). Microphone capture and "
+                        "transcription still run."),
+        ("fuzzy_callsign", "Boolean. Off by default. When true a "
+                            "detected callsign that differs from a "
+                            "saved contact by exactly one same-class "
+                            "character is rewritten to the canonical "
+                            "form in chat. See section 15.4."),
+        ("attendance", "Nested object. <font face=\"Courier\">"
+                       "{\"enabled\": &lt;bool&gt;}</font>. Default "
+                       "false. Controls the Attendance dock. Nested so "
+                       "future per-session options can land here "
+                       "without churning the top-level schema."),
         ("ptt_mode", "<font face=\"Courier\">manual</font>, <font "
                      "face=\"Courier\">vox</font>, or <font face="
                      "\"Courier\">usb_ftdi</font>."),
