@@ -28,7 +28,11 @@ from gmrs_tty.persistence.contacts import (
 from gmrs_tty.persistence.json_store import load_json, save_json
 from gmrs_tty.ptt import make_ptt
 from gmrs_tty.stt.worker import STTWorker
-from gmrs_tty.text.callsigns import detect_callsigns, spell_digits_in_callsigns
+from gmrs_tty.text.callsigns import (
+    detect_callsigns,
+    fuzzy_match_callsign,
+    spell_digits_in_callsigns,
+)
 from gmrs_tty.text.metadata import extract_name_location
 from gmrs_tty.text.profanity import mask_profanity
 from gmrs_tty.text.placeholders import find_placeholders, substitute_placeholders
@@ -1128,9 +1132,16 @@ class MainWindow(QMainWindow):
                 self.config.get("ptt_serial_port", ""),
                 self.config.get("ptt_serial_line", "RTS"),
             )
+            old_fuzzy = bool(self.config.get("fuzzy_callsign", False))
             self.config = dlg.get_config()
             save_json(CONFIG_FILE, self.config)
             self.update_header()
+            if old_fuzzy != bool(self.config.get("fuzzy_callsign", False)):
+                # Push the new toggle state to the chat widget and rescan
+                # existing lines so the operator sees the effect immediately
+                # — turning on retro-corrects past near-misses, turning off
+                # leaves prior rewrites in place (they're already canonical).
+                self._refresh_callsign_index()
             stt_settings_changed = (
                 old_device != self.config.get("input_device", -1)
                 or old_threshold != self.config.get("vad_threshold", 0.5)
@@ -1559,6 +1570,14 @@ class MainWindow(QMainWindow):
         else:
             index = index_contacts_by_callsign(self.contacts)
         self.chat_display.set_callsign_index(index)
+        # Fuzzy mode is meaningless without an index, and meaningless in FRS
+        # mode where there are no callsigns to be fuzzy about. Pushing the
+        # flag here keeps the chat widget's state in sync with the active
+        # service alongside the index it depends on.
+        self.chat_display.set_fuzzy_enabled(
+            self._service_mode() != SERVICE_FRS
+            and bool(self.config.get("fuzzy_callsign", False))
+        )
         self.chat_display.rescan_all_blocks()
 
     def toggle_listening(self, on):
@@ -1701,8 +1720,16 @@ class MainWindow(QMainWindow):
         # scan so a single utterance picks a consistent verdict for every
         # callsign it surfaces.
         online = is_online()
+        fuzzy_on = bool(self.config.get("fuzzy_callsign", False))
         for cs in detected:
             if cs == my_call or cs in known or cs in self.pending_buttons:
+                continue
+            # With fuzzy logic on, an off-by-one detection is treated as a
+            # hit on the neighbor — the chat already rewrites the token, so
+            # surfacing a pending-station pill would invite the operator to
+            # save a duplicate contact for what's really a transcription
+            # mishear.
+            if fuzzy_on and fuzzy_match_callsign(cs, known):
                 continue
             name, location = extract_name_location(text, cs)
             self.add_pending_station(cs, name, location)

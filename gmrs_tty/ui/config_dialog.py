@@ -95,6 +95,26 @@ class ConfigDialog(QDialog):
             "with asterisks. Recommended for GMRS operation."
         )
 
+        self.fuzzy_callsign_input = QCheckBox(
+            "Replace near-miss callsigns with the closest contact"
+        )
+        self.fuzzy_callsign_input.setChecked(
+            bool(self.config.get("fuzzy_callsign", False))
+        )
+        self.fuzzy_callsign_input.setToolTip(
+            "Fuzzy callsign logic: when an incoming callsign differs from a "
+            "saved contact by exactly one letter or digit, rewrite it in the "
+            "chat log to the known callsign and skip the '+ Add' pending pill. "
+            "Helpful when STT mishears a single character; ambiguous cases "
+            "(two contacts equally close) are left alone."
+        )
+        self.fuzzy_callsign_input.setAccessibleName("Fuzzy callsign logic")
+        self.fuzzy_callsign_input.setAccessibleDescription(
+            "When enabled, a detected callsign that is off by one character "
+            "from a contact is rewritten in the chat to that contact's "
+            "callsign and the pending-station prompt is suppressed."
+        )
+
         voices = glob.glob(os.path.join("Voices", "*.onnx"))
         if not voices:
             self.voice_input.addItem("No voices found in Voices/", "")
@@ -180,6 +200,7 @@ class ConfigDialog(QDialog):
         layout.addRow("VA&D Threshold:", self.vad_threshold_input)
         layout.addRow("Time &Format:", self.time_format_input)
         layout.addRow("Filter profanit&y:", self.filter_profanity_input)
+        layout.addRow("F&uzzy callsigns:", self.fuzzy_callsign_input)
         layout.addRow("&PTT Mode:", self.ptt_mode_input)
         layout.addRow("&Serial Port:", self.ptt_serial_port_input)
         layout.addRow("Control Lin&e:", self.ptt_serial_line_input)
@@ -227,6 +248,7 @@ class ConfigDialog(QDialog):
             "vad_threshold": round(self.vad_threshold_input.value(), 2),
             "time_format": self.time_format_input.currentData(),
             "filter_profanity": self.filter_profanity_input.isChecked(),
+            "fuzzy_callsign": self.fuzzy_callsign_input.isChecked(),
             "ptt_mode": self.ptt_mode_input.currentData(),
             "ptt_serial_port": self.ptt_serial_port_input.text().strip(),
             "ptt_serial_line": self.ptt_serial_line_input.currentData(),

@@ -27,13 +27,15 @@ class _FakePTT:
         pass
 
 
-def _make_window(qapp, contacts):
+def _make_window(qapp, contacts, extra_config=None):
     from gmrs_tty.ui import main_window as mw_mod
 
     config = {
         "callsign": "WSAA111", "name": "Operator", "location": "Home",
         "filter_profanity": False, "voice": "", "quick_messages": [],
     }
+    if extra_config:
+        config.update(extra_config)
 
     def fake_load_json(path, default):
         if isinstance(default, dict):
@@ -84,5 +86,50 @@ class TestScanRespectsCrossReferences:
         try:
             w.scan_for_unknown_stations("hello KE8NEW here")
             assert "KE8NEW" in w.pending_buttons
+        finally:
+            w.close()
+
+
+class TestScanRespectsFuzzyToggle:
+    """With the fuzzy_callsign toggle on, a detected callsign that differs from
+    a known one by exactly one character is treated as a hit — no '+ Add' pill
+    is created for it. With the toggle off, off-by-one detections still pill
+    as new stations (preserving the historical behavior for users who want
+    every near-miss surfaced for manual review)."""
+
+    def test_off_by_one_suppressed_when_fuzzy_on(self, qapp):
+        w = _make_window(
+            qapp,
+            [{"callsign": "WSLZ233", "name": "Benjamin"}],
+            extra_config={"fuzzy_callsign": True},
+        )
+        try:
+            w.scan_for_unknown_stations("hello WSLZ234 here")
+            assert "WSLZ234" not in w.pending_buttons
+        finally:
+            w.close()
+
+    def test_off_by_one_still_pills_when_fuzzy_off(self, qapp):
+        w = _make_window(
+            qapp,
+            [{"callsign": "WSLZ233", "name": "Benjamin"}],
+            extra_config={"fuzzy_callsign": False},
+        )
+        try:
+            w.scan_for_unknown_stations("hello WSLZ234 here")
+            assert "WSLZ234" in w.pending_buttons
+        finally:
+            w.close()
+
+    def test_two_off_still_pills_when_fuzzy_on(self, qapp):
+        # Two-character difference is beyond fuzzy reach: this is a new call.
+        w = _make_window(
+            qapp,
+            [{"callsign": "WSLZ233", "name": "Benjamin"}],
+            extra_config={"fuzzy_callsign": True},
+        )
+        try:
+            w.scan_for_unknown_stations("hello WSLZ244 here")
+            assert "WSLZ244" in w.pending_buttons
         finally:
             w.close()
