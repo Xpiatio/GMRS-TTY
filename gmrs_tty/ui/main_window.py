@@ -6,16 +6,14 @@ from piper.voice import PiperVoice
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QButtonGroup, QComboBox, QFrame, QHBoxLayout, QInputDialog, QLabel,
-    QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton,
-    QRadioButton, QScrollArea, QToolButton, QVBoxLayout, QWidget,
+    QApplication, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QInputDialog,
+    QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar,
+    QPushButton, QRadioButton, QScrollArea, QToolButton, QVBoxLayout, QWidget,
 )
 
 from gmrs_tty.audio.playback import AudioPlayerThread
 from gmrs_tty.constants import (
-    COLOR_ERROR, COLOR_RX, COLOR_TX, COLOR_WARN,
     CONFIG_FILE, CONTACTS_FILE,
-    PILL_BG, PILL_BORDER, PILL_TEXT,
     SERVICE_FRS, SERVICE_GMRS, normalize_service,
 )
 from gmrs_tty.fcc.id_rule import format_outgoing_message, format_standalone_id
@@ -34,6 +32,7 @@ from gmrs_tty.text.profanity import mask_profanity
 from gmrs_tty.text.placeholders import find_placeholders, substitute_placeholders
 from gmrs_tty.text.shorthand import expand_tty_abbreviations
 from gmrs_tty.tts.synthesizer import TTSSynthesisThread
+from gmrs_tty.ui import theme
 from gmrs_tty.ui.chat_display import ChatDisplay
 from gmrs_tty.ui.config_dialog import ConfigDialog
 from gmrs_tty.ui.contacts_dialog import AddContactDialog, ContactsDialog
@@ -50,8 +49,14 @@ ONLINE_REFRESH_MS = 30_000
 
 ONLINE_LABEL_ONLINE = "● Online"
 ONLINE_LABEL_OFFLINE = "○ Offline"
-ONLINE_COLOR_ONLINE = "#15803D"   # green-700, matches COLOR_RX
-ONLINE_COLOR_OFFLINE = "#92400E"  # amber-800, matches COLOR_WARN
+
+# Theme-toggle glyphs. The icon shows the *destination* state — when the
+# user is in light mode, the moon invites them to switch to dark; once in
+# dark mode the sun invites the return trip. Mirrors the GitHub / Twitter
+# convention so the cue reads as "click to become this" rather than
+# "you are this".
+THEME_GLYPH_TO_DARK = "\U0001F319"   # 🌙 crescent moon
+THEME_GLYPH_TO_LIGHT = "☀️"  # ☀️ sun
 
 
 class MainWindow(QMainWindow):
@@ -88,6 +93,14 @@ class MainWindow(QMainWindow):
         self._callsign_lookups = {}
         self.ptt = make_ptt(self.config)
 
+        # Apply persisted theme before init_ui so the header label, pending
+        # pills, and chat-display all paint in the right palette on the
+        # first frame instead of flashing light-then-dark.
+        theme.apply_theme(
+            QApplication.instance(),
+            bool(self.config.get("dark_mode", False)),
+        )
+
         self.init_ui()
         self._sync_service_radios()
         self.update_header()
@@ -107,7 +120,7 @@ class MainWindow(QMainWindow):
                 f"<code>python bootstrap_models.py --model {model_name}</code> "
                 f"on an internet-connected machine and copy the resulting "
                 f"<code>Models/</code> directory here.</i>",
-                color=COLOR_WARN,
+                color=theme.palette().warn,
             )
 
     def closeEvent(self, event):
@@ -178,14 +191,32 @@ class MainWindow(QMainWindow):
         service_row.addWidget(self.gmrs_radio)
         service_row.addWidget(self.frs_radio)
         service_row.addStretch(1)
-        # Right-anchored quick-access icon trio: Q (Quick Messages) | 👤
-        # (Contacts) | ⚙️ (Configuration). Left-to-right order goes from
-        # most-used (message presets) to least-used (settings) with the
-        # cog wheel rightmost, matching the established "settings last on
-        # a toolbar" convention. All three share one font bump so the row
-        # height stays balanced.
+        # Right-anchored quick-access icon strip: 🌙/☀️ (theme) | Q (Quick
+        # Messages) | 👤 (Contacts) | ⚙️ (Configuration). Theme sits leftmost
+        # because it's the only item that isn't "open a dialog" — placing it
+        # next to the stretch keeps the dialog-launching icons visually
+        # grouped on the right. The cog stays rightmost per the established
+        # "settings last on a toolbar" convention. All icons share one font
+        # bump so the row height stays balanced.
         icon_font = QFont(self.font())
         icon_font.setPointSize(icon_font.pointSize() + 4)
+
+        # Theme (dark-mode) toggle. The glyph reflects the *destination*
+        # state — moon when in light, sun when in dark — so the affordance
+        # reads as "click to become this". Stays enabled in FRS mode; the
+        # theme is service-agnostic.
+        self.theme_toggle_btn = QToolButton(self)
+        self.theme_toggle_btn.setFont(icon_font)
+        self.theme_toggle_btn.setAutoRaise(True)
+        self.theme_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.theme_toggle_btn.setAccessibleName("Toggle dark mode")
+        self.theme_toggle_btn.setAccessibleDescription(
+            "Switch the application between light and dark color themes. "
+            "Your choice is saved and restored on next launch."
+        )
+        self.theme_toggle_btn.clicked.connect(self.toggle_theme)
+        self._refresh_theme_toggle_glyph()
+        service_row.addWidget(self.theme_toggle_btn)
 
         # Quick Messages icon. Plain bold "Q" — the operator already learns
         # "Q" as the symbol for this strip via the menu mnemonic, so the
@@ -241,6 +272,21 @@ class MainWindow(QMainWindow):
         self.config_icon_btn.setToolTip("Configuration (Ctrl+,)")
         self.config_icon_btn.clicked.connect(self.open_config_dialog)
         service_row.addWidget(self.config_icon_btn)
+
+        # Internet-connectivity indicator. Sits at the far-right of the
+        # service row (after the action icons) so it reads as a status
+        # display rather than a button — matches the OS taskbar convention
+        # where network status lives in the corner. Online features
+        # (FCC callsign verification) gate on this state; the indicator is
+        # the user-visible side of that contract. Hidden in FRS mode.
+        self.online_indicator = QLabel(ONLINE_LABEL_ONLINE, self)
+        self.online_indicator.setAccessibleName("Internet connectivity status")
+        self.online_indicator.setAccessibleDescription(
+            "Indicates whether online features (FCC callsign verification) "
+            "are available. Updates every 30 seconds."
+        )
+        service_row.addWidget(self.online_indicator)
+
         # toggled fires on both selection AND deselection within the group;
         # we only care about the newly-checked button, so guard inside the
         # handler by reading the group state.
@@ -254,9 +300,7 @@ class MainWindow(QMainWindow):
         header_font.setBold(True)
         header_font.setPointSize(header_font.pointSize() + 2)
         self.header_label.setFont(header_font)
-        self.header_label.setStyleSheet(
-            "padding: 10px; background-color: #F0F0F0; border-radius: 5px;"
-        )
+        self.header_label.setStyleSheet(theme.header_stylesheet())
         self.header_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.header_label.setAccessibleName("Station information")
         self.header_label.setAccessibleDescription(
@@ -445,17 +489,10 @@ class MainWindow(QMainWindow):
                 activated=lambda index=i: self._send_preset(index),
             )
 
-        # Online/offline indicator lives as a permanent widget on the status
-        # bar so it's never hidden by transient showMessage() calls. Online
-        # features (FCC callsign verification, future lookups) gate on this
-        # state; the indicator is the user-visible side of that contract.
-        self.online_indicator = QLabel(ONLINE_LABEL_ONLINE, self)
-        self.online_indicator.setAccessibleName("Internet connectivity status")
-        self.online_indicator.setAccessibleDescription(
-            "Indicates whether online features (FCC callsign verification) "
-            "are available. Updates every 30 seconds."
-        )
-        self.statusBar().addPermanentWidget(self.online_indicator)
+        # Online/offline indicator was built into the service row above so
+        # it lives next to the action icons rather than down in the status
+        # bar. The refresh timer is owned here because init_ui is also
+        # responsible for the periodic re-probe schedule.
         self._refresh_online_indicator()
         self._online_timer = QTimer(self)
         self._online_timer.setInterval(ONLINE_REFRESH_MS)
@@ -557,6 +594,53 @@ class MainWindow(QMainWindow):
         self.config["radio_service"] = new_mode
         save_json(CONFIG_FILE, self.config)
         self._apply_service_mode()
+
+    def toggle_theme(self):
+        """Flip between light and dark mode, persist the choice, and
+        repaint every widget that doesn't follow QPalette automatically."""
+        new_dark = not theme.is_dark()
+        self.config["dark_mode"] = new_dark
+        save_json(CONFIG_FILE, self.config)
+        theme.apply_theme(QApplication.instance(), new_dark)
+        self._apply_theme_to_widgets()
+
+    def _apply_theme_to_widgets(self):
+        """Update every widget that hardcodes colors outside QPalette.
+
+        Called from the toggle path. Touches: theme-icon glyph, header
+        label stylesheet, pending-pill stylesheets, chat-display fragment
+        recoloring, online indicator. Idempotent — safe to call from any
+        path that just rebuilt the palette."""
+        self._refresh_theme_toggle_glyph()
+        if hasattr(self, "header_label"):
+            self.header_label.setStyleSheet(theme.header_stylesheet())
+        self._restyle_pending_pills()
+        if hasattr(self, "chat_display"):
+            self.chat_display.restyle_for_theme()
+        if hasattr(self, "online_indicator"):
+            self._refresh_online_indicator()
+
+    def _refresh_theme_toggle_glyph(self):
+        """Set the toggle's glyph + tooltip to advertise the next theme.
+        ``destination`` convention: moon means 'click to go to dark',
+        sun means 'click to go to light'."""
+        if not hasattr(self, "theme_toggle_btn"):
+            return
+        if theme.is_dark():
+            self.theme_toggle_btn.setText(THEME_GLYPH_TO_LIGHT)
+            self.theme_toggle_btn.setToolTip("Switch to light mode")
+        else:
+            self.theme_toggle_btn.setText(THEME_GLYPH_TO_DARK)
+            self.theme_toggle_btn.setToolTip("Switch to dark mode")
+
+    def _restyle_pending_pills(self):
+        """Re-apply the current palette's pill stylesheet to every live
+        pending-station pill so an in-flight pill list survives a theme
+        flip. The stylesheet builder is the single source of truth so the
+        toggle path and add_pending_station can't drift apart."""
+        sheet = theme.pill_stylesheet()
+        for btn in self.pending_buttons.values():
+            btn.setStyleSheet(sheet)
 
     def _apply_service_mode(self):
         """Enable / disable every callsign-dependent UI surface based on the
@@ -823,7 +907,7 @@ class MainWindow(QMainWindow):
             formatted_msg = f"<b>[TX]:</b> {spoken_text}"
         else:
             formatted_msg = f"<b>[TX to {target_call}]:</b> {spoken_text}"
-        self.append_to_chat(formatted_msg, color=COLOR_TX)
+        self.append_to_chat(formatted_msg, color=theme.palette().tx)
 
         if prefaced:
             for i in range(self.target_dropdown.count()):
@@ -850,7 +934,7 @@ class MainWindow(QMainWindow):
         )
 
         formatted_msg = f"<b>[TX ID]:</b> {spoken_text}"
-        self.append_to_chat(formatted_msg, color=COLOR_TX)
+        self.append_to_chat(formatted_msg, color=theme.palette().tx)
 
         self._synthesize_and_play(spell_digits_in_callsigns(spoken_text))
 
@@ -866,7 +950,7 @@ class MainWindow(QMainWindow):
 
         voice_path = self.config.get("voice", "")
         if not voice_path or not os.path.exists(voice_path):
-            self.append_to_chat("<i>Error: No valid Piper voice selected. Please select one in Settings -> Configuration.</i>", color=COLOR_ERROR)
+            self.append_to_chat("<i>Error: No valid Piper voice selected. Please select one in Settings -> Configuration.</i>", color=theme.palette().error)
             self._set_tx_buttons_enabled(True)
             return
 
@@ -874,7 +958,7 @@ class MainWindow(QMainWindow):
             try:
                 self.voice_cache[voice_path] = PiperVoice.load(voice_path)
             except Exception as e:
-                self.append_to_chat(f"<i>Failed to load voice model: {e}</i>", color=COLOR_ERROR)
+                self.append_to_chat(f"<i>Failed to load voice model: {e}</i>", color=theme.palette().error)
                 self._set_tx_buttons_enabled(True)
                 return
 
@@ -892,7 +976,7 @@ class MainWindow(QMainWindow):
 
     def _on_tts_synthesized(self, audio, sample_rate):
         if audio is None or len(audio) == 0:
-            self.append_to_chat("<i>Warning: Piper generated no audio.</i>", color=COLOR_ERROR)
+            self.append_to_chat("<i>Warning: Piper generated no audio.</i>", color=theme.palette().error)
             self._set_tx_buttons_enabled(True)
             return
 
@@ -905,12 +989,12 @@ class MainWindow(QMainWindow):
         try:
             self.ptt.key()
         except Exception as e:
-            self.append_to_chat(f"<i>PTT key failed: {e}</i>", color=COLOR_ERROR)
+            self.append_to_chat(f"<i>PTT key failed: {e}</i>", color=theme.palette().error)
         self.audio_thread.start()
 
     def _on_tts_synthesis_error(self, msg):
         traceback.print_exc()
-        self.append_to_chat(f"<i>TTS Error: {msg}</i>", color=COLOR_ERROR)
+        self.append_to_chat(f"<i>TTS Error: {msg}</i>", color=theme.palette().error)
         self._resume_stt_after_tx()
         self._set_tx_buttons_enabled(True)
 
@@ -928,7 +1012,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self._resume_stt_after_tx()
-        self.append_to_chat(f"<i>TTS Error: {error_msg}</i>", color=COLOR_ERROR)
+        self.append_to_chat(f"<i>TTS Error: {error_msg}</i>", color=theme.palette().error)
         self._set_tx_buttons_enabled(True)
 
     def _pause_stt_for_tx(self):
@@ -1067,21 +1151,21 @@ class MainWindow(QMainWindow):
         if uid != self._open_rx_uid:
             ts = self._format_timestamp()
             block_number = self.chat_display.append_message(
-                f"<b>[RX {ts}]:</b> {text}", color=COLOR_RX
+                f"<b>[RX {ts}]:</b> {text}", color=theme.palette().rx
             )
             self._open_rx_uid = uid
             self._open_rx_block = block_number
             self._open_rx_text = text
         else:
             appended = self.chat_display.append_to_block(
-                self._open_rx_block, " " + text, color=COLOR_RX
+                self._open_rx_block, " " + text, color=theme.palette().rx
             )
             if not appended:
                 # The block went away (chat cleared mid-utterance). Start
                 # a fresh line so the rest of the utterance still surfaces.
                 ts = self._format_timestamp()
                 self._open_rx_block = self.chat_display.append_message(
-                    f"<b>[RX {ts}]:</b> {text}", color=COLOR_RX
+                    f"<b>[RX {ts}]:</b> {text}", color=theme.palette().rx
                 )
                 self._open_rx_text = text
             else:
@@ -1172,22 +1256,15 @@ class MainWindow(QMainWindow):
         op_name = (contact.get("name") or "").strip() or "(no name)"
         self.append_to_chat(
             f"<i>Auto-added contact: {callsign} ({op_name})</i>",
-            color=COLOR_RX,
+            color=theme.palette().rx,
         )
 
     def add_pending_station(self, callsign, name, location):
         btn = QPushButton(f"+ Add {callsign}", self)
-        # WCAG: amber-100 background + amber-900 text gives ≥10:1 contrast; border
-        # is amber-700 (4.05:1 against white) so the pill is distinguishable for
-        # users who don't perceive color cues. Focus ring is left to the platform.
-        btn.setStyleSheet(
-            "QPushButton {"
-            f" background-color: {PILL_BG};"
-            f" color: {PILL_TEXT};"
-            f" border: 2px solid {PILL_BORDER};"
-            " padding: 4px 10px; border-radius: 4px;"
-            "}"
-        )
+        # Pill colors come from the active palette so a later theme toggle
+        # can re-style every live pill via `_restyle_pending_pills` without
+        # divergence between this builder and the toggle path.
+        btn.setStyleSheet(theme.pill_stylesheet())
         tooltip_parts = [f"Detected new station: {callsign}"]
         if name:
             tooltip_parts.append(f"Name: {name}")
@@ -1296,7 +1373,7 @@ class MainWindow(QMainWindow):
         return apply_verification(contact, result, now_iso=now_iso)
 
     def on_stt_error(self, msg):
-        self.append_to_chat(f"<i>STT Error: {msg}</i>", color=COLOR_ERROR)
+        self.append_to_chat(f"<i>STT Error: {msg}</i>", color=theme.palette().error)
         self.listen_btn.blockSignals(True)
         self.listen_btn.setChecked(False)
         self.listen_btn.setText("&Listen")
@@ -1313,15 +1390,16 @@ class MainWindow(QMainWindow):
         Cheap because the underlying probe is cached for ~60s, so the timer
         callback at 30s mostly returns a cached value."""
         online = is_online()
+        p = theme.palette()
         if online:
             self.online_indicator.setText(ONLINE_LABEL_ONLINE)
-            self.online_indicator.setStyleSheet(f"color: {ONLINE_COLOR_ONLINE};")
+            self.online_indicator.setStyleSheet(f"color: {p.online_online};")
             self.online_indicator.setToolTip(
                 "Connected. Online features (FCC callsign verification) are available."
             )
         else:
             self.online_indicator.setText(ONLINE_LABEL_OFFLINE)
-            self.online_indicator.setStyleSheet(f"color: {ONLINE_COLOR_OFFLINE};")
+            self.online_indicator.setStyleSheet(f"color: {p.online_offline};")
             self.online_indicator.setToolTip(
                 "No internet connection detected. Online features are disabled "
                 "until connectivity returns."
