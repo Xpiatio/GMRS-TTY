@@ -488,7 +488,11 @@ def build_first_run(b: Builder):
         ("Speech Rate", "Slider from 0.70× (faster) to 1.50× "
                         "(slower); 1.00× is the voice's native pace."),
         ("Input Device", "Microphone the Listen button captures from. "
-                         "<i>System Default</i> works for most setups."),
+                         "<i>System Default</i> works for most setups. "
+                         "Select <i>YouTube Stream (no speakers)</i> to "
+                         "stream a YouTube video directly into the STT "
+                         "pipeline without any speaker output — useful "
+                         "for testing. Requires yt-dlp and ffmpeg on PATH."),
         ("Output Device", "Where TTS audio is played — choose a USB "
                           "sound card / Signalink / Digirig channel here "
                           "to feed your radio directly."),
@@ -606,7 +610,7 @@ def build_main_window(b: Builder):
                           "shortcuts all refuse to fire (the buttons grey "
                           "out so the gate is visible). Microphone "
                           "capture, transcription, callsign detection, "
-                          "attendance, and the chat surface keep working "
+                          "callsigns detected, and the chat surface keep working "
                           "normally. Persists to "
                           "<font face=\"Courier\">config.json</font> "
                           "under <font face=\"Courier\">listen_only"
@@ -746,13 +750,13 @@ def build_main_window(b: Builder):
         "Acknowledged, Say again, QSY to channel {N}, Clear, Monitoring, "
         "Net check-in, Emergency traffic</i>.")
 
-    b.h3("5.8 Attendance panel (dock — Ctrl+Shift+A)")
+    b.h3("5.8 Callsigns Detected panel (dock — Ctrl+Shift+A)")
     b.p("A roll-call grid that records every callsign detected during "
         "the current Listen session. Docked at the bottom by default, "
         "tabbed with Pending Stations and Quick Messages. "
         "<b>Off by default</b> — enable it from "
-        "<b>View → Show attendance</b> or "
-        "<b>Settings → Configuration → Attendance grid</b> (Alt+A in "
+        "<b>View → Show callsigns detected</b> or "
+        "<b>Settings → Configuration → Callsigns Detected</b> (Alt+D in "
         "the dialog). Persists at "
         "<font face=\"Courier\">attendance.enabled</font> in "
         "<font face=\"Courier\">config.json</font>. Disabled in FRS "
@@ -771,7 +775,7 @@ def build_main_window(b: Builder):
                             "Contacts, the remaining four columns fill "
                             "in automatically from the contact row — "
                             "adding a station retroactively fills its "
-                            "attendance row."),
+                            "callsigns-detected row."),
         ("Order", "Insertion order, deduplicated — the first station "
                   "heard sits at the top. Re-hearing a callsign within "
                   "the same session does not add a second row."),
@@ -781,11 +785,11 @@ def build_main_window(b: Builder):
                                    "preserves the current grid for "
                                    "review until the next session "
                                    "begins."),
-        ("Clear attendance button", "Sits below the table. Mnemonic "
-                                     "Alt+A when the panel has focus. "
-                                     "Empties the grid immediately; "
-                                     "future detections still log "
-                                     "normally."),
+        ("Clear callsigns detected button", "Sits below the table. Mnemonic "
+                                            "Alt+D when the panel has focus. "
+                                            "Empties the grid immediately; "
+                                            "future detections still log "
+                                            "normally."),
     ])
 
     b.h3("5.9 Status bar")
@@ -815,8 +819,8 @@ def build_main_window(b: Builder):
     ])
     b.p("View contains the waterfall toggle (Show waterfall, "
         "Ctrl+Shift+W) and its three submenus (Color map, Frequency "
-        "range, Time window), the attendance toggle "
-        "(<b>Show attendance</b>, Ctrl+Shift+A — keeps "
+        "range, Time window), the callsigns-detected toggle "
+        "(<b>Show callsigns detected</b>, Ctrl+Shift+A — keeps "
         "<font face=\"Courier\">attendance.enabled</font> in sync with "
         "the Configuration dialog checkbox so both surfaces are "
         "interchangeable), a <b>Panels</b> submenu carrying the "
@@ -852,8 +856,12 @@ def build_config_dialog(b: Builder):
              "tts_length_scale."],
             ["Input Device (Alt+I)", "Dropdown",
              "Microphone for capture. System Default plus every device "
-             "PortAudio reports. Changing this restarts the listener "
-             "automatically."],
+             "PortAudio reports, plus <i>YouTube Stream (no speakers)</i> "
+             "at the bottom of the list. Selecting YouTube reveals a URL "
+             "field — audio is decoded via yt-dlp + ffmpeg directly into "
+             "the STT/VAD pipeline; nothing plays through speakers. "
+             "Loops automatically. Requires yt-dlp ≥ 2026.03.17 and "
+             "ffmpeg on PATH. Changing this restarts the listener."],
             ["Output Device (Alt+O)", "Dropdown",
              "Where TTS audio plays. Pick a USB sound card to feed your "
              "radio directly. System Default uses the OS default sink."],
@@ -876,12 +884,12 @@ def build_config_dialog(b: Builder):
              "pending-station pill is suppressed. Ambiguous near-misses "
              "(two contacts equally one character away) are left alone. "
              "See section 15.4."],
-            ["Attendance grid (Alt+A)", "Checkbox",
-             "Default off. Enables the Attendance dock — a roll-call "
+            ["Callsigns Detected (Alt+D)", "Checkbox",
+             "Default off. Enables the Callsigns Detected dock — a roll-call "
              "grid of every callsign detected in the current Listen "
              "session. Persists at "
              "<font face=\"Courier\">attendance.enabled</font>. Also "
-             "toggleable from View → Show attendance "
+             "toggleable from View → Show callsigns detected "
              "(Ctrl+Shift+A). GMRS only."],
             ["PTT Mode (Alt+P)", "Dropdown",
              "Manual / VOX / USB FTDI / Serial. See section 12."],
@@ -1042,7 +1050,7 @@ def build_keyboard(b: Builder):
             ["Open Contacts dialog", "Ctrl+B"],
             ["Send quick message preset 1–9", "Alt+1 … Alt+9"],
             ["Toggle Waterfall panel", "Ctrl+Shift+W"],
-            ["Toggle Attendance panel", "Ctrl+Shift+A"],
+            ["Toggle Callsigns Detected panel", "Ctrl+Shift+A"],
             ["Toggle Station panel", "Ctrl+Shift+S"],
             ["Toggle Pending Stations panel", "Ctrl+Shift+P"],
             ["Toggle Quick Messages panel", "Ctrl+Shift+Q"],
@@ -1095,7 +1103,7 @@ def build_keyboard(b: Builder):
             ["Time Format", "Alt+F"],
             ["Filter profanity", "Alt+Y"],
             ["Fuzzy callsigns", "Alt+U"],
-            ["Attendance grid", "Alt+A"],
+            ["Callsigns Detected", "Alt+D"],
             ["PTT Mode", "Alt+P"],
             ["Serial Port", "Alt+S"],
             ["Control Line", "Alt+E"],
@@ -1295,7 +1303,7 @@ def build_rx(b: Builder):
         "or immediately when the utterance is abandoned (PTT pressed "
         "mid-reception, Listen toggled off, or a new utterance "
         "starting before the previous one completes) — so the "
-        "attendance grid always reflects what the chat shows.",
+        "callsigns-detected panel always reflects what the chat shows.",
     ])
     b.note(
         "Slice length and the cut-search window are tuned constants, "
@@ -1678,8 +1686,19 @@ def build_files(b: Builder):
     )
     b.bullets([
         ("input_device / output_device", "-1 means system default. Any "
-                                          "other integer is the "
-                                          "PortAudio device index."),
+                                          "other integer is the PortAudio "
+                                          "device index. The string "
+                                          "<font face=\"Courier\">\"youtube\""
+                                          "</font> selects the YouTube Stream "
+                                          "source; pair with "
+                                          "<font face=\"Courier\">youtube_url"
+                                          "</font>."),
+        ("youtube_url", "YouTube video URL used when "
+                        "<font face=\"Courier\">input_device</font> is "
+                        "<font face=\"Courier\">\"youtube\"</font>. "
+                        "Decoded in-process via yt-dlp + ffmpeg; no "
+                        "audio device is opened and nothing plays "
+                        "through speakers. Loops automatically."),
         ("tts_length_scale", "0.70–1.50. Higher is slower."),
         ("vad_threshold", "0.10–0.95. Higher is stricter."),
         ("listen_only", "Boolean. When true the app blocks every TX "
@@ -1693,7 +1712,7 @@ def build_files(b: Builder):
                             "form in chat. See section 15.4."),
         ("attendance", "Nested object. <font face=\"Courier\">"
                        "{\"enabled\": &lt;bool&gt;}</font>. Default "
-                       "false. Controls the Attendance dock. Nested so "
+                       "false. Controls the Callsigns Detected dock. Nested so "
                        "future per-session options can land here "
                        "without churning the top-level schema."),
         ("ptt_mode", "<font face=\"Courier\">manual</font>, <font "

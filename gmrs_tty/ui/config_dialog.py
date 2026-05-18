@@ -35,6 +35,13 @@ class ConfigDialog(QDialog):
         self.location_input = QLineEdit(self.config.get("location", ""))
         self.voice_input = QComboBox()
         self.input_device_input = QComboBox()
+        self.youtube_url_input = QLineEdit(self.config.get("youtube_url", ""))
+        self.youtube_url_input.setPlaceholderText("https://www.youtube.com/watch?v=...")
+        self.youtube_url_input.setToolTip(
+            "YouTube video URL to stream as the audio input source. "
+            "Audio is decoded in-process via yt-dlp + ffmpeg — "
+            "nothing plays through speakers. The stream loops automatically."
+        )
         self.output_device_input = QComboBox()
         self.ptt_mode_input = QComboBox()
         self.ptt_mode_input.addItem("Manual (you press PTT on the radio)", "manual")
@@ -102,17 +109,17 @@ class ConfigDialog(QDialog):
             bool((self.config.get("attendance") or {}).get("enabled", False))
         )
         self.attendance_enabled_input.setToolTip(
-            "When enabled, the Attendance panel logs every callsign detected "
+            "When enabled, the Callsigns Detected panel logs every callsign detected "
             "during a Listen session. Rows show Callsign, Name, Location, GMRS "
             "and HAM — the contact columns fill in automatically when a "
             "callsign is in (or added to) contacts. Show or hide the panel "
-            "any time via View → Show attendance (Ctrl+Shift+A). GMRS only."
+            "any time via View → Show callsigns detected (Ctrl+Shift+A). GMRS only."
         )
         self.attendance_enabled_input.setAccessibleName(
-            "Track listening-session attendance"
+            "Track listening-session callsigns detected"
         )
         self.attendance_enabled_input.setAccessibleDescription(
-            "When enabled, the Attendance panel records every callsign "
+            "When enabled, the Callsigns Detected panel records every callsign "
             "detected during a Listen session. The panel can be shown or "
             "hidden from the View menu."
         )
@@ -218,12 +225,15 @@ class ConfigDialog(QDialog):
         layout.addRow("&Voice Model:", voice_row)
         layout.addRow("Speech &Rate:", rate_row)
         layout.addRow("&Input Device:", self.input_device_input)
+        layout.addRow("YouTube &URL:", self.youtube_url_input)
+        layout.setRowVisible(self.youtube_url_input, False)
+        self.input_device_input.currentIndexChanged.connect(self._update_input_device_fields)
         layout.addRow("&Output Device:", self.output_device_input)
         layout.addRow("VA&D Threshold:", self.vad_threshold_input)
         layout.addRow("Time &Format:", self.time_format_input)
         layout.addRow("Filter profanit&y:", self.filter_profanity_input)
         layout.addRow("F&uzzy callsigns:", self.fuzzy_callsign_input)
-        layout.addRow("&Attendance grid:", self.attendance_enabled_input)
+        layout.addRow("Callsigns &Detected:", self.attendance_enabled_input)
         layout.addRow("&PTT Mode:", self.ptt_mode_input)
         layout.addRow("&Serial Port:", self.ptt_serial_port_input)
         layout.addRow("Control Lin&e:", self.ptt_serial_line_input)
@@ -247,6 +257,7 @@ class ConfigDialog(QDialog):
                 self.input_device_input.addItem(f"{i}: {dev['name']}", i)
             if dev.get('max_output_channels', 0) > 0:
                 self.output_device_input.addItem(f"{i}: {dev['name']}", i)
+        self.input_device_input.addItem("YouTube Stream (no speakers)", "youtube")
         current_dev = self.config.get("input_device", -1)
         idx = self.input_device_input.findData(current_dev)
         if idx >= 0:
@@ -258,6 +269,7 @@ class ConfigDialog(QDialog):
         self.input_device_input.setEnabled(True)
         self.output_device_input.setEnabled(True)
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)
+        self._update_input_device_fields()
 
     def get_config(self):
         return {
@@ -267,6 +279,7 @@ class ConfigDialog(QDialog):
             "voice": self.voice_input.currentData(),
             "tts_length_scale": round(self.length_scale_slider.value() / 100.0, 2),
             "input_device": self.input_device_input.currentData(),
+            "youtube_url": self.youtube_url_input.text().strip(),
             "output_device": self.output_device_input.currentData(),
             "vad_threshold": round(self.vad_threshold_input.value(), 2),
             "time_format": self.time_format_input.currentData(),
@@ -292,6 +305,11 @@ class ConfigDialog(QDialog):
         else:
             suffix = " (slower)"
         self.length_scale_value_label.setText(f"{scale:.2f}×{suffix}")
+
+    def _update_input_device_fields(self, _index=None):
+        is_youtube = self.input_device_input.currentData() == "youtube"
+        form = self.layout()
+        form.setRowVisible(self.youtube_url_input, is_youtube)
 
     def _update_ptt_fields(self):
         is_serial = self.ptt_mode_input.currentData() == "usb_ftdi"
