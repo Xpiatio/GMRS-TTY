@@ -5,6 +5,86 @@ import numpy as np
 import sounddevice as sd
 
 
+class YouTubeSource:
+    """Stream audio from a YouTube URL via yt-dlp + ffmpeg, with auto-loop.
+
+    Audio is decoded in-process to 16 kHz mono float32 PCM; no audio output
+    device is touched so nothing plays through speakers. Intended for STT/VAD
+    testing without physical microphone access.
+
+    Each time the video ends the stream restarts from the beginning. The
+    YouTube CDN URL is re-resolved on every restart because yt-dlp URLs are
+    time-limited and would expire on long loops.
+    """
+
+    def __init__(self, url: str, sample_rate: int, chunk_samples: int):
+        if not shutil.which("yt-dlp"):
+            raise FileNotFoundError("yt-dlp binary not on PATH")
+        if not shutil.which("ffmpeg"):
+            raise FileNotFoundError("ffmpeg binary not on PATH")
+        self._url = url
+        self._sample_rate = sample_rate
+        self._chunk_samples = chunk_samples
+        self._bytes_per_chunk = chunk_samples * 4  # float32 = 4 bytes/sample
+        self._proc = None
+        self._start()
+
+    def _resolve_audio_url(self) -> str:
+        result = subprocess.run(
+            ["yt-dlp", "-f", "bestaudio", "--get-url", self._url],
+            capture_output=True, text=True, timeout=30,
+        )
+        line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+        if not line:
+            raise IOError(f"yt-dlp returned no audio URL for {self._url!r}")
+        return line
+
+    def _start(self):
+        audio_url = self._resolve_audio_url()
+        self._proc = subprocess.Popen(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-i", audio_url,
+                "-f", "f32le", "-ar", str(self._sample_rate), "-ac", "1",
+                "pipe:1",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def _read_bytes(self, n: int):
+        buf = b""
+        while len(buf) < n:
+            more = self._proc.stdout.read(n - len(buf))
+            if not more:
+                return None
+            buf += more
+        return buf
+
+    def read(self) -> np.ndarray:
+        while True:
+            raw = self._read_bytes(self._bytes_per_chunk)
+            if raw is not None:
+                return np.frombuffer(raw, dtype=np.float32).copy()
+            try:
+                self._proc.wait(timeout=2)
+            except Exception:
+                pass
+            self._start()
+
+    def close(self):
+        if self._proc is not None:
+            try:
+                self._proc.terminate()
+                self._proc.wait(timeout=2)
+            except Exception:
+                try:
+                    self._proc.kill()
+                except Exception:
+                    pass
+            self._proc = None
+
+
 class ParecSource:
     """PulseAudio/PipeWire `parec` capture.
 
@@ -80,7 +160,7 @@ class PortAudioSource:
             pass
 
 
-def open_input_source(sample_rate, chunk_samples, input_device=None):
+def open_input_source(sample_rate, chunk_samples, input_device=None, youtube_url=None):
     """Open an InputSource for the active capture path.
 
     Prefers `parec` over PortAudio when the operator has not selected a
@@ -88,7 +168,14 @@ def open_input_source(sample_rate, chunk_samples, input_device=None):
     silently deliver flat-zero buffers on PipeWire 1.4. Falls back to
     PortAudio if parec isn't on PATH, or when a specific input device
     is configured.
+
+    When input_device is ``"youtube"``, streams audio from youtube_url via
+    yt-dlp + ffmpeg without touching any audio output device.
     """
+    if input_device == "youtube":
+        if not youtube_url:
+            raise ValueError("input_device='youtube' requires a youtube_url")
+        return YouTubeSource(youtube_url, sample_rate, chunk_samples)
     if input_device is None:
         try:
             return ParecSource(sample_rate, chunk_samples)

@@ -580,7 +580,7 @@ class MainWindow(QMainWindow):
         and never receives ``record`` calls."""
         self.attendance_panel = AttendancePanel(self)
 
-        dock = QDockWidget("Attendance", self)
+        dock = QDockWidget("Callsigns Detected", self)
         dock.setObjectName(dock_layout.DOCK_ATTENDANCE)
         dock.setFeatures(
             QDockWidget.DockWidgetFeature.DockWidgetMovable
@@ -929,12 +929,12 @@ class MainWindow(QMainWindow):
         # dialog's "Track listening-session attendance" checkbox — both
         # write ``attendance.enabled`` in config.json, so the menu state,
         # the Config dialog, and the dock visibility never diverge.
-        self._attendance_toggle_action = QAction("Show a&ttendance", self)
+        self._attendance_toggle_action = QAction("Show callsigns &detected", self)
         self._attendance_toggle_action.setCheckable(True)
         self._attendance_toggle_action.setChecked(self.attendance_enabled)
         self._attendance_toggle_action.setShortcut(QKeySequence("Ctrl+Shift+A"))
         self._attendance_toggle_action.setStatusTip(
-            "Toggle the listening-session attendance grid. Disabled in FRS mode."
+            "Toggle the callsigns-detected panel. Disabled in FRS mode."
         )
         self._attendance_toggle_action.triggered.connect(self._on_attendance_toggle)
         view_menu.addAction(self._attendance_toggle_action)
@@ -1206,11 +1206,11 @@ class MainWindow(QMainWindow):
             self._attendance_toggle_action.setEnabled(not is_frs)
             if is_frs:
                 self._attendance_toggle_action.setStatusTip(
-                    "Attendance is GMRS-only — switch to GMRS to enable."
+                    "Callsigns Detected is GMRS-only — switch to GMRS to enable."
                 )
             else:
                 self._attendance_toggle_action.setStatusTip(
-                    "Toggle the listening-session attendance grid."
+                    "Toggle the callsigns-detected panel."
                 )
         if hasattr(self, "attendance_dock"):
             if is_frs:
@@ -1874,6 +1874,7 @@ class MainWindow(QMainWindow):
             vad_threshold=self.config.get("vad_threshold", 0.5),
             whisper=self._stt_whisper,
             vad_model=self._stt_vad_model,
+            youtube_url=self.config.get("youtube_url", ""),
             parent=self,
         )
         self.stt_worker.transcribed_segment.connect(self.on_transcription_segment)
