@@ -488,7 +488,11 @@ def build_first_run(b: Builder):
         ("Speech Rate", "Slider from 0.70× (faster) to 1.50× "
                         "(slower); 1.00× is the voice's native pace."),
         ("Input Device", "Microphone the Listen button captures from. "
-                         "<i>System Default</i> works for most setups."),
+                         "<i>System Default</i> works for most setups. "
+                         "Select <i>YouTube Stream (no speakers)</i> to "
+                         "stream a YouTube video directly into the STT "
+                         "pipeline without any speaker output — useful "
+                         "for testing. Requires yt-dlp and ffmpeg on PATH."),
         ("Output Device", "Where TTS audio is played — choose a USB "
                           "sound card / Signalink / Digirig channel here "
                           "to feed your radio directly."),
@@ -852,8 +856,12 @@ def build_config_dialog(b: Builder):
              "tts_length_scale."],
             ["Input Device (Alt+I)", "Dropdown",
              "Microphone for capture. System Default plus every device "
-             "PortAudio reports. Changing this restarts the listener "
-             "automatically."],
+             "PortAudio reports, plus <i>YouTube Stream (no speakers)</i> "
+             "at the bottom of the list. Selecting YouTube reveals a URL "
+             "field — audio is decoded via yt-dlp + ffmpeg directly into "
+             "the STT/VAD pipeline; nothing plays through speakers. "
+             "Loops automatically. Requires yt-dlp ≥ 2026.03.17 and "
+             "ffmpeg on PATH. Changing this restarts the listener."],
             ["Output Device (Alt+O)", "Dropdown",
              "Where TTS audio plays. Pick a USB sound card to feed your "
              "radio directly. System Default uses the OS default sink."],
@@ -1678,8 +1686,19 @@ def build_files(b: Builder):
     )
     b.bullets([
         ("input_device / output_device", "-1 means system default. Any "
-                                          "other integer is the "
-                                          "PortAudio device index."),
+                                          "other integer is the PortAudio "
+                                          "device index. The string "
+                                          "<font face=\"Courier\">\"youtube\""
+                                          "</font> selects the YouTube Stream "
+                                          "source; pair with "
+                                          "<font face=\"Courier\">youtube_url"
+                                          "</font>."),
+        ("youtube_url", "YouTube video URL used when "
+                        "<font face=\"Courier\">input_device</font> is "
+                        "<font face=\"Courier\">\"youtube\"</font>. "
+                        "Decoded in-process via yt-dlp + ffmpeg; no "
+                        "audio device is opened and nothing plays "
+                        "through speakers. Loops automatically."),
         ("tts_length_scale", "0.70–1.50. Higher is slower."),
         ("vad_threshold", "0.10–0.95. Higher is stricter."),
         ("listen_only", "Boolean. When true the app blocks every TX "
