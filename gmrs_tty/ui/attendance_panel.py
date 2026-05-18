@@ -53,7 +53,7 @@ class AttendancePanel(QWidget):
         # autofit to content while remaining manually adjustable.
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(False)
-        self.table.setAccessibleName("Attendance grid")
+        self.table.setAccessibleName("Callsigns Detected grid")
         self.table.setAccessibleDescription(
             "Callsigns detected during the current listening session. "
             "Columns: Callsign, Name, Location, GMRS, HAM. Name and contact "
@@ -65,13 +65,13 @@ class AttendancePanel(QWidget):
         button_row.setContentsMargins(0, 0, 0, 0)
         button_row.setSpacing(theme.SPACING_S)
         button_row.addStretch(1)
-        self.clear_button = QPushButton("Clear &attendance", self)
+        self.clear_button = QPushButton("Clear callsigns &detected", self)
         self.clear_button.setToolTip(
-            "Empty the attendance grid for the current listening session."
+            "Empty the callsigns-detected list for the current listening session."
         )
-        self.clear_button.setAccessibleName("Clear attendance grid")
+        self.clear_button.setAccessibleName("Clear callsigns detected")
         self.clear_button.setAccessibleDescription(
-            "Remove every row from the attendance grid. The grid keeps "
+            "Remove every row from the callsigns-detected list. The list keeps "
             "collecting new callsigns as they are detected."
         )
         self.clear_button.clicked.connect(self.clear)

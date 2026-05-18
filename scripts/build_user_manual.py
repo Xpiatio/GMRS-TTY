@@ -606,7 +606,7 @@ def build_main_window(b: Builder):
                           "shortcuts all refuse to fire (the buttons grey "
                           "out so the gate is visible). Microphone "
                           "capture, transcription, callsign detection, "
-                          "attendance, and the chat surface keep working "
+                          "callsigns detected, and the chat surface keep working "
                           "normally. Persists to "
                           "<font face=\"Courier\">config.json</font> "
                           "under <font face=\"Courier\">listen_only"
@@ -746,13 +746,13 @@ def build_main_window(b: Builder):
         "Acknowledged, Say again, QSY to channel {N}, Clear, Monitoring, "
         "Net check-in, Emergency traffic</i>.")
 
-    b.h3("5.8 Attendance panel (dock — Ctrl+Shift+A)")
+    b.h3("5.8 Callsigns Detected panel (dock — Ctrl+Shift+A)")
     b.p("A roll-call grid that records every callsign detected during "
         "the current Listen session. Docked at the bottom by default, "
         "tabbed with Pending Stations and Quick Messages. "
         "<b>Off by default</b> — enable it from "
-        "<b>View → Show attendance</b> or "
-        "<b>Settings → Configuration → Attendance grid</b> (Alt+A in "
+        "<b>View → Show callsigns detected</b> or "
+        "<b>Settings → Configuration → Callsigns Detected</b> (Alt+D in "
         "the dialog). Persists at "
         "<font face=\"Courier\">attendance.enabled</font> in "
         "<font face=\"Courier\">config.json</font>. Disabled in FRS "
@@ -771,7 +771,7 @@ def build_main_window(b: Builder):
                             "Contacts, the remaining four columns fill "
                             "in automatically from the contact row — "
                             "adding a station retroactively fills its "
-                            "attendance row."),
+                            "callsigns-detected row."),
         ("Order", "Insertion order, deduplicated — the first station "
                   "heard sits at the top. Re-hearing a callsign within "
                   "the same session does not add a second row."),
@@ -781,11 +781,11 @@ def build_main_window(b: Builder):
                                    "preserves the current grid for "
                                    "review until the next session "
                                    "begins."),
-        ("Clear attendance button", "Sits below the table. Mnemonic "
-                                     "Alt+A when the panel has focus. "
-                                     "Empties the grid immediately; "
-                                     "future detections still log "
-                                     "normally."),
+        ("Clear callsigns detected button", "Sits below the table. Mnemonic "
+                                            "Alt+D when the panel has focus. "
+                                            "Empties the grid immediately; "
+                                            "future detections still log "
+                                            "normally."),
     ])
 
     b.h3("5.9 Status bar")
@@ -815,8 +815,8 @@ def build_main_window(b: Builder):
     ])
     b.p("View contains the waterfall toggle (Show waterfall, "
         "Ctrl+Shift+W) and its three submenus (Color map, Frequency "
-        "range, Time window), the attendance toggle "
-        "(<b>Show attendance</b>, Ctrl+Shift+A — keeps "
+        "range, Time window), the callsigns-detected toggle "
+        "(<b>Show callsigns detected</b>, Ctrl+Shift+A — keeps "
         "<font face=\"Courier\">attendance.enabled</font> in sync with "
         "the Configuration dialog checkbox so both surfaces are "
         "interchangeable), a <b>Panels</b> submenu carrying the "
@@ -876,12 +876,12 @@ def build_config_dialog(b: Builder):
              "pending-station pill is suppressed. Ambiguous near-misses "
              "(two contacts equally one character away) are left alone. "
              "See section 15.4."],
-            ["Attendance grid (Alt+A)", "Checkbox",
-             "Default off. Enables the Attendance dock — a roll-call "
+            ["Callsigns Detected (Alt+D)", "Checkbox",
+             "Default off. Enables the Callsigns Detected dock — a roll-call "
              "grid of every callsign detected in the current Listen "
              "session. Persists at "
              "<font face=\"Courier\">attendance.enabled</font>. Also "
-             "toggleable from View → Show attendance "
+             "toggleable from View → Show callsigns detected "
              "(Ctrl+Shift+A). GMRS only."],
             ["PTT Mode (Alt+P)", "Dropdown",
              "Manual / VOX / USB FTDI / Serial. See section 12."],
@@ -1042,7 +1042,7 @@ def build_keyboard(b: Builder):
             ["Open Contacts dialog", "Ctrl+B"],
             ["Send quick message preset 1–9", "Alt+1 … Alt+9"],
             ["Toggle Waterfall panel", "Ctrl+Shift+W"],
-            ["Toggle Attendance panel", "Ctrl+Shift+A"],
+            ["Toggle Callsigns Detected panel", "Ctrl+Shift+A"],
             ["Toggle Station panel", "Ctrl+Shift+S"],
             ["Toggle Pending Stations panel", "Ctrl+Shift+P"],
             ["Toggle Quick Messages panel", "Ctrl+Shift+Q"],
@@ -1095,7 +1095,7 @@ def build_keyboard(b: Builder):
             ["Time Format", "Alt+F"],
             ["Filter profanity", "Alt+Y"],
             ["Fuzzy callsigns", "Alt+U"],
-            ["Attendance grid", "Alt+A"],
+            ["Callsigns Detected", "Alt+D"],
             ["PTT Mode", "Alt+P"],
             ["Serial Port", "Alt+S"],
             ["Control Line", "Alt+E"],
@@ -1295,7 +1295,7 @@ def build_rx(b: Builder):
         "or immediately when the utterance is abandoned (PTT pressed "
         "mid-reception, Listen toggled off, or a new utterance "
         "starting before the previous one completes) — so the "
-        "attendance grid always reflects what the chat shows.",
+        "callsigns-detected panel always reflects what the chat shows.",
     ])
     b.note(
         "Slice length and the cut-search window are tuned constants, "
@@ -1693,7 +1693,7 @@ def build_files(b: Builder):
                             "form in chat. See section 15.4."),
         ("attendance", "Nested object. <font face=\"Courier\">"
                        "{\"enabled\": &lt;bool&gt;}</font>. Default "
-                       "false. Controls the Attendance dock. Nested so "
+                       "false. Controls the Callsigns Detected dock. Nested so "
                        "future per-session options can land here "
                        "without churning the top-level schema."),
         ("ptt_mode", "<font face=\"Courier\">manual</font>, <font "
