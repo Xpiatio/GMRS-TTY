@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-    QPushButton, QSlider, QWidget,
+    QPushButton, QSlider, QToolButton, QWidget,
 )
 
 from gmrs_tty.audio.playback import AudioPlayerThread
@@ -124,6 +124,29 @@ class ConfigDialog(QDialog):
             "hidden from the View menu."
         )
 
+        self.gemini_api_key_input = QLineEdit(self.config.get("gemini_api_key", ""))
+        self.gemini_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.gemini_api_key_input.setPlaceholderText("AIza…  (leave blank to disable journal export)")
+        self.gemini_api_key_input.setToolTip(
+            "Google Gemini API key used to generate session journal summaries. "
+            "Obtain one free at https://aistudio.google.com/app/apikey. "
+            "Leave blank to disable the Generate Journal feature."
+        )
+        self.gemini_api_key_input.setAccessibleName("Gemini API key")
+        self.gemini_api_key_input.setAccessibleDescription(
+            "Google Gemini API key for AI-generated session journal summaries. "
+            "Leave blank to disable journal generation."
+        )
+        self._gemini_show_btn = QToolButton()
+        self._gemini_show_btn.setText("Show")
+        self._gemini_show_btn.setCheckable(True)
+        self._gemini_show_btn.toggled.connect(self._toggle_api_key_visibility)
+        gemini_row = QWidget()
+        gemini_row_layout = QHBoxLayout(gemini_row)
+        gemini_row_layout.setContentsMargins(0, 0, 0, 0)
+        gemini_row_layout.addWidget(self.gemini_api_key_input, 1)
+        gemini_row_layout.addWidget(self._gemini_show_btn)
+
         self.fuzzy_callsign_input = QCheckBox(
             "Replace near-miss callsigns with the closest contact"
         )
@@ -234,6 +257,7 @@ class ConfigDialog(QDialog):
         layout.addRow("Filter profanit&y:", self.filter_profanity_input)
         layout.addRow("F&uzzy callsigns:", self.fuzzy_callsign_input)
         layout.addRow("Callsigns &Detected:", self.attendance_enabled_input)
+        layout.addRow("&Gemini API Key:", gemini_row)
         layout.addRow("&PTT Mode:", self.ptt_mode_input)
         layout.addRow("&Serial Port:", self.ptt_serial_port_input)
         layout.addRow("Control Lin&e:", self.ptt_serial_line_input)
@@ -291,6 +315,7 @@ class ConfigDialog(QDialog):
             "attendance": {
                 "enabled": self.attendance_enabled_input.isChecked(),
             },
+            "gemini_api_key": self.gemini_api_key_input.text().strip(),
             "ptt_mode": self.ptt_mode_input.currentData(),
             "ptt_serial_port": self.ptt_serial_port_input.text().strip(),
             "ptt_serial_line": self.ptt_serial_line_input.currentData(),
@@ -310,6 +335,11 @@ class ConfigDialog(QDialog):
         is_youtube = self.input_device_input.currentData() == "youtube"
         form = self.layout()
         form.setRowVisible(self.youtube_url_input, is_youtube)
+
+    def _toggle_api_key_visibility(self, visible: bool) -> None:
+        mode = QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password
+        self.gemini_api_key_input.setEchoMode(mode)
+        self._gemini_show_btn.setText("Hide" if visible else "Show")
 
     def _update_ptt_fields(self):
         is_serial = self.ptt_mode_input.currentData() == "usb_ftdi"
