@@ -5,6 +5,11 @@ import re
 _CALLSIGN_FIELDS = ("callsign", "gmrs_callsign", "ham_callsign")
 
 
+def normalize_callsign(value) -> str:
+    """Canonical form for any callsign value: strip whitespace, uppercase."""
+    return (value or "").strip().upper()
+
+
 def known_callsigns(contacts):
     """Return the set of UPPERCASED callsigns this contact list 'knows about',
     pulled from every populated callsign field (primary `callsign`,
@@ -18,7 +23,7 @@ def known_callsigns(contacts):
     known = set()
     for c in contacts or []:
         for field in _CALLSIGN_FIELDS:
-            cs = (c.get(field, "") or "").upper()
+            cs = normalize_callsign(c.get(field, ""))
             if not cs or cs == "ALL":
                 continue
             known.add(cs)
@@ -43,7 +48,7 @@ def index_contacts_by_callsign(contacts):
     for c in contacts or []:
         seen_keys = set()
         for field in _CALLSIGN_FIELDS:
-            cs = (c.get(field, "") or "").upper()
+            cs = normalize_callsign(c.get(field, ""))
             if not cs or cs == "ALL" or cs in seen_keys:
                 continue
             seen_keys.add(cs)
@@ -59,14 +64,14 @@ def format_callsign_tooltip(callsign, contacts):
     entries = list(contacts or [])
     if not entries:
         return ""
-    lines = [callsign.upper()]
+    lines = [normalize_callsign(callsign)]
     for c in entries:
         name = (c.get("name", "") or "").strip() or "(no name)"
         loc = (c.get("location", "") or "").strip()
         header = f"  • {name} — {loc}" if loc else f"  • {name}"
         lines.append(header)
-        gmrs = (c.get("gmrs_callsign", "") or "").strip().upper()
-        ham = (c.get("ham_callsign", "") or "").strip().upper()
+        gmrs = normalize_callsign(c.get("gmrs_callsign", ""))
+        ham = normalize_callsign(c.get("ham_callsign", ""))
         if gmrs:
             lines.append(f"      GMRS: {gmrs}")
         if ham:
@@ -104,17 +109,14 @@ def deduplicate_ham_cross_references(contacts):
     if not contacts:
         return list(contacts or [])
 
-    def _norm(value):
-        return (value or "").strip().upper()
-
     # (operator name, HAM callsign) → first row that owns this cross-reference
     # as a GMRS-primary record. Subsequent rows whose primary callsign matches
     # this HAM under the same name are duplicates.
     canonical_owners = {}
     for c in contacts:
-        name = _norm(c.get("name"))
-        primary = _norm(c.get("callsign"))
-        ham = _norm(c.get("ham_callsign"))
+        name = normalize_callsign(c.get("name"))
+        primary = normalize_callsign(c.get("callsign"))
+        ham = normalize_callsign(c.get("ham_callsign"))
         if not name or not ham:
             continue
         if primary == ham:
@@ -125,8 +127,8 @@ def deduplicate_ham_cross_references(contacts):
 
     survivors = []
     for c in contacts:
-        name = _norm(c.get("name"))
-        primary = _norm(c.get("callsign"))
+        name = normalize_callsign(c.get("name"))
+        primary = normalize_callsign(c.get("callsign"))
         if name and primary:
             owner = canonical_owners.get((name, primary))
             if owner is not None and owner is not c:
@@ -140,7 +142,7 @@ def sort_contacts(contacts):
     with the special 'ALL' open-call entry pinned at index 0 and ties broken
     by operator name so shared family callsigns get a stable order."""
     def key(c):
-        cs = (c.get("callsign", "") or "").upper()
+        cs = normalize_callsign(c.get("callsign", ""))
         nm = (c.get("name", "") or "").upper()
         # ALL is the open-call shortcut, not a real station; keep it first
         # regardless of where it would sort alphabetically.
@@ -158,7 +160,7 @@ def sort_contacts_by_suffix(contacts):
     as the last 3 digits left-padded to 3 chars, so legacy 4-digit and modern
     3-digit suffixes interleave consistently."""
     def key(c):
-        cs = (c.get("callsign", "") or "").upper()
+        cs = normalize_callsign(c.get("callsign", ""))
         nm = (c.get("name", "") or "").upper()
         if cs == "ALL":
             return (0, "", "", "")

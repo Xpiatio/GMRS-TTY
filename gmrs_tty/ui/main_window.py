@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QToolBar, QToolButton, QVBoxLayout, QWidget,
 )
 
+from gmrs_tty.config import AppConfig
 from gmrs_tty.audio.playback import AudioPlayerThread
 from gmrs_tty.audio.spectro_worker import SpectrogramWorker
 from gmrs_tty.constants import (
@@ -88,7 +89,7 @@ class MainWindow(QMainWindow):
         self.resize(960, 720)
 
         # State Initialization
-        self.config = load_json(CONFIG_FILE, {"callsign": "N0CALL", "name": "Default", "location": "Unknown"})
+        self.config = AppConfig(load_json(CONFIG_FILE, {}))
         self.contacts = sort_contacts(deduplicate_ham_cross_references(
             load_json(CONTACTS_FILE, [{"callsign": "All", "name": "Everyone"}])
         ))
@@ -102,7 +103,7 @@ class MainWindow(QMainWindow):
         # is short-circuited at the `_transmit_text` / `transmit_id_only`
         # entry points so a stray keystroke or hotkey can't push audio
         # on-air. Persists across launches via config["listen_only"].
-        self.listen_only = bool(self.config.get("listen_only", False))
+        self.listen_only = self.config.listen_only
         # Tracks an in-flight TX so `_refresh_tx_enabled` can disable the
         # buttons during synthesis without losing track of the listen-only
         # gate underneath.
@@ -143,9 +144,7 @@ class MainWindow(QMainWindow):
         # The dock itself is always *built* — we just hide it and skip the
         # record() calls when disabled, so flipping the flag at runtime is
         # cheap and doesn't require a layout rebuild.
-        self.attendance_enabled = bool(
-            (self.config.get("attendance") or {}).get("enabled", False)
-        )
+        self.attendance_enabled = self.config.attendance_enabled
         self.attendance_panel = None
         # Set True while we programmatically toggle dock visibility so the
         # dock's visibilityChanged signal doesn't mistake our own hide
@@ -161,7 +160,7 @@ class MainWindow(QMainWindow):
         # first frame instead of flashing light-then-dark.
         theme.apply_theme(
             QApplication.instance(),
-            bool(self.config.get("dark_mode", False)),
+            self.config.dark_mode,
         )
 
         self.init_ui()
@@ -195,7 +194,7 @@ class MainWindow(QMainWindow):
         self._check_bundled_models()
 
     def _check_bundled_models(self):
-        model_name = self.config.get("whisper_model", "small.en")
+        model_name = self.config.whisper_model
         model_path = os.path.join(STTWorker.MODELS_STT_DIR, model_name)
         if not os.path.isdir(model_path):
             self.append_to_chat(
@@ -1071,16 +1070,16 @@ class MainWindow(QMainWindow):
         callsign segment is replaced with a 'FRS Mode' label since FRS has
         no callsign — the operator/location segments stay useful for the
         on-screen log."""
-        name = self.config.get('name', 'N/A')
-        loc = self.config.get('location', 'N/A')
+        name = self.config.name or 'N/A'
+        loc = self.config.location or 'N/A'
         if self._service_mode() == SERVICE_FRS:
             self.header_label.setText(f"FRS Mode | Operator: {name} | Location: {loc}")
         else:
-            call = self.config.get('callsign', 'N/A')
+            call = self.config.callsign or 'N/A'
             self.header_label.setText(f"Station: {call} | Operator: {name} | Location: {loc}")
 
     def _service_mode(self):
-        return normalize_service(self.config.get("radio_service"))
+        return normalize_service(self.config.radio_service)
 
     def _sync_service_radios(self):
         """Initialize the radio buttons from config without triggering the
@@ -1103,7 +1102,7 @@ class MainWindow(QMainWindow):
         if not checked:
             return
         new_mode = SERVICE_FRS if self.frs_radio.isChecked() else SERVICE_GMRS
-        if self.config.get("radio_service") == new_mode:
+        if self.config.radio_service == new_mode:
             return
         self.config["radio_service"] = new_mode
         save_json(CONFIG_FILE, self.config)
@@ -1302,44 +1301,42 @@ class MainWindow(QMainWindow):
     def open_config_dialog(self):
         dlg = ConfigDialog(self.config, self)
         if dlg.exec():
-            old_device = self.config.get("input_device", -1)
-            old_threshold = self.config.get("vad_threshold", 0.5)
+            old_device = self.config.input_device
+            old_threshold = self.config.vad_threshold
             old_ptt = (
-                self.config.get("ptt_mode", "manual"),
-                self.config.get("ptt_serial_port", ""),
-                self.config.get("ptt_serial_line", "RTS"),
+                self.config.ptt_mode,
+                self.config.ptt_serial_port,
+                self.config.ptt_serial_line,
             )
-            old_fuzzy = bool(self.config.get("fuzzy_callsign", False))
+            old_fuzzy = self.config.fuzzy_callsign
             old_attendance = self.attendance_enabled
-            self.config = dlg.get_config()
+            self.config = AppConfig(dlg.get_config())
             save_json(CONFIG_FILE, self.config)
             self.update_header()
-            new_attendance = bool(
-                (self.config.get("attendance") or {}).get("enabled", False)
-            )
+            new_attendance = self.config.attendance_enabled
             if old_attendance != new_attendance:
                 # Push the new state through the same toggle path the View
                 # menu uses so the action's checkbox, the dock visibility,
                 # and ``self.attendance_enabled`` stay in sync.
                 self._attendance_toggle_action.setChecked(new_attendance)
                 self._on_attendance_toggle(new_attendance)
-            if old_fuzzy != bool(self.config.get("fuzzy_callsign", False)):
+            if old_fuzzy != self.config.fuzzy_callsign:
                 # Push the new toggle state to the chat widget and rescan
                 # existing lines so the operator sees the effect immediately
                 # — turning on retro-corrects past near-misses, turning off
                 # leaves prior rewrites in place (they're already canonical).
                 self._refresh_callsign_index()
             stt_settings_changed = (
-                old_device != self.config.get("input_device", -1)
-                or old_threshold != self.config.get("vad_threshold", 0.5)
+                old_device != self.config.input_device
+                or old_threshold != self.config.vad_threshold
             )
             if stt_settings_changed and self.listen_btn.isChecked():
                 self.stop_stt()
                 self.start_stt()
             new_ptt = (
-                self.config.get("ptt_mode", "manual"),
-                self.config.get("ptt_serial_port", ""),
-                self.config.get("ptt_serial_line", "RTS"),
+                self.config.ptt_mode,
+                self.config.ptt_serial_port,
+                self.config.ptt_serial_line,
             )
             if new_ptt != old_ptt:
                 try:
@@ -1362,7 +1359,7 @@ class MainWindow(QMainWindow):
         dlg.raise_()
 
     def _generate_journal(self):
-        api_key = self.config.get("gemini_api_key", "").strip()
+        api_key = self.config.gemini_api_key
         if not api_key:
             QMessageBox.information(
                 self,
@@ -1440,7 +1437,7 @@ class MainWindow(QMainWindow):
     def _quick_messages(self):
         """Read the saved preset list, filtering out any non-string / blank
         entries so a hand-edited config.json can't crash the strip."""
-        raw = self.config.get("quick_messages", []) or []
+        raw = self.config.quick_messages or []
         return [p.strip() for p in raw if isinstance(p, str) and p.strip()]
 
     def populate_quick_messages_strip(self):
@@ -1568,7 +1565,7 @@ class MainWindow(QMainWindow):
         if not text and not prefaced:
             return False
 
-        if self.config.get("filter_profanity", True):
+        if self.config.filter_profanity:
             text = mask_profanity(text)
 
         if not prefaced:
@@ -1578,8 +1575,8 @@ class MainWindow(QMainWindow):
             text=text,
             target_call=target_call or "",
             target_name=target_name,
-            my_call=self.config.get("callsign", "N0CALL"),
-            my_name=self.config.get("name", "Default User"),
+            my_call=self.config.callsign,
+            my_name=self.config.name or "Default User",
             last_id_time=self.last_tx_time,
             now=datetime.datetime.now(),
             service=service,
@@ -1616,9 +1613,9 @@ class MainWindow(QMainWindow):
             # a stray hotkey can't push a callsign on-air.
             return
         spoken_text, self.last_tx_time = format_standalone_id(
-            my_call=self.config.get("callsign", "N0CALL"),
-            my_name=self.config.get("name", "Default User"),
-            my_location=self.config.get("location", ""),
+            my_call=self.config.callsign,
+            my_name=self.config.name or "Default User",
+            my_location=self.config.location,
             now=datetime.datetime.now(),
         )
 
@@ -1674,7 +1671,7 @@ class MainWindow(QMainWindow):
         tts_text = expand_tty_abbreviations(tts_text)
         self._set_tx_buttons_enabled(False)
 
-        voice_path = self.config.get("voice", "")
+        voice_path = self.config.voice
         if not voice_path or not os.path.exists(voice_path):
             self.append_to_chat("<i>Error: No valid Piper voice selected. Please select one in Settings -> Configuration.</i>", color=theme.palette().error)
             self._set_tx_buttons_enabled(True)
@@ -1693,7 +1690,7 @@ class MainWindow(QMainWindow):
         self.tts_thread = TTSSynthesisThread(
             voice, tts_text,
             self.ptt.lead_in_seconds, self.ptt.tail_seconds,
-            length_scale=float(self.config.get("tts_length_scale", 1.0)),
+            length_scale=self.config.tts_length_scale,
             parent=self,
         )
         self.tts_thread.ready.connect(self._on_tts_synthesized)
@@ -1707,7 +1704,7 @@ class MainWindow(QMainWindow):
             return
 
         self.audio_thread = AudioPlayerThread(
-            audio, sample_rate, device=self.config.get("output_device", -1)
+            audio, sample_rate, device=self.config.output_device
         )
         self.audio_thread.finished.connect(self.on_tts_finished)
         self.audio_thread.error.connect(self.on_tts_error)
@@ -1962,7 +1959,7 @@ class MainWindow(QMainWindow):
         # service alongside the index it depends on.
         self.chat_display.set_fuzzy_enabled(
             self._service_mode() != SERVICE_FRS
-            and bool(self.config.get("fuzzy_callsign", False))
+            and self.config.fuzzy_callsign
         )
         self.chat_display.rescan_all_blocks()
         if self.attendance_panel is not None:
@@ -1977,17 +1974,17 @@ class MainWindow(QMainWindow):
     def start_stt(self):
         if self.stt_worker and self.stt_worker.isRunning():
             return
-        desired_model = self.config.get("whisper_model", "small.en")
+        desired_model = self.config.whisper_model
         if desired_model != self._stt_whisper_model_name:
             self._stt_whisper = None
             self._stt_vad_model = None
         self.stt_worker = STTWorker(
-            input_device=self.config.get("input_device", -1),
+            input_device=self.config.input_device,
             whisper_model=desired_model,
-            vad_threshold=self.config.get("vad_threshold", 0.5),
+            vad_threshold=self.config.vad_threshold,
             whisper=self._stt_whisper,
             vad_model=self._stt_vad_model,
-            youtube_url=self.config.get("youtube_url", ""),
+            youtube_url=self.config.youtube_url,
             parent=self,
         )
         self.stt_worker.transcribed_segment.connect(self.on_transcription_segment)
@@ -2050,7 +2047,7 @@ class MainWindow(QMainWindow):
         (24h default, 12h with AM/PM)."""
         if now is None:
             now = datetime.datetime.now()
-        if self.config.get("time_format", "24h") == "12h":
+        if self.config.time_format == "12h":
             h12 = now.hour % 12 or 12
             suffix = "AM" if now.hour < 12 else "PM"
             return f"{h12}:{now.minute:02d}:{now.second:02d} {suffix}"
@@ -2067,7 +2064,7 @@ class MainWindow(QMainWindow):
         text — the same one-scan-per-utterance behavior as the old
         non-streaming path.
         """
-        if self.config.get("filter_profanity", True):
+        if self.config.filter_profanity:
             text = mask_profanity(text)
         if not text:
             return
@@ -2117,14 +2114,14 @@ class MainWindow(QMainWindow):
             # noise pills for anyone speaking a callsign on a shared FRS/GMRS
             # frequency, which the operator can't act on usefully.
             return
-        my_call = self.config.get("callsign", "").upper()
+        my_call = self.config.callsign
         known = known_callsigns(self.contacts)
         detected = detect_callsigns(text)
         # Online state is cached for ~60s so this is cheap; capture once per
         # scan so a single utterance picks a consistent verdict for every
         # callsign it surfaces.
         online = is_online()
-        fuzzy_on = bool(self.config.get("fuzzy_callsign", False))
+        fuzzy_on = self.config.fuzzy_callsign
         for cs in detected:
             # Attendance recording runs *before* the unknown/known split so
             # the grid logs every detected station regardless of whether

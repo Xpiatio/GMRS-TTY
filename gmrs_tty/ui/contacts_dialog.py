@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 from gmrs_tty.constants import VERIFIED_COLOR, VERIFIED_GLYPH
 from gmrs_tty.fcc.crossref import apply_verification, verify_callsign
 from gmrs_tty.net.online import is_online
-from gmrs_tty.persistence.contacts import sort_contacts_by_suffix
+from gmrs_tty.persistence.contacts import normalize_callsign, sort_contacts_by_suffix
 
 # Column layout. Personal-identifying fields cluster left (Callsign / Name /
 # Location), FCC cross-reference fields next (GMRS / HAM), and the verified-
@@ -215,8 +215,8 @@ class ContactsDialog(QDialog):
             base["callsign"] = call_item.text().strip() if call_item else ""
             base["name"] = name_item.text().strip() if name_item else ""
             base["location"] = loc_item.text().strip() if loc_item else ""
-            gmrs = (gmrs_item.text() if gmrs_item else "").strip().upper()
-            ham = (ham_item.text() if ham_item else "").strip().upper()
+            gmrs = normalize_callsign(gmrs_item.text() if gmrs_item else "")
+            ham = normalize_callsign(ham_item.text() if ham_item else "")
             if gmrs:
                 base["gmrs_callsign"] = gmrs
             else:
@@ -244,7 +244,7 @@ class ContactsDialog(QDialog):
         rows = self._read_rows_from_table()
         now = _now_iso()
         for idx, contact in enumerate(rows):
-            cs = (contact.get("callsign") or "").upper()
+            cs = normalize_callsign(contact.get("callsign", ""))
             if not cs or cs == "ALL":
                 continue
             if not self._should_verify(idx, contact):
@@ -275,7 +275,7 @@ class ContactsDialog(QDialog):
         now = _now_iso()
         out = []
         for idx, current in enumerate(rows):
-            callsign = (current.get("callsign") or "").strip().upper()
+            callsign = normalize_callsign(current.get("callsign", ""))
             if not callsign:
                 continue
             current["callsign"] = callsign

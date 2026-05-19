@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 
 from gmrs_tty.net.online import invalidate as _invalidate_online
 from gmrs_tty.net.online import is_online
+from gmrs_tty.persistence.contacts import normalize_callsign
 from gmrs_tty.text.nicknames import canonical_forms
 
 API_BASE = "https://api.ke8rxnwx.net/crossref/"
@@ -112,7 +113,7 @@ def _first_active_callsign_for(related, service_codes):
         if (row.get("status") or "").upper() != "A":
             continue
         if (row.get("service") or "").upper() in service_codes:
-            cs = (row.get("callsign") or "").strip().upper()
+            cs = normalize_callsign(row.get("callsign", ""))
             if cs:
                 return cs
     return ""
@@ -125,7 +126,7 @@ def verify_callsign(callsign, expected_name):
     Skips the HTTP call when ``is_online()`` is False so an offline laptop
     doesn't sit on a 5-second timeout per contact.
     """
-    cs = (callsign or "").strip().upper()
+    cs = normalize_callsign(callsign)
     if not cs:
         return VerificationResult(status="error")
 

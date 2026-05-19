@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from gmrs_tty.persistence.contacts import index_contacts_by_callsign
+from gmrs_tty.persistence.contacts import index_contacts_by_callsign, normalize_callsign
 
 
 class AttendanceTracker:
@@ -29,7 +29,7 @@ class AttendanceTracker:
         self._seen: set[str] = set()
 
     def record(self, callsign: str) -> bool:
-        cs = (callsign or "").strip().upper()
+        cs = normalize_callsign(callsign)
         if not cs:
             return False
         if cs in self._seen:
@@ -40,7 +40,7 @@ class AttendanceTracker:
 
     def remove(self, callsign: str) -> bool:
         """Remove *callsign* from the session. Returns True if it was present."""
-        cs = (callsign or "").strip().upper()
+        cs = normalize_callsign(callsign)
         if cs not in self._seen:
             return False
         self._seen.discard(cs)
@@ -55,7 +55,7 @@ class AttendanceTracker:
         return list(self._order)
 
     def __contains__(self, callsign: str) -> bool:
-        return (callsign or "").strip().upper() in self._seen
+        return normalize_callsign(callsign) in self._seen
 
     def __len__(self) -> int:
         return len(self._order)
@@ -79,7 +79,7 @@ def build_attendance_rows(callsigns: Iterable[str], contacts) -> list[dict]:
     index = index_contacts_by_callsign(contacts)
     rows = []
     for cs in callsigns:
-        cs = (cs or "").strip().upper()
+        cs = normalize_callsign(cs)
         if not cs:
             continue
         entries = index.get(cs, [])
@@ -89,8 +89,8 @@ def build_attendance_rows(callsigns: Iterable[str], contacts) -> list[dict]:
                 "callsign": cs,
                 "name": (c.get("name", "") or "").strip(),
                 "location": (c.get("location", "") or "").strip(),
-                "gmrs": (c.get("gmrs_callsign", "") or "").strip().upper(),
-                "ham": (c.get("ham_callsign", "") or "").strip().upper(),
+                "gmrs": normalize_callsign(c.get("gmrs_callsign", "")),
+                "ham": normalize_callsign(c.get("ham_callsign", "")),
             })
         else:
             rows.append({
