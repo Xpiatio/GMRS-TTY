@@ -1,8 +1,27 @@
 import re
+from typing import Required, TypedDict
 
 # Contact-dict fields that hold a callsign. Order matters for tooltip rendering
 # (GMRS line before HAM line) but not for indexing.
 _CALLSIGN_FIELDS = ("callsign", "gmrs_callsign", "ham_callsign")
+
+
+class ContactDict(TypedDict, total=False):
+    """Shape of a single contact record as stored in contacts.json.
+
+    ``callsign`` is the only required key; all others are optional so that
+    newly created contacts and legacy records without FCC data remain valid.
+    Static analysis tools use this to catch key-name typos at check time.
+    """
+    callsign: Required[str]
+    name: str
+    location: str
+    gmrs_callsign: str
+    ham_callsign: str
+    verified: bool
+    verified_at: str   # ISO-8601 timestamp string
+    fcc_name: str
+    fcc_location: str
 
 
 def normalize_callsign(value) -> str:
@@ -10,7 +29,7 @@ def normalize_callsign(value) -> str:
     return (value or "").strip().upper()
 
 
-def known_callsigns(contacts):
+def known_callsigns(contacts: list[ContactDict]) -> set[str]:
     """Return the set of UPPERCASED callsigns this contact list 'knows about',
     pulled from every populated callsign field (primary `callsign`,
     `gmrs_callsign`, `ham_callsign`) across every contact. Skips the 'ALL'
@@ -30,7 +49,7 @@ def known_callsigns(contacts):
     return known
 
 
-def index_contacts_by_callsign(contacts):
+def index_contacts_by_callsign(contacts: list[ContactDict]) -> dict[str, list[ContactDict]]:
     """Return {UPPERCASED_CALLSIGN: [contact, …]} for use as a fast lookup.
 
     A single contact is indexed under each of its callsign fields (primary
@@ -56,7 +75,7 @@ def index_contacts_by_callsign(contacts):
     return index
 
 
-def format_callsign_tooltip(callsign, contacts):
+def format_callsign_tooltip(callsign: str, contacts: list[ContactDict]) -> str:
     """Render a multi-line tooltip body listing every entry that shares
     `callsign` (under any of its callsign fields). Each entry shows name,
     location, and — when known — its GMRS / HAM cross-references. Returns ''
@@ -79,7 +98,7 @@ def format_callsign_tooltip(callsign, contacts):
     return "\n".join(lines)
 
 
-def deduplicate_ham_cross_references(contacts):
+def deduplicate_ham_cross_references(contacts: list[ContactDict]) -> list[ContactDict]:
     """Drop HAM-side duplicates of an existing GMRS-primary contact row.
 
     Detects the case where the same operator is recorded twice — once
@@ -137,7 +156,7 @@ def deduplicate_ham_cross_references(contacts):
     return survivors
 
 
-def sort_contacts(contacts):
+def sort_contacts(contacts: list[ContactDict]) -> list[ContactDict]:
     """Return `contacts` sorted alphabetically by callsign (case-insensitive),
     with the special 'ALL' open-call entry pinned at index 0 and ties broken
     by operator name so shared family callsigns get a stable order."""
@@ -153,7 +172,7 @@ def sort_contacts(contacts):
     return sorted(contacts, key=key)
 
 
-def sort_contacts_by_suffix(contacts):
+def sort_contacts_by_suffix(contacts: list[ContactDict]) -> list[ContactDict]:
     """Return `contacts` sorted by the trailing digits of each callsign — the
     last 3 numbers of a GMRS callsign. 'ALL' stays pinned at index 0; entries
     without trailing digits sort to the end. The trailing-digit key is taken

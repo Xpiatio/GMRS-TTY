@@ -1,14 +1,14 @@
 """QThread worker that calls Gemini and emits the result."""
 from __future__ import annotations
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
 
-from gmrs_tty.ai.gemini_client import GeminiError, generate_journal
+from gmrs_tty.ai.gemini_client import generate_journal
+from gmrs_tty.ui.worker_base import WorkerBase
 
 
-class JournalWorker(QThread):
+class JournalWorker(WorkerBase):
     finished = Signal(dict)
-    error = Signal(str)
 
     def __init__(
         self,
@@ -24,16 +24,11 @@ class JournalWorker(QThread):
         self._callsigns = callsigns
         self._timestamp = timestamp
 
-    def run(self):
-        try:
-            result = generate_journal(
-                self._api_key,
-                self._transcript,
-                self._callsigns,
-                self._timestamp,
-            )
-            self.finished.emit(result)
-        except GeminiError as exc:
-            self.error.emit(str(exc))
-        except Exception as exc:
-            self.error.emit(f"Unexpected error: {exc}")
+    def _run(self) -> None:
+        result = generate_journal(
+            self._api_key,
+            self._transcript,
+            self._callsigns,
+            self._timestamp,
+        )
+        self.finished.emit(result)
