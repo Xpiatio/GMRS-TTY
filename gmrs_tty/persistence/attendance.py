@@ -38,6 +38,15 @@ class AttendanceTracker:
         self._order.append(cs)
         return True
 
+    def remove(self, callsign: str) -> bool:
+        """Remove *callsign* from the session. Returns True if it was present."""
+        cs = (callsign or "").strip().upper()
+        if cs not in self._seen:
+            return False
+        self._seen.discard(cs)
+        self._order.remove(cs)
+        return True
+
     def clear(self) -> None:
         self._order.clear()
         self._seen.clear()

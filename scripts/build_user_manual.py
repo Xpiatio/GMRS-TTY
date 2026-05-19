@@ -302,6 +302,7 @@ def build_toc(b: Builder):
         ("3.",  "Installation"),
         ("4.",  "First run &amp; configuration"),
         ("5.",  "Main window tour"),
+        ("5.11.", "Session Journals"),
         ("6.",  "Configuration dialog"),
         ("7.",  "Contacts dialog"),
         ("8.",  "Quick Messages dialog"),
@@ -570,6 +571,10 @@ def build_main_window(b: Builder):
         ("Person icon", "Bust-in-silhouette glyph. Opens Contacts — "
                         "same destination as Settings → Contacts or "
                         "Ctrl+B. Disabled in FRS mode (no callsigns)."),
+        ("Notebook icon (📓)", "Opens the Session Journals browser — "
+                               "same destination as Tools → View Session "
+                               "Journals or Ctrl+Shift+J. Enabled in "
+                               "both modes."),
         ("Gear icon", "Cog wheel. Opens Configuration — same "
                       "destination as Settings → Configuration or "
                       "Ctrl+,. Enabled in both modes."),
@@ -779,17 +784,27 @@ def build_main_window(b: Builder):
         ("Order", "Insertion order, deduplicated — the first station "
                   "heard sits at the top. Re-hearing a callsign within "
                   "the same session does not add a second row."),
-        ("Reset on Listen cycle", "The grid clears on every Listen "
-                                   "off→on transition so each session "
-                                   "starts fresh. Stopping Listen "
-                                   "preserves the current grid for "
-                                   "review until the next session "
-                                   "begins."),
-        ("Clear callsigns detected button", "Sits below the table. Mnemonic "
-                                            "Alt+D when the panel has focus. "
-                                            "Empties the grid immediately; "
-                                            "future detections still log "
-                                            "normally."),
+        ("Persists across Listen cycles", "Toggling Listen off and back "
+                                          "on does not clear the grid — "
+                                          "callsigns accumulate across the "
+                                          "entire operating session. Only "
+                                          "the Remove and Clear controls "
+                                          "below, or switching to FRS "
+                                          "mode, reset the list."),
+        ("Remove selected button", "Enabled when a row is selected. "
+                                   "Removes that single callsign from "
+                                   "the session list without touching "
+                                   "Contacts. Right-clicking any row "
+                                   "shows an equivalent context-menu "
+                                   "option: "
+                                   "<i>Remove CALLSIGN from session</i>. "
+                                   "Removed callsigns can be re-detected "
+                                   "and re-added if heard again."),
+        ("Clear callsigns detected button", "Sits below the table to the "
+                                            "right of Remove selected. "
+                                            "Empties the entire grid "
+                                            "immediately; future detections "
+                                            "still log normally."),
     ])
 
     b.h3("5.9 Status bar")
@@ -804,7 +819,8 @@ def build_main_window(b: Builder):
         "waterfall activity).")
 
     b.h3("5.10 Menubar")
-    b.p("Two menus: <b>Settings</b> (Alt+S) and <b>View</b> (Alt+V).")
+    b.p("Three menus: <b>Settings</b> (Alt+S), <b>View</b> (Alt+V), "
+        "and <b>Tools</b> (Alt+T).")
     b.p("Settings contains:")
     b.bullets([
         ("Configuration… (Alt+C or Ctrl+,)", "Opens the Configuration "
@@ -827,6 +843,90 @@ def build_main_window(b: Builder):
         "show/hide checkboxes for Station, Pending Stations, Quick "
         "Messages, and Transmit, and a <b>Reset layout to default</b> "
         "action (Ctrl+Shift+0).")
+    b.p("Tools contains:")
+    b.bullets([
+        ("Generate Session Journal… (Ctrl+J)", "Sends the current "
+                                               "conversation transcript "
+                                               "and detected callsigns to "
+                                               "Google Gemini, which "
+                                               "generates a titled narrative "
+                                               "summary. The entry is saved "
+                                               "to <font face=\"Courier\">"
+                                               "journals/</font> as a "
+                                               "timestamped JSON file. "
+                                               "Requires a Gemini API key "
+                                               "in Configuration. Shows an "
+                                               "informative dialog if the "
+                                               "key is missing or the "
+                                               "transcript is empty. "
+                                               "Generation runs in the "
+                                               "background; the action "
+                                               "disables until it "
+                                               "completes."),
+        ("View Session Journals… (Ctrl+Shift+J)", "Opens the non-modal "
+                                                  "Session Journals browser "
+                                                  "(section 5.11). Same "
+                                                  "destination as the 📓 "
+                                                  "toolbar button."),
+    ])
+
+
+def build_journals(b: Builder):
+    b.h1("5.11 Session Journals")
+    b.p("The Session Journals feature sends the current conversation "
+        "transcript and detected callsigns to <b>Google Gemini 2.0 Flash "
+        "Lite</b> and saves an AI-generated journal entry to disk. It "
+        "requires a free Google Gemini API key configured in Settings → "
+        "Configuration → Gemini API Key.")
+    b.h3("Generating a journal entry")
+    b.p("Click <b>Tools → Generate Session Journal…</b> (Ctrl+J) or the "
+        "📓 toolbar button while the conversation log has content. The "
+        "app checks for a Gemini API key and a non-empty transcript; if "
+        "either is missing an informative dialog explains what to do. "
+        "When both are present, generation runs on a background thread — "
+        "the action disables and the status bar shows "
+        "<i>Generating journal entry via Gemini…</i> — so the UI stays "
+        "responsive while the API call is in flight. On success, the "
+        "status bar shows the saved file path for five seconds.")
+    b.bullets([
+        ("Title", "A concise session title — 10 words or fewer — "
+                  "generated by Gemini."),
+        ("Summary", "A 2–4 paragraph narrative of the conversations "
+                    "and activities detected in the transcript."),
+        ("Callsigns", "The list from the Callsigns Detected panel at "
+                      "the moment of generation."),
+        ("Transcript", "The full conversation log text."),
+        ("Exported at", "ISO-8601 timestamp of when the entry was "
+                        "generated."),
+    ])
+    b.p("Entries are saved under "
+        "<font face=\"Courier\">journals/YYYYMMDD_HHMMSS.json</font> "
+        "relative to the project root. The directory is created "
+        "automatically on first use.")
+    b.h3("Browsing journal entries")
+    b.p("Click <b>Tools → View Session Journals…</b> (Ctrl+Shift+J) or "
+        "the 📓 toolbar button to open the non-modal Journal browser. "
+        "The dialog stays open while you listen, so you can review past "
+        "sessions without interrupting the current one.")
+    b.bullets([
+        ("Entry list (left pane)", "All saved entries sorted newest "
+                                   "first. Each row shows the export "
+                                   "date and AI-generated title. Click "
+                                   "any row to load its detail view."),
+        ("Detail view (right pane)", "Shows the entry title, export "
+                                     "timestamp, callsigns detected, and "
+                                     "AI summary as formatted HTML."),
+        ("Delete entry button", "Permanently deletes the selected "
+                                "entry after a Yes/No confirmation. "
+                                "Does not affect contacts or config. "
+                                "The list reloads automatically after "
+                                "deletion."),
+    ])
+    b.note(
+        "Journal generation requires an internet connection to reach the "
+        "Gemini API. The rest of the app (RX, TX, contacts) is fully "
+        "offline as always — journals are an opt-in cloud feature."
+    )
 
 
 def build_config_dialog(b: Builder):
@@ -891,6 +991,14 @@ def build_config_dialog(b: Builder):
              "<font face=\"Courier\">attendance.enabled</font>. Also "
              "toggleable from View → Show callsigns detected "
              "(Ctrl+Shift+A). GMRS only."],
+            ["Gemini API Key (Alt+G)", "Password text + Show/Hide",
+             "Google Gemini API key for AI-generated session journals. "
+             "Leave blank to disable journal generation. The field uses "
+             "password echo by default; toggle <b>Show</b> to reveal "
+             "the key. Obtain a free key at "
+             "https://aistudio.google.com/app/apikey. "
+             "Stored in config.json as "
+             "<font face=\"Courier\">gemini_api_key</font>."],
             ["PTT Mode (Alt+P)", "Dropdown",
              "Manual / VOX / USB FTDI / Serial. See section 12."],
             ["Serial Port (Alt+S)", "Text",
@@ -1051,6 +1159,8 @@ def build_keyboard(b: Builder):
             ["Send quick message preset 1–9", "Alt+1 … Alt+9"],
             ["Toggle Waterfall panel", "Ctrl+Shift+W"],
             ["Toggle Callsigns Detected panel", "Ctrl+Shift+A"],
+            ["Generate Session Journal", "Ctrl+J"],
+            ["View Session Journals", "Ctrl+Shift+J"],
             ["Toggle Station panel", "Ctrl+Shift+S"],
             ["Toggle Pending Stations panel", "Ctrl+Shift+P"],
             ["Toggle Quick Messages panel", "Ctrl+Shift+Q"],
@@ -1666,6 +1776,7 @@ def build_files(b: Builder):
         '    "fuzzy_callsign": false,\n'
         '    "listen_only": false,\n'
         '    "attendance": { "enabled": false },\n'
+        '    "gemini_api_key": "",\n'
         '    "ptt_mode": "manual",\n'
         '    "ptt_serial_port": "",\n'
         '    "ptt_serial_line": "RTS",\n'
@@ -1715,6 +1826,10 @@ def build_files(b: Builder):
                        "false. Controls the Callsigns Detected dock. Nested so "
                        "future per-session options can land here "
                        "without churning the top-level schema."),
+        ("gemini_api_key", "String. Your Google Gemini API key. Empty "
+                           "string (default) disables journal generation. "
+                           "Set via Settings → Configuration → Gemini "
+                           "API Key."),
         ("ptt_mode", "<font face=\"Courier\">manual</font>, <font "
                      "face=\"Courier\">vox</font>, or <font face="
                      "\"Courier\">usb_ftdi</font>."),
@@ -1838,6 +1953,7 @@ def build_manual(path):
         build_install,
         build_first_run,
         build_main_window,
+        build_journals,
         build_config_dialog,
         build_contacts_dialog,
         build_quick_messages_dialog,

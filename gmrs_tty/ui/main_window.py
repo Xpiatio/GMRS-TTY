@@ -39,6 +39,8 @@ from gmrs_tty.text.profanity import mask_profanity
 from gmrs_tty.text.placeholders import find_placeholders, substitute_placeholders
 from gmrs_tty.text.shorthand import expand_tty_abbreviations
 from gmrs_tty.tts.synthesizer import TTSSynthesisThread
+from gmrs_tty.ai.journal_worker import JournalWorker
+from gmrs_tty.persistence.journal import load_journals, save_journal
 from gmrs_tty.ui import theme
 from gmrs_tty.ui import dock_layout
 from gmrs_tty.ui.attendance_panel import AttendancePanel
@@ -47,6 +49,7 @@ from gmrs_tty.ui.config_dialog import ConfigDialog
 from gmrs_tty.ui.contacts_dialog import AddContactDialog, ContactsDialog
 from gmrs_tty.ui.dock_layout import CompactTitleBar
 from gmrs_tty.ui.flow_layout import FlowLayout
+from gmrs_tty.ui.journal_dialog import JournalDialog
 from gmrs_tty.ui.quick_messages_dialog import QuickMessagesDialog
 from gmrs_tty.ui.spectro_colormap import AVAILABLE_COLORMAPS
 from gmrs_tty.ui.spectrogram_widget import (
@@ -149,6 +152,9 @@ class MainWindow(QMainWindow):
         # (FRS-mode, layout reset, restore-from-saved) for a user click on
         # the title-bar X.
         self._suppress_attendance_visibility = False
+        # In-flight journal generation worker; held on self so it isn't
+        # garbage-collected before the background thread finishes.
+        self._journal_worker: JournalWorker | None = None
 
         # Apply persisted theme before init_ui so the header label, pending
         # pills, and chat-display all paint in the right palette on the
@@ -387,6 +393,22 @@ class MainWindow(QMainWindow):
         self.contacts_icon_btn.setToolTip("Contacts (Ctrl+B)")
         self.contacts_icon_btn.clicked.connect(self.open_contacts_dialog)
         tb.addWidget(self.contacts_icon_btn)
+
+        # Journal button. Opens the journal dialog to browse saved entries or
+        # trigger generation. Label mirrors the Tools menu mnemonic.
+        self.journal_icon_btn = QToolButton(tb)
+        self.journal_icon_btn.setText("\U0001F4D3")  # 📓 notebook
+        self.journal_icon_btn.setFont(icon_font)
+        self.journal_icon_btn.setAutoRaise(True)
+        self.journal_icon_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.journal_icon_btn.setAccessibleName("Session journals")
+        self.journal_icon_btn.setAccessibleDescription(
+            "Open the session journals browser. Same destination as "
+            "Tools → View Session Journals (Ctrl+Shift+J)."
+        )
+        self.journal_icon_btn.setToolTip("Session Journals (Ctrl+Shift+J)")
+        self.journal_icon_btn.clicked.connect(self.open_journal_dialog)
+        tb.addWidget(self.journal_icon_btn)
 
         # Configuration cog. Rightmost — "settings last" convention. Stays
         # enabled in FRS mode because Configuration is service-agnostic
@@ -1021,6 +1043,29 @@ class MainWindow(QMainWindow):
         reset_action.triggered.connect(self._reset_layout_to_default)
         panels_menu.addAction(reset_action)
 
+        # Tools Menu — Alt+T mnemonic. AI-assisted session tools.
+        tools_menu = menubar.addMenu("&Tools")
+
+        generate_journal_action = QAction("&Generate Session Journal…", self)
+        generate_journal_action.setShortcut(QKeySequence("Ctrl+J"))
+        generate_journal_action.setStatusTip(
+            "Send the current transcript and callsigns to Gemini to generate "
+            "a session journal entry. Requires a Gemini API key in Settings → Configuration."
+        )
+        generate_journal_action.triggered.connect(self._generate_journal)
+        tools_menu.addAction(generate_journal_action)
+        self._generate_journal_action = generate_journal_action
+
+        tools_menu.addSeparator()
+
+        view_journals_action = QAction("&View Session Journals…", self)
+        view_journals_action.setShortcut(QKeySequence("Ctrl+Shift+J"))
+        view_journals_action.setStatusTip(
+            "Browse all saved session journal entries."
+        )
+        view_journals_action.triggered.connect(self.open_journal_dialog)
+        tools_menu.addAction(view_journals_action)
+
     def update_header(self):
         """Updates the top bar with current user info. In FRS mode the
         callsign segment is replaced with a 'FRS Mode' label since FRS has
@@ -1310,6 +1355,80 @@ class MainWindow(QMainWindow):
             save_json(CONTACTS_FILE, self.contacts)
             self.populate_target_dropdown()
             self._refresh_callsign_index()
+
+    def open_journal_dialog(self):
+        dlg = JournalDialog(parent=self)
+        dlg.show()
+        dlg.raise_()
+
+    def _generate_journal(self):
+        api_key = self.config.get("gemini_api_key", "").strip()
+        if not api_key:
+            QMessageBox.information(
+                self,
+                "Gemini API Key Required",
+                "No Gemini API key is configured.\n\n"
+                "Add your key under Settings → Configuration → Gemini API Key.",
+            )
+            return
+
+        transcript = self.chat_display.toPlainText().strip()
+        if not transcript:
+            QMessageBox.information(
+                self,
+                "No Transcript",
+                "The conversation log is empty. Start a listening session before "
+                "generating a journal entry.",
+            )
+            return
+
+        if self._journal_worker is not None and self._journal_worker.isRunning():
+            QMessageBox.information(
+                self,
+                "Already Generating",
+                "A journal entry is already being generated. Please wait.",
+            )
+            return
+
+        callsigns = self.attendance_panel.callsigns() if self.attendance_panel else []
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        self._generate_journal_action.setEnabled(False)
+        self.journal_icon_btn.setEnabled(False)
+        self.statusBar().showMessage("Generating journal entry via Gemini…")
+
+        self._journal_worker = JournalWorker(
+            api_key, transcript, callsigns, timestamp, parent=self
+        )
+        self._journal_worker.finished.connect(self._on_journal_finished)
+        self._journal_worker.error.connect(self._on_journal_error)
+        self._journal_worker.start()
+
+    def _on_journal_finished(self, result: dict):
+        transcript = self.chat_display.toPlainText().strip()
+        callsigns = self.attendance_panel.callsigns() if self.attendance_panel else []
+        title = result.get("title", "Untitled Session")
+        summary = result.get("summary", "")
+        try:
+            path = save_journal(title, summary, callsigns, transcript)
+            self.statusBar().showMessage(f"Journal saved: {path}", 5000)
+        except OSError as exc:
+            self.statusBar().clearMessage()
+            QMessageBox.warning(self, "Journal Save Error", f"Could not save journal:\n{exc}")
+        self._generate_journal_action.setEnabled(True)
+        self.journal_icon_btn.setEnabled(True)
+        self._journal_worker = None
+
+    def _on_journal_error(self, message: str):
+        self.statusBar().clearMessage()
+        QMessageBox.warning(
+            self,
+            "Journal Generation Failed",
+            f"Gemini returned an error:\n\n{message}",
+        )
+        self._generate_journal_action.setEnabled(True)
+        self.journal_icon_btn.setEnabled(True)
+        self._journal_worker = None
 
     def open_quick_messages_dialog(self):
         dlg = QuickMessagesDialog(self._quick_messages(), parent=self)
@@ -1858,12 +1977,6 @@ class MainWindow(QMainWindow):
     def start_stt(self):
         if self.stt_worker and self.stt_worker.isRunning():
             return
-        # Each new Listen session starts a fresh roll-call. We clear *here*
-        # (rather than on stop) so the operator can review the previous
-        # session's attendance after toggling Listen off — the grid only
-        # resets when they re-engage.
-        if self.attendance_panel is not None:
-            self.attendance_panel.clear()
         desired_model = self.config.get("whisper_model", "small.en")
         if desired_model != self._stt_whisper_model_name:
             self._stt_whisper = None
