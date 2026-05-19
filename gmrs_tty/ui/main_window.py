@@ -1,8 +1,6 @@
 import datetime
 import os
-import traceback
 
-from piper.voice import PiperVoice
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -13,7 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from gmrs_tty.config import AppConfig
-from gmrs_tty.audio.playback import AudioPlayerThread
+from gmrs_tty.ui.tx_controller import TXController
 from gmrs_tty.audio.spectro_worker import SpectrogramWorker
 from gmrs_tty.constants import (
     CONFIG_FILE, CONTACTS_FILE,
@@ -38,8 +36,7 @@ from gmrs_tty.text.callsigns import (
 from gmrs_tty.text.metadata import extract_name_location
 from gmrs_tty.text.profanity import mask_profanity
 from gmrs_tty.text.placeholders import find_placeholders, substitute_placeholders
-from gmrs_tty.text.shorthand import expand_tty_abbreviations
-from gmrs_tty.tts.synthesizer import TTSSynthesisThread
+
 from gmrs_tty.ai.journal_worker import JournalWorker
 from gmrs_tty.persistence.journal import load_journals, save_journal
 from gmrs_tty.ui import theme
@@ -95,7 +92,6 @@ class MainWindow(QMainWindow):
         ))
         self.last_tx_time = None
 
-        self.voice_cache = {}
         self.stt_worker = None
         # Listen-only / RX-only safety toggle. When True, every TX path
         # (Transmit button, "This is" ID, Enter on message-input,
@@ -104,10 +100,6 @@ class MainWindow(QMainWindow):
         # entry points so a stray keystroke or hotkey can't push audio
         # on-air. Persists across launches via config["listen_only"].
         self.listen_only = self.config.listen_only
-        # Tracks an in-flight TX so `_refresh_tx_enabled` can disable the
-        # buttons during synthesis without losing track of the listen-only
-        # gate underneath.
-        self._tx_busy = False
         # Quick-message preset buttons; rebuilt by populate_quick_messages_strip.
         # Held on self so the listen-only refresh can flip their enabled state.
         self._quick_message_buttons = []
@@ -130,7 +122,11 @@ class MainWindow(QMainWindow):
         # of the same callsign mid-lookup is suppressed so we don't hammer the
         # API with duplicate requests for one operator who keys up twice.
         self._callsign_lookups = {}
-        self.ptt = make_ptt(self.config)
+        self.tx = TXController(make_ptt(self.config), parent=self)
+        self.tx.tx_busy_changed.connect(self._on_tx_busy_changed)
+        self.tx.chat_message.connect(self.append_to_chat)
+        self.tx.stt_pause_requested.connect(self._pause_stt_for_tx)
+        self.tx.stt_resume_requested.connect(self._resume_stt_after_tx)
         # Rolling-spectrometer state. Settings are read from config so the
         # operator's last choice (enabled, colormap, range, window) persists
         # across launches. The widget + FFT worker are created lazily in
@@ -230,10 +226,7 @@ class MainWindow(QMainWindow):
             if worker.isRunning():
                 worker.wait(100)
         self._callsign_lookups.clear()
-        try:
-            self.ptt.close()
-        except Exception:
-            pass
+        self.tx.close_ptt()
         # Persist dock placements + window geometry so the next launch
         # lands the operator back in the layout they were using. Saves
         # only on close (not every drag) so config.json doesn't churn
@@ -1339,11 +1332,8 @@ class MainWindow(QMainWindow):
                 self.config.ptt_serial_line,
             )
             if new_ptt != old_ptt:
-                try:
-                    self.ptt.close()
-                except Exception:
-                    pass
-                self.ptt = make_ptt(self.config)
+                self.tx.close_ptt()
+                self.tx.ptt = make_ptt(self.config)
 
     def open_contacts_dialog(self):
         dlg = ContactsDialog(self.contacts, parent=self)
@@ -1624,12 +1614,7 @@ class MainWindow(QMainWindow):
 
         self._synthesize_and_play(spell_digits_in_callsigns(spoken_text))
 
-    def _set_tx_buttons_enabled(self, enabled):
-        """Track the TX-busy state and re-evaluate the effective button-enabled
-        state. Synthesis still owns the busy flag; the listen-only toggle
-        applies on top so a "TX done" event can't re-enable Transmit while
-        the operator has chosen RX-only mode."""
-        self._tx_busy = not enabled
+    def _on_tx_busy_changed(self, busy: bool) -> None:
         self._refresh_tx_enabled()
 
     def _refresh_tx_enabled(self):
@@ -1639,7 +1624,7 @@ class MainWindow(QMainWindow):
         (FRS has no station-ID rule). Quick-message preset buttons mirror
         the same gate so they grey out in sync."""
         is_frs = self._service_mode() == SERVICE_FRS
-        tx_enabled = not self.listen_only and not self._tx_busy
+        tx_enabled = not self.listen_only and not self.tx.is_busy
         self.transmit_btn.setEnabled(tx_enabled)
         self.id_btn.setEnabled(tx_enabled and not is_frs)
         for btn in self._quick_message_buttons:
@@ -1666,77 +1651,12 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Listen-only mode off: transmissions enabled", 4000)
 
     def _synthesize_and_play(self, tts_text):
-        """Kick off Piper synthesis on a background thread and hand the result
-        to the player when ready. Manages TX button state across both stages."""
-        tts_text = expand_tty_abbreviations(tts_text)
-        self._set_tx_buttons_enabled(False)
-
-        voice_path = self.config.voice
-        if not voice_path or not os.path.exists(voice_path):
-            self.append_to_chat("<i>Error: No valid Piper voice selected. Please select one in Settings -> Configuration.</i>", color=theme.palette().error)
-            self._set_tx_buttons_enabled(True)
-            return
-
-        if voice_path not in self.voice_cache:
-            try:
-                self.voice_cache[voice_path] = PiperVoice.load(voice_path)
-            except Exception as e:
-                self.append_to_chat(f"<i>Failed to load voice model: {e}</i>", color=theme.palette().error)
-                self._set_tx_buttons_enabled(True)
-                return
-
-        voice = self.voice_cache[voice_path]
-
-        self.tts_thread = TTSSynthesisThread(
-            voice, tts_text,
-            self.ptt.lead_in_seconds, self.ptt.tail_seconds,
+        self.tx.synthesize_and_play(
+            tts_text,
+            voice_path=self.config.voice,
             length_scale=self.config.tts_length_scale,
-            parent=self,
+            output_device=self.config.output_device,
         )
-        self.tts_thread.ready.connect(self._on_tts_synthesized)
-        self.tts_thread.error.connect(self._on_tts_synthesis_error)
-        self.tts_thread.start()
-
-    def _on_tts_synthesized(self, audio, sample_rate):
-        if audio is None or len(audio) == 0:
-            self.append_to_chat("<i>Warning: Piper generated no audio.</i>", color=theme.palette().error)
-            self._set_tx_buttons_enabled(True)
-            return
-
-        self.audio_thread = AudioPlayerThread(
-            audio, sample_rate, device=self.config.output_device
-        )
-        self.audio_thread.finished.connect(self.on_tts_finished)
-        self.audio_thread.error.connect(self.on_tts_error)
-        self._pause_stt_for_tx()
-        try:
-            self.ptt.key()
-        except Exception as e:
-            self.append_to_chat(f"<i>PTT key failed: {e}</i>", color=theme.palette().error)
-        self.audio_thread.start()
-
-    def _on_tts_synthesis_error(self, msg):
-        traceback.print_exc()
-        self.append_to_chat(f"<i>TTS Error: {msg}</i>", color=theme.palette().error)
-        self._resume_stt_after_tx()
-        self._set_tx_buttons_enabled(True)
-
-    def on_tts_finished(self):
-        try:
-            self.ptt.unkey()
-        except Exception:
-            pass
-        self._resume_stt_after_tx()
-        self._set_tx_buttons_enabled(True)
-
-    def on_tts_error(self, error_msg):
-        try:
-            self.ptt.unkey()
-        except Exception:
-            pass
-        self._resume_stt_after_tx()
-        self.append_to_chat(f"<i>TTS Error: {error_msg}</i>", color=theme.palette().error)
-        self._set_tx_buttons_enabled(True)
 
     # ----- Spectrometer wiring ----------------------------------------
     def _persist_spectro_settings(self):
