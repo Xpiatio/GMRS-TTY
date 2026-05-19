@@ -17,9 +17,19 @@ requirements and to make redistribution terms transparent.
 | faster-whisper | MIT | https://github.com/SYSTRAN/faster-whisper |
 | silero-vad | MIT | https://github.com/snakers4/silero-vad |
 | noisereduce | MIT | https://github.com/timsainb/noisereduce |
+| pyserial | BSD-3-Clause | https://github.com/pyserial/pyserial |
 
 These are installed at the user's site via `pip` and are not bundled in
 this repository. Each retains its own license terms.
+
+## Build / script dependencies (not runtime, not bundled)
+
+| Package | License | Project |
+|---|---|---|
+| reportlab | BSD-3-Clause | https://www.reportlab.com/ |
+
+`reportlab` is used only by `scripts/build_user_manual.py` to generate the
+PDF user manual. It is not required to run the application.
 
 ## Bundled voice models (`Voices/`)
 
