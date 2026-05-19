@@ -41,6 +41,35 @@ class TestAttendanceTracker:
         # Cleared tracker re-records the same callsign as new.
         assert t.record("WSLZ100") is True
 
+    def test_remove_returns_true_when_present(self):
+        t = AttendanceTracker()
+        t.record("WSLZ100")
+        assert t.remove("WSLZ100") is True
+
+    def test_remove_returns_false_when_absent(self):
+        t = AttendanceTracker()
+        assert t.remove("WSLZ100") is False
+
+    def test_remove_is_case_insensitive(self):
+        t = AttendanceTracker()
+        t.record("WSLZ100")
+        assert t.remove("wslz100") is True
+        assert "WSLZ100" not in t
+
+    def test_remove_preserves_order_of_remaining(self):
+        t = AttendanceTracker()
+        for cs in ("WSLZ100", "KAE1234", "K1ABC"):
+            t.record(cs)
+        t.remove("KAE1234")
+        assert t.callsigns() == ["WSLZ100", "K1ABC"]
+
+    def test_removed_callsign_can_be_re_recorded(self):
+        t = AttendanceTracker()
+        t.record("WSLZ100")
+        t.remove("WSLZ100")
+        assert t.record("WSLZ100") is True
+        assert t.callsigns() == ["WSLZ100"]
+
 
 class TestBuildAttendanceRows:
     def test_unknown_callsign_returns_blank_columns(self):

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHBoxLayout, QHeaderView, QPushButton,
+    QAbstractItemView, QHBoxLayout, QHeaderView, QMenu, QPushButton,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -59,12 +59,28 @@ class AttendancePanel(QWidget):
             "Columns: Callsign, Name, Location, GMRS, HAM. Name and contact "
             "columns fill in automatically when a callsign is in (or added to) contacts."
         )
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
+        self.table.itemSelectionChanged.connect(self._refresh_remove_button)
         outer.addWidget(self.table, 1)
 
         button_row = QHBoxLayout()
         button_row.setContentsMargins(0, 0, 0, 0)
         button_row.setSpacing(theme.SPACING_S)
         button_row.addStretch(1)
+        self.remove_button = QPushButton("&Remove selected", self)
+        self.remove_button.setEnabled(False)
+        self.remove_button.setToolTip(
+            "Remove the selected callsign from the session list. "
+            "Does not affect your contacts."
+        )
+        self.remove_button.setAccessibleName("Remove selected callsign")
+        self.remove_button.setAccessibleDescription(
+            "Remove the currently selected callsign from the session list "
+            "without deleting it from contacts."
+        )
+        self.remove_button.clicked.connect(self._remove_selected)
+        button_row.addWidget(self.remove_button)
         self.clear_button = QPushButton("Clear callsigns &detected", self)
         self.clear_button.setToolTip(
             "Empty the callsigns-detected list for the current listening session."
@@ -102,6 +118,34 @@ class AttendancePanel(QWidget):
         """Currently-recorded callsigns, in heard order. Exposed for tests
         and for parity-check assertions in the MainWindow integration."""
         return self._tracker.callsigns()
+
+    def _refresh_remove_button(self) -> None:
+        self.remove_button.setEnabled(bool(self.table.selectedItems()))
+
+    def _remove_selected(self) -> None:
+        row = self.table.currentRow()
+        if row < 0:
+            return
+        item = self.table.item(row, 0)
+        if item is None:
+            return
+        self._tracker.remove(item.text())
+        self._render()
+
+    def _show_context_menu(self, pos) -> None:
+        row = self.table.rowAt(pos.y())
+        if row < 0:
+            return
+        item = self.table.item(row, 0)
+        if item is None:
+            return
+        callsign = item.text()
+        menu = QMenu(self)
+        remove_action = menu.addAction(f"Remove {callsign} from session")
+        action = menu.exec(self.table.viewport().mapToGlobal(pos))
+        if action is remove_action:
+            self._tracker.remove(callsign)
+            self._render()
 
     def _render(self) -> None:
         rows = build_attendance_rows(self._tracker.callsigns(), self._contacts)

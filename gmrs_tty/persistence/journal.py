@@ -36,7 +36,11 @@ def save_journal(
 
 
 def load_journals() -> list[dict]:
-    """Return all journal entries sorted newest-first."""
+    """Return all journal entries sorted newest-first.
+
+    Each entry contains a ``_file`` key with the absolute path to its source
+    file so callers can pass it to ``delete_journal`` without reconstructing it.
+    """
     if not os.path.isdir(JOURNALS_DIR):
         return []
     entries = []
@@ -46,7 +50,14 @@ def load_journals() -> list[dict]:
         path = os.path.join(JOURNALS_DIR, name)
         try:
             with open(path, encoding="utf-8") as fh:
-                entries.append(json.load(fh))
+                entry = json.load(fh)
+            entry["_file"] = path
+            entries.append(entry)
         except (OSError, json.JSONDecodeError):
             continue
     return entries
+
+
+def delete_journal(file_path: str) -> None:
+    """Delete the journal entry at *file_path*."""
+    os.remove(file_path)

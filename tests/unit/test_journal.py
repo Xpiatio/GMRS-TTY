@@ -5,6 +5,7 @@ import os
 import pytest
 
 import gmrs_tty.persistence.journal as journal_mod
+from gmrs_tty.persistence.journal import delete_journal
 
 
 @pytest.fixture(autouse=True)
@@ -95,9 +96,31 @@ class TestLoadJournals:
         assert len(entries) == 1
         assert entries[0]["title"] == "Good"
 
+    def test_each_entry_includes_file_path(self):
+        path = journal_mod.save_journal("T", "S", [], "")
+        entries = journal_mod.load_journals()
+        assert entries[0]["_file"] == path
+
     def test_ignores_non_json_files(self):
         os.makedirs(journal_mod.JOURNALS_DIR, exist_ok=True)
         txt = os.path.join(journal_mod.JOURNALS_DIR, "readme.txt")
         with open(txt, "w") as fh:
             fh.write("ignore me")
         assert journal_mod.load_journals() == []
+
+
+class TestDeleteJournal:
+    def test_removes_file(self):
+        path = journal_mod.save_journal("T", "S", [], "")
+        assert os.path.isfile(path)
+        delete_journal(path)
+        assert not os.path.isfile(path)
+
+    def test_deleted_entry_absent_from_load(self):
+        path = journal_mod.save_journal("T", "S", [], "")
+        delete_journal(path)
+        assert journal_mod.load_journals() == []
+
+    def test_raises_on_missing_file(self):
+        with pytest.raises(OSError):
+            delete_journal(os.path.join(journal_mod.JOURNALS_DIR, "nonexistent.json"))

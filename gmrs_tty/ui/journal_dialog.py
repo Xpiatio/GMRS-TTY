@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QLabel, QListWidget, QListWidgetItem,
-    QSplitter, QTextEdit, QVBoxLayout, QWidget,
+    QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QListWidget,
+    QListWidgetItem, QMessageBox, QPushButton, QSplitter, QTextEdit,
+    QVBoxLayout, QWidget,
 )
 
-from gmrs_tty.persistence.journal import load_journals
+from gmrs_tty.persistence.journal import delete_journal, load_journals
 
 
 class JournalDialog(QDialog):
@@ -36,6 +37,13 @@ class JournalDialog(QDialog):
         self._list.currentRowChanged.connect(self._on_selection_changed)
         left_layout.addWidget(list_label)
         left_layout.addWidget(self._list, 1)
+
+        self._delete_btn = QPushButton("Delete entry")
+        self._delete_btn.setEnabled(False)
+        self._delete_btn.setToolTip("Permanently delete the selected journal entry.")
+        self._delete_btn.setAccessibleName("Delete selected journal entry")
+        self._delete_btn.clicked.connect(self._delete_selected)
+        left_layout.addWidget(self._delete_btn)
 
         # Right — detail view
         right = QWidget()
@@ -87,6 +95,7 @@ class JournalDialog(QDialog):
         self._list.setCurrentRow(0)
 
     def _on_selection_changed(self, row: int) -> None:
+        self._delete_btn.setEnabled(0 <= row < len(self._entries))
         if row < 0 or row >= len(self._entries):
             return
         entry = self._entries[row]
@@ -103,3 +112,25 @@ class JournalDialog(QDialog):
             f"<p>{summary}</p>"
         )
         self._detail.setHtml(html)
+
+    def _delete_selected(self) -> None:
+        row = self._list.currentRow()
+        if row < 0 or row >= len(self._entries):
+            return
+        entry = self._entries[row]
+        title = entry.get("title") or "Untitled"
+        answer = QMessageBox.question(
+            self,
+            "Delete Journal Entry",
+            f"Permanently delete "{title}"?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            delete_journal(entry["_file"])
+        except OSError as exc:
+            QMessageBox.warning(self, "Delete Failed", f"Could not delete entry:\n{exc}")
+            return
+        self._reload()
