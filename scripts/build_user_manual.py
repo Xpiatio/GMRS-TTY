@@ -874,8 +874,8 @@ def build_main_window(b: Builder):
 def build_journals(b: Builder):
     b.h1("5.11 Session Journals")
     b.p("The Session Journals feature sends the current conversation "
-        "transcript and detected callsigns to <b>Google Gemini 2.0 Flash "
-        "Lite</b> and saves an AI-generated journal entry to disk. It "
+        "transcript and detected callsigns to <b>Google Gemini 3.5 Flash</b>"
+        " and saves an AI-generated journal entry to disk. It "
         "requires a free Google Gemini API key configured in Settings → "
         "Configuration → Gemini API Key.")
     b.h3("Generating a journal entry")
