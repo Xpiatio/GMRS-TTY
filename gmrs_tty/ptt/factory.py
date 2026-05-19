@@ -2,6 +2,13 @@ from gmrs_tty.ptt.manual import ManualPTT
 from gmrs_tty.ptt.serial_ptt import SerialPTT
 from gmrs_tty.ptt.vox import VoxPTT
 
+# Modes whose constructors take no arguments. New simple modes register here
+# without touching make_ptt's logic.
+_SIMPLE_MODES = {
+    "vox": VoxPTT,
+    "manual": ManualPTT,
+}
+
 
 def make_ptt(config):
     mode = config.get("ptt_mode", "manual")
@@ -16,6 +23,4 @@ def make_ptt(config):
         except Exception as e:
             print(f"PTT: failed to open serial port {port}: {e}; falling back to manual.")
             return ManualPTT()
-    if mode == "vox":
-        return VoxPTT()
-    return ManualPTT()
+    return _SIMPLE_MODES.get(mode, ManualPTT)()
