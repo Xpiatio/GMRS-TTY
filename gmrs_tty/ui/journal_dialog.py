@@ -122,7 +122,7 @@ class JournalDialog(QDialog):
         answer = QMessageBox.question(
             self,
             "Delete Journal Entry",
-            f"Permanently delete "{title}"?",
+            f'Permanently delete “{title}”?',
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
