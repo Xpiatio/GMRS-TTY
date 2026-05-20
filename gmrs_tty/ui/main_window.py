@@ -873,8 +873,8 @@ class MainWindow(QMainWindow):
         """A close-button click on the waterfall dock has to also stop
         the FFT worker — invisible widgets don't get paint events but the
         worker would keep producing rows. Mirrors the View-menu toggle."""
-        if not hasattr(self, "_spectro_toggle_action"):
-            return  # menu not built yet (init order race)
+        if not self._ui_ready:
+            return
         if visible == self.spectro_settings.enabled:
             return
         # Route through _on_spectro_toggle so persistence + worker
@@ -959,48 +959,31 @@ class MainWindow(QMainWindow):
 
         view_menu.addSeparator()
 
-        # Color map submenu — Viridis (perceptually uniform, colorblind-safe;
-        # default) or Grayscale (hue-free).
-        cmap_menu = view_menu.addMenu("&Color map")
-        self._spectro_cmap_actions = {}
-        for name in AVAILABLE_COLORMAPS:
-            act = QAction(name.capitalize(), self)
-            act.setCheckable(True)
-            act.setChecked(self.spectro_settings.colormap == name)
-            act.triggered.connect(
-                lambda _checked=False, n=name: self._set_spectro_colormap(n)
-            )
-            cmap_menu.addAction(act)
-            self._spectro_cmap_actions[name] = act
-
-        # Frequency-range submenu — voice band (300–3.4 kHz, narrowband-FM
-        # speech) or full Nyquist (diagnostics: splatter, intermod, carrier).
-        freq_menu = view_menu.addMenu("&Frequency range")
-        self._spectro_freq_actions = {}
+        # Color map / frequency range / time window — three structurally
+        # identical checkable-action submenus built by the shared helper.
         freq_labels = {FREQ_RANGE_VOICE: "&Voice band (300–3400 Hz)",
-                       FREQ_RANGE_FULL: "&Full band (0–Nyquist)"}
-        for key in AVAILABLE_FREQ_RANGES:
-            act = QAction(freq_labels[key], self)
-            act.setCheckable(True)
-            act.setChecked(self.spectro_settings.freq_range == key)
-            act.triggered.connect(
-                lambda _checked=False, k=key: self._set_spectro_freq_range(k)
-            )
-            freq_menu.addAction(act)
-            self._spectro_freq_actions[key] = act
-
-        # Time-window submenu — visible history length.
-        win_menu = view_menu.addMenu("&Time window")
-        self._spectro_window_actions = {}
-        for sec in TIME_WINDOWS_S:
-            act = QAction(f"{sec} seconds", self)
-            act.setCheckable(True)
-            act.setChecked(self.spectro_settings.time_window_s == sec)
-            act.triggered.connect(
-                lambda _checked=False, s=sec: self._set_spectro_time_window(s)
-            )
-            win_menu.addAction(act)
-            self._spectro_window_actions[sec] = act
+                       FREQ_RANGE_FULL:  "&Full band (0–Nyquist)"}
+        self._build_spectro_option_menu(
+            view_menu, "&Color map", AVAILABLE_COLORMAPS,
+            label_fn=str.capitalize,
+            checked_fn=lambda n: self.spectro_settings.colormap == n,
+            setter_fn=self._set_spectro_colormap,
+            actions_attr="_spectro_cmap_actions",
+        )
+        self._build_spectro_option_menu(
+            view_menu, "&Frequency range", AVAILABLE_FREQ_RANGES,
+            label_fn=freq_labels.__getitem__,
+            checked_fn=lambda k: self.spectro_settings.freq_range == k,
+            setter_fn=self._set_spectro_freq_range,
+            actions_attr="_spectro_freq_actions",
+        )
+        self._build_spectro_option_menu(
+            view_menu, "&Time window", TIME_WINDOWS_S,
+            label_fn=lambda s: f"{s} seconds",
+            checked_fn=lambda s: self.spectro_settings.time_window_s == s,
+            setter_fn=self._set_spectro_time_window,
+            actions_attr="_spectro_window_actions",
+        )
 
         # Panels submenu — every user-hideable dock gets a toggle action,
         # plus a "Reset layout" entry that snaps everything back to the
@@ -1122,15 +1105,14 @@ class MainWindow(QMainWindow):
         recoloring, online indicator, every dock's compact title bar,
         and the service toolbar's focus-ring style. Idempotent — safe to
         call from any path that just rebuilt the palette."""
+        if not self._ui_ready:
+            return
         self._refresh_theme_toggle_glyph()
-        if hasattr(self, "header_label"):
-            self.header_label.setStyleSheet(theme.header_stylesheet())
+        self.header_label.setStyleSheet(theme.header_stylesheet())
         self._restyle_pending_pills()
-        if hasattr(self, "chat_display"):
-            self.chat_display.setStyleSheet(theme.chat_display_stylesheet())
-            self.chat_display.restyle_for_theme()
-        if hasattr(self, "online_indicator"):
-            self._refresh_online_indicator()
+        self.chat_display.setStyleSheet(theme.chat_display_stylesheet())
+        self.chat_display.restyle_for_theme()
+        self._refresh_online_indicator()
         # Dock title bars and the service toolbar have their own stylesheets;
         # both need a refresh because they reference palette colors
         # (focus ring, title-bar background) that flip with the theme.
@@ -1138,8 +1120,7 @@ class MainWindow(QMainWindow):
             bar = dock.titleBarWidget()
             if isinstance(bar, CompactTitleBar):
                 bar.refresh_palette()
-        if hasattr(self, "_service_toolbar"):
-            self._service_toolbar.setStyleSheet(theme.toolbar_focus_stylesheet())
+        self._service_toolbar.setStyleSheet(theme.toolbar_focus_stylesheet())
 
     def _refresh_theme_toggle_glyph(self):
         """Set the toggle's glyph + tooltip to advertise the next theme.
@@ -1470,8 +1451,7 @@ class MainWindow(QMainWindow):
         # Hide the whole dock chrome when the operator has no saved
         # presets — keeping the dock visible would leave an empty
         # "Quick Messages" frame on screen with no actionable content.
-        if hasattr(self, "quick_dock"):
-            self.quick_dock.setVisible(bool(presets))
+        self.quick_dock.setVisible(bool(presets))
 
     def _send_preset(self, index):
         """Alt+N hotkey path: pick the Nth preset (0-indexed) and send it
@@ -1692,8 +1672,8 @@ class MainWindow(QMainWindow):
         visibility programmatically (FRS-mode hide, layout reset, restore
         from saved state) so this handler only reacts to genuine user
         clicks on the title-bar X."""
-        if not hasattr(self, "_attendance_toggle_action"):
-            return  # menu not built yet (init order race)
+        if not self._ui_ready:
+            return
         if self._suppress_attendance_visibility:
             return
         if visible == self.attendance_enabled:
@@ -1716,11 +1696,10 @@ class MainWindow(QMainWindow):
         self.spectro_settings.enabled = bool(checked)
         if self.spectro_widget is not None:
             self.spectro_widget.setVisible(self.spectro_settings.enabled)
-        if hasattr(self, "waterfall_dock"):
-            # The dock holds the widget; toggling the inner widget alone
-            # leaves an empty dock chrome on screen. Hide the dock too so
-            # the View → Show waterfall action surfaces a coherent state.
-            self.waterfall_dock.setVisible(self.spectro_settings.enabled)
+        # The dock holds the widget; toggling the inner widget alone
+        # leaves an empty dock chrome on screen. Hide the dock too so
+        # the View → Show waterfall action surfaces a coherent state.
+        self.waterfall_dock.setVisible(self.spectro_settings.enabled)
         if self.spectro_settings.enabled:
             # Mirror the STT lifecycle: if listening is active when the
             # operator turns the waterfall on, start the FFT worker too so
@@ -1731,6 +1710,21 @@ class MainWindow(QMainWindow):
         else:
             self._stop_spectro_worker()
         self._persist_spectro_settings()
+
+    def _build_spectro_option_menu(self, parent_menu, title, options,
+                                     label_fn, checked_fn, setter_fn, actions_attr):
+        """Build a checkable-action submenu for one spectrometer parameter."""
+        menu = parent_menu.addMenu(title)
+        actions = {}
+        for opt in options:
+            act = QAction(label_fn(opt), self)
+            act.setCheckable(True)
+            act.setChecked(checked_fn(opt))
+            act.triggered.connect(lambda _checked=False, v=opt: setter_fn(v))
+            menu.addAction(act)
+            actions[opt] = act
+        setattr(self, actions_attr, actions)
+        return menu
 
     def _apply_spectro_option(self, valid_set, attr, actions_attr, value):
         if value not in valid_set:
@@ -2134,7 +2128,7 @@ class MainWindow(QMainWindow):
         # Hide the dock chrome too when empty so the operator doesn't
         # see a titled-but-empty "Pending Stations" panel. _apply_service_mode
         # owns the FRS-hide path, so only flip visibility from GMRS here.
-        if hasattr(self, "pending_dock") and self._service_mode() != SERVICE_FRS:
+        if self._service_mode() != SERVICE_FRS:
             self.pending_dock.setVisible(has_pills)
 
     def _cap_pending_scroll_height(self, sample_btn):
