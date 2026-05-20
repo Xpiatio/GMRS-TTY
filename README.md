@@ -73,7 +73,9 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
 - Targets Raspberry Pi, Linux, Windows.
 - All STT/TTS/VAD models run locally — **the core radio workflow needs no internet at runtime**. The Whisper model is pre-staged via a one-time `bootstrap_models.py` run on a connected machine, after which the entire source tree (including `Models/` and `Voices/`) is portable to air-gapped targets.
 - **Online features (FCC callsign verification) are strictly opt-in via connectivity**: a periodic probe of the crossref API decides whether they're available. If the probe fails — no network, DNS broken, API down — the relevant UI controls disable themselves and the app falls back to its fully-offline behavior. The radio workflow (RX transcription, TX synthesis, PTT keying, contact management) never depends on the network.
-- Future stages: multi-arch Docker image, distribution packaging.
+- **Debian/Ubuntu**: self-contained `.deb` built by `scripts/build-deb.sh` (bundles all Python wheels + offline models; requires Python 3.13 on target).
+- **Windows**: self-contained `.msi` built by `scripts/build-msi.ps1` on Windows (bundles Python embeddable runtime + all packages + offline models).
+- Future stages: multi-arch Docker image, Raspberry Pi tarball.
 
 ### Accessibility (WCAG 2.1 AA)
 This application exists for users with disabilities, so accessibility is a hard design constraint rather than a nice-to-have. The UI targets WCAG 2.1 Level AA — the practical baseline DOJ and Section 508 reference for software ADA compliance.
@@ -87,13 +89,52 @@ This application exists for users with disabilities, so accessibility is a hard 
 
 ## Requirements
 
+**Pre-built installers** (see below) bundle Python, all dependencies, and offline STT models — no separate Python install or pip commands needed.
+
+**From source:**
 - Python 3.11+ (3.13 recommended)
 - A working microphone and speaker
 - Linux: PortAudio dev libs (`sudo apt install libportaudio2 portaudio19-dev`). On PipeWire systems, also install `pulseaudio-utils` for the `parec` binary (`sudo apt install pulseaudio-utils`) — the app prefers it for mic capture because PortAudio's PipeWire-via-ALSA bridge can silently deliver flat-zero audio on PipeWire 1.4. If `parec` is missing the app falls back to PortAudio.
 - ~1 GB disk for dependencies (CTranslate2, ONNX Runtime, PySide6) plus the STT model (~75 MB for `small.en`, ~150 MB for `medium.en`) fetched once via `bootstrap_models.py`
 - **Optional (YouTube Stream testing only):** `ffmpeg` (`sudo apt install ffmpeg`) and `yt-dlp` ≥ 2026.03.17 (`pip install --upgrade yt-dlp` — the system apt version is typically too old for YouTube's current streaming protocol)
 
-## Getting Started
+## Installing a pre-built package
+
+The pre-built installers bundle Python, all Python wheels, and the offline Whisper STT + speaker ID models. No internet needed after download.
+
+### Debian / Ubuntu (`.deb`)
+
+Built by `scripts/build-deb.sh` (targets Debian 13 / Ubuntu 24.04+, x86-64, Python 3.13):
+
+```bash
+sudo apt install ./gmrs-tty_0.0.1_amd64.deb   # installs system deps + runs postinst
+gmrs-tty                                        # launch
+```
+
+The postinst creates a virtualenv at `/opt/gmrs-tty/.venv`, installs all bundled wheels offline, and seeds an initial `config.json`. Open **Settings → Configuration** to set your callsign, name, location, and Piper TTS voice.
+
+System dependencies installed automatically: `python3 (≥3.13)`, `python3-venv`, `libportaudio2`, `libxcb-cursor0`, `libegl1`, `libgl1`.
+
+### Windows (`.msi`)
+
+Built by `scripts/build-msi.ps1` (requires WiX v4 on Windows). Bundles Python 3.13 embeddable + all packages + models. Installs to `C:\Program Files\GMRS-TTY\` and creates Start Menu + Desktop shortcuts.
+
+After install, double-click **GMRS-TTY** on the Desktop, then open **Settings → Configuration** to configure your callsign and voice.
+
+### Adding Piper TTS voices
+
+The installers do **not** bundle Piper voice models — they are large, numerous, and user-chosen. Drop `.onnx` + `.onnx.json` pairs into the `Voices/` subdirectory of the install location:
+
+| Platform | Location |
+|----------|----------|
+| Linux (.deb) | `/opt/gmrs-tty/Voices/` |
+| Windows (.msi) | `C:\Program Files\GMRS-TTY\Voices\` |
+
+Download voices from: https://github.com/rhasspy/piper/blob/master/VOICES.md
+
+---
+
+## Getting Started (from source)
 
 Five steps from a fresh clone to a working radio session: install dependencies, drop in a Piper voice, bootstrap the STT model on an internet-connected machine, set your callsign, and run.
 
@@ -253,6 +294,14 @@ GMRS-TTY/
 ├── requirements-dev.txt    # pytest + pytest-cov for the test suite
 ├── pyproject.toml          # pytest configuration
 ├── config.example.json     # Template — copy to config.json and edit
+├── scripts/
+│   ├── build-deb.sh        # Build the Debian .deb installer
+│   ├── build-msi.ps1       # Build the Windows .msi installer (run on Windows)
+│   └── build_user_manual.py # Regenerate docs/USER_MANUAL.pdf
+├── packaging/
+│   └── windows/
+│       ├── product.wxs     # WiX v4 installer definition
+│       └── LICENSE.rtf     # License text for the WiX installer UI
 ├── journals/               # AI-generated session journal entries (auto-created; gitignored)
 ├── Voices/                 # Piper voice models (gitignored; download yourself)
 ├── Models/                 # Bundled STT model artifacts (gitignored; run bootstrap_models.py)
@@ -286,7 +335,7 @@ Tracked in [implementation_plan.md](implementation_plan.md):
 4. ✅ Refinement (auto-scroll, input/output device pickers, timer reset)
 5. ✅ Hardware hooks (`pyserial` PTT keying around TTS — Manual / VOX / USB FTDI modes)
 6. ✅ Off-grid model bundling (Whisper via `bootstrap_models.py`; Silero VAD ONNX ships in the wheel)
-7. ⏳ Cross-platform packaging (Windows installer, Linux/Pi tarballs)
+7. ✅ Cross-platform packaging (Debian `.deb` via `scripts/build-deb.sh`; Windows `.msi` via `scripts/build-msi.ps1` + WiX v4)
 8. ⏳ Multi-arch Docker image (`linux/amd64` + `linux/arm64`)
 9. ⏳ Future hardware (Bluetooth HT/mobile audio, hamlib CAT/CI-V rig control)
 10. ✅ TTY-to-radio-vernacular translation at TTS time (expand `GA`/`SK`/`73`/Q-signals to spoken form on TX)

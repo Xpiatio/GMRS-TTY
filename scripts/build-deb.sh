@@ -63,6 +63,23 @@ cp -r \
 
 find "$STAGE/opt/$PKG/" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
+# ---------------------------------------------------------------------------
+# 2b. Bundle offline models.
+#     Both STT (Whisper) and Speaker (ECAPA-TDNN) models must be present.
+#     Run 'python bootstrap_models.py' on an internet-connected machine first.
+# ---------------------------------------------------------------------------
+if [ ! -d "$REPO_ROOT/Models/STT" ]; then
+    echo "ERROR: Models/STT/ not found."
+    echo "       Run 'python bootstrap_models.py' to download Whisper model first."
+    exit 1
+fi
+
+echo ">>> Bundling offline models ..."
+cp -r "$REPO_ROOT/Models" "$STAGE/opt/$PKG/"
+# Strip HuggingFace download cache — only the model files are needed at runtime.
+find "$STAGE/opt/$PKG/Models" -type d -name ".cache" -exec rm -rf {} + 2>/dev/null || true
+find "$STAGE/opt/$PKG/Models" -name ".gitattributes" -delete 2>/dev/null || true
+
 # A __main__.py so the launcher can `python -m gmrs_tty`.
 cat > "$STAGE/opt/$PKG/gmrs_tty/__main__.py" <<'PY'
 from gmrs_tty.app import main
@@ -152,7 +169,8 @@ Description: GMRS/FRS speech-to-text and text-to-speech assistant
  and text-to-speech on transmit (Piper), with PTT keying and noise
  reduction.
  .
- Whisper and Piper voice models are downloaded on first run.
+ Whisper STT and speaker identification models are bundled offline.
+ Piper TTS voice models are user-configured (see README.md for setup).
 CONTROL
 
 cat > "$STAGE/DEBIAN/postinst" <<'POSTINST'
@@ -178,12 +196,23 @@ case "$1" in
         "$VENV/bin/pip" install --quiet --no-index --find-links "$WHEELS" \
             -r "$APP_DIR/requirements.txt"
 
+        # Allow all users to write config.json / contacts.json in-place.
+        # The app resolves these files relative to APP_DIR, so the directory
+        # must be writable by whoever runs gmrs-tty.
+        chmod a+w "$APP_DIR"
+
+        # Seed an initial config.json from the example so first launch works.
+        if [ ! -f "$APP_DIR/config.json" ]; then
+            cp "$APP_DIR/config.example.json" "$APP_DIR/config.json"
+            chmod a+rw "$APP_DIR/config.json"
+        fi
+
         if [ -x /usr/bin/update-desktop-database ]; then
             update-desktop-database -q /usr/share/applications || true
         fi
 
         echo "gmrs-tty: install complete. Run 'gmrs-tty' to launch."
-        echo "gmrs-tty: voice and STT models will download on first run."
+        echo "gmrs-tty: open Settings → Configuration to set your callsign and Piper TTS voice."
         ;;
     abort-upgrade|abort-remove|abort-deconfigure)
         ;;

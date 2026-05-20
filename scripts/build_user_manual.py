@@ -299,7 +299,7 @@ def build_toc(b: Builder):
     entries = [
         ("1.",  "About this manual"),
         ("2.",  "System requirements"),
-        ("3.",  "Installation"),
+        ("3.",  "Installation — pre-built packages &amp; from source"),
         ("4.",  "First run &amp; configuration"),
         ("5.",  "Main window tour"),
         ("5.11.", "Session Journals"),
@@ -343,14 +343,17 @@ def build_about(b: Builder):
         "Section 19 is troubleshooting. Sections 20–21 give the "
         "on-disk file formats and a glossary.")
     b.callout(
-        "<b>If you only have five minutes:</b> install the dependencies "
-        "(section 3), copy <font face=\"Courier\">config.example.json</font> "
-        "to <font face=\"Courier\">config.json</font> and edit your "
-        "callsign / name / location, drop one Piper voice into "
-        "<font face=\"Courier\">Voices/</font>, run "
-        "<font face=\"Courier\">python bootstrap_models.py</font>, then "
-        "launch with <font face=\"Courier\">python main.py</font>. Press "
-        "<b>Alt+L</b> to listen and type into the message box to transmit."
+        "<b>If you only have five minutes (pre-built installer):</b> "
+        "install the <font face=\"Courier\">.deb</font> or "
+        "<font face=\"Courier\">.msi</font> (section 3.1), drop one "
+        "Piper voice into the "
+        "<font face=\"Courier\">Voices/</font> subdirectory of the "
+        "install folder, then launch GMRS-TTY and open "
+        "<b>Settings &rarr; Configuration</b> to set your callsign and "
+        "pick the voice. Press <b>Alt+L</b> to listen and type into the "
+        "message box to transmit. "
+        "<b>From source:</b> follow section 3.2 (clone, pip install, "
+        "bootstrap_models.py, run)."
     )
 
 
@@ -388,20 +391,114 @@ def build_requirements(b: Builder):
     ])
     b.h3("Software")
     b.bullets([
-        "Python 3.11 or newer (3.13 recommended).",
-        "~1 GB free disk for Python dependencies (CTranslate2, ONNX Runtime, "
-        "PySide6) plus 75&ndash;150 MB for the Whisper STT model.",
-        "Internet access <b>once</b> to install pip packages and bootstrap "
-        "the STT model. After that the core radio workflow needs no "
-        "network at all.",
+        ("<b>Pre-built installers</b> (section 3.1)", "No Python or pip "
+         "required — Python 3.13, all dependencies, and the offline STT "
+         "models are bundled. ~1.5 GB disk for the installer and installed "
+         "footprint."),
+        ("<b>From source</b> (section 3.2+)", "Python 3.11 or newer "
+         "(3.13 recommended). ~1 GB free disk for Python dependencies plus "
+         "75&ndash;150 MB for the Whisper STT model. Internet access once "
+         "to install pip packages and fetch the model; the core radio "
+         "workflow needs no network after that."),
     ])
 
 
 def build_install(b: Builder):
     b.h1("3. Installation")
+
+    # ---- Pre-built installers ------------------------------------------ #
+    b.h2("3.1 Pre-built installers (recommended for end users)")
+    b.p("The pre-built installers bundle Python 3.13, all Python packages "
+        "(CPU-only PyTorch, faster-whisper, PySide6, Piper, Silero VAD, "
+        "and their dependencies), and the offline Whisper STT + speaker "
+        "identification models. No Python installation or internet access "
+        "is needed after downloading the installer.")
+    b.note(
+        "Piper TTS <i>voice</i> models are <b>not</b> bundled — they "
+        "are large, numerous, and user-chosen. Add them after install "
+        "(see section 3.1.3 below)."
+    )
+
+    b.h3("3.1.1 Debian / Ubuntu (.deb)")
+    b.p("Targets Debian 13 / Ubuntu 24.04+ on x86-64. System "
+        "dependencies installed automatically by apt.")
+    b.code(
+        "sudo apt install ./gmrs-tty_0.0.1_amd64.deb\n"
+        "gmrs-tty"
+    )
+    b.p("The package installer (postinst) creates a Python virtual "
+        "environment at "
+        "<font face=\"Courier\">/opt/gmrs-tty/.venv</font>, installs "
+        "all bundled wheels offline, and seeds an initial "
+        "<font face=\"Courier\">config.json</font> from the example. "
+        "Open <b>Settings &rarr; Configuration</b> on first launch to "
+        "set your callsign, name, location, and Piper TTS voice.")
+    b.bullets([
+        ("Install location", "<font face=\"Courier\">/opt/gmrs-tty/"
+                             "</font> — writable by all users so the "
+                             "app can persist "
+                             "<font face=\"Courier\">config.json</font> "
+                             "and "
+                             "<font face=\"Courier\">contacts.json"
+                             "</font> in-place."),
+        ("Launcher", "<font face=\"Courier\">/usr/bin/gmrs-tty</font> "
+                     "— runnable from a terminal or the desktop shortcut "
+                     "created at install time."),
+        ("Uninstall", "<font face=\"Courier\">sudo apt remove gmrs-tty"
+                      "</font>. The venv and any locally-staged Piper "
+                      "voices under "
+                      "<font face=\"Courier\">/opt/gmrs-tty/Voices/"
+                      "</font> are preserved; only the package files "
+                      "are removed."),
+    ])
+
+    b.h3("3.1.2 Windows (.msi)")
+    b.p("Bundles Python 3.13 embeddable runtime. No separate Python "
+        "installation required. Installs to "
+        "<font face=\"Courier\">C:\\Program Files\\GMRS-TTY\\"
+        "</font> by default.")
+    b.bullets([
+        "Run the <font face=\"Courier\">gmrs-tty_0.0.1_x64.msi</font> "
+        "installer and step through the wizard.",
+        "A <b>GMRS-TTY</b> shortcut is added to the Desktop and Start "
+        "Menu, pointing at the bundled "
+        "<font face=\"Courier\">python\\pythonw.exe main.py</font>.",
+        "Open <b>Settings &rarr; Configuration</b> on first launch.",
+        "Uninstall via Windows Settings &rarr; Apps.",
+    ])
+    b.note(
+        "The Windows installer is built by "
+        "<font face=\"Courier\">scripts\\build-msi.ps1</font> on a "
+        "Windows machine using WiX v4. Source builds are not required "
+        "to run the pre-built MSI."
+    )
+
+    b.h3("3.1.3 Adding Piper TTS voices")
+    b.p("Piper ONNX voices must be added manually after install. Drop "
+        "each <font face=\"Courier\">.onnx</font> + "
+        "<font face=\"Courier\">.onnx.json</font> pair into the "
+        "<font face=\"Courier\">Voices/</font> subfolder of the install "
+        "directory:")
+    b.code(
+        "# Debian / Ubuntu\n"
+        "ls /opt/gmrs-tty/Voices/\n\n"
+        "# Windows — in Explorer:\n"
+        "C:\\Program Files\\GMRS-TTY\\Voices\\"
+    )
+    b.p("Download voices from: "
+        "<font color=\"#1D4ED8\">https://github.com/rhasspy/piper/"
+        "blob/master/VOICES.md</font>. Most voices are MIT-licensed; "
+        "<font face=\"Courier\">en_US-libritts-high</font> is CC BY 4.0 "
+        "and requires attribution if redistributed.")
+    b.p("After adding voices, open Configuration and pick one from the "
+        "<b>Voice Model</b> dropdown. Click <b>Test</b> to preview "
+        "before saving.")
+
+    # ---- From source ------------------------------------------------------ #
+    b.h2("3.2 From source (developer / advanced install)")
     b.p("Five steps from a fresh clone to a working radio session.")
 
-    b.h3("3.1 Clone and create a virtual environment")
+    b.h3("3.2.1 Clone and create a virtual environment")
     b.code(
         "git clone <repo-url> GMRS-TTY\n"
         "cd GMRS-TTY\n\n"
@@ -411,7 +508,7 @@ def build_install(b: Builder):
         "pip install -r requirements.txt"
     )
 
-    b.h3("3.2 Drop in a Piper voice")
+    b.h3("3.2.2 Drop in a Piper voice")
     b.p("Download at least one Piper ONNX voice and its matching "
         "<font face=\"Courier\">.json</font> config file into a "
         "<font face=\"Courier\">Voices/</font> directory at the project "
@@ -424,12 +521,8 @@ def build_install(b: Builder):
         "├── en_US-amy-medium.onnx\n"
         "└── en_US-amy-medium.onnx.json"
     )
-    b.p("Voices: <font color=\"#1D4ED8\">https://github.com/rhasspy/piper/"
-        "blob/master/VOICES.md</font>. Most voices are MIT-licensed; "
-        "<font face=\"Courier\">en_US-libritts-high</font> is CC BY 4.0 "
-        "and requires attribution if you redistribute it.")
 
-    b.h3("3.3 Bootstrap the speech-to-text model")
+    b.h3("3.2.3 Bootstrap the speech-to-text model")
     b.p("The Whisper STT model is not bundled in the repo. Fetch it once "
         "on an internet-connected machine:")
     b.code(
@@ -451,7 +544,7 @@ def build_install(b: Builder):
         "as local files already, so no other fetches are involved."
     )
 
-    b.h3("3.4 Configure")
+    b.h3("3.2.4 Configure")
     b.code(
         "cp config.example.json config.json\n"
         "$EDITOR config.json    # set your callsign, name, location, voice"
@@ -459,7 +552,7 @@ def build_install(b: Builder):
     b.p("You can also leave the file at its defaults and edit everything "
         "through the in-app Configuration dialog after first launch.")
 
-    b.h3("3.5 Run")
+    b.h3("3.2.5 Run")
     b.code(
         "source .venv/bin/activate\n"
         "python main.py"
@@ -1676,7 +1769,8 @@ def build_offgrid(b: Builder):
                         "<font face=\"Courier\">Models/STT/&lt;model&gt;/"
                         "</font>. Pre-staged via "
                         "<font face=\"Courier\">bootstrap_models.py"
-                        "</font>; never re-fetched at runtime."),
+                        "</font> or bundled by the installer; never "
+                        "re-fetched at runtime."),
         ("Silero VAD", "Ships as a local ONNX file inside the wheel."),
         ("Piper TTS", "Voices live under "
                       "<font face=\"Courier\">Voices/</font>; you "
@@ -1689,9 +1783,16 @@ def build_offgrid(b: Builder):
                              "checks are preserved untouched. The radio "
                              "workflow keeps running."),
     ])
-    b.p("Recommended deployment for a true air-gapped target: clone the "
-        "repo, install dependencies, and run "
-        "<font face=\"Courier\">bootstrap_models.py</font> on an "
+    b.note(
+        "<b>Pre-built installers are already fully air-gapped for the "
+        "radio workflow.</b> The Whisper STT and speaker ID models are "
+        "bundled inside the .deb / .msi — no bootstrap step, no network "
+        "access needed after install. The only online feature ever used "
+        "is FCC callsign verification, which is strictly opt-in."
+    )
+    b.p("Recommended deployment for a <i>source</i> install on an "
+        "air-gapped target: clone the repo, install dependencies, and "
+        "run <font face=\"Courier\">bootstrap_models.py</font> on an "
         "internet-connected machine. Then copy the entire source tree, "
         "<font face=\"Courier\">Models/</font>, and "
         "<font face=\"Courier\">Voices/</font> to the offline target. "
@@ -1702,6 +1803,32 @@ def build_offgrid(b: Builder):
 
 def build_troubleshooting(b: Builder):
     b.h1("19. Troubleshooting")
+
+    b.h3("Pre-built installer issues")
+    b.bullets([
+        ("<font face=\"Courier\">gmrs-tty</font> command not found "
+         "(Linux .deb)", "The postinst may not have completed. Try "
+         "<font face=\"Courier\">sudo dpkg --configure gmrs-tty</font> "
+         "to re-run the postinst, then check that "
+         "<font face=\"Courier\">/usr/bin/gmrs-tty</font> exists."),
+        ("Python venv missing at "
+         "<font face=\"Courier\">/opt/gmrs-tty/.venv</font>",
+         "Reinstall the package: "
+         "<font face=\"Courier\">sudo apt reinstall gmrs-tty</font>. "
+         "The postinst will recreate and repopulate the venv from "
+         "the bundled wheels."),
+        ("App launches but the voice dropdown is empty", "No Piper voice "
+         "files are present in "
+         "<font face=\"Courier\">/opt/gmrs-tty/Voices/</font>. See "
+         "section 3.1.3 for how to add voices."),
+        ("Windows MSI: shortcut opens a console window", "The shortcut "
+         "targets <font face=\"Courier\">pythonw.exe</font> which "
+         "suppresses the console. If you see one, the shortcut may have "
+         "been modified — use the Desktop shortcut created at install "
+         "time, or recreate it to point at "
+         "<font face=\"Courier\">pythonw.exe main.py</font> in the "
+         "install directory."),
+    ])
 
     b.h3("Listen does nothing or fails immediately")
     b.bullets([
