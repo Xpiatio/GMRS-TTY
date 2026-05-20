@@ -19,7 +19,7 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
 - Drops short blips (<400 ms) and common Whisper hallucinations on silence.
 
 ### AI session journals
-- **Generate Session Journal** (Tools menu / Ctrl+J / 📓 toolbar button) — sends the current conversation transcript and detected callsigns to Google Gemini 2.0 Flash Lite, which writes an AI-generated title and narrative session summary. The entry is saved as a timestamped JSON file under `journals/YYYYMMDD_HHMMSS.json`. Requires a free Google Gemini API key set in Settings → Configuration → Gemini API Key; attempting to generate without a key or with an empty transcript shows an informative prompt. Generation runs on a background thread so the UI stays live.
+- **Generate Session Journal** (Tools menu / Ctrl+J / 📓 toolbar button) — sends the current conversation transcript and detected callsigns to Google Gemini 3.5 Flash, which writes an AI-generated title and narrative session summary. The entry is saved as a timestamped JSON file under `journals/YYYYMMDD_HHMMSS.json`. Requires a free Google Gemini API key set in Settings → Configuration → Gemini API Key; attempting to generate without a key or with an empty transcript shows an informative prompt. Generation runs on a background thread so the UI stays live.
 - **View Session Journals** (Tools menu / Ctrl+Shift+J / 📓 toolbar button) — a non-modal split-pane browser listing all saved journal entries newest-first. Select any entry to view its title, export timestamp, callsigns detected, and AI summary. Individual entries can be permanently deleted with a confirmation prompt. The dialog can stay open while listening.
 
 ### Rolling RX spectrometer (waterfall)
@@ -205,8 +205,9 @@ A full-reference user manual (29 pages, PDF) lives at
 [docs/USER_MANUAL.pdf](docs/USER_MANUAL.pdf). It covers installation,
 first-run configuration, every dialog, the keyboard-shortcut cheat
 sheet, GMRS vs FRS behavior, PTT modes, the RX/TX pipelines, FCC
-verification semantics, accessibility, off-grid operation, and the
-on-disk file formats.
+verification semantics, accessibility, off-grid operation, on-disk file
+formats, and the AI session journal feature (powered by Google Gemini
+3.5 Flash).
 
 The PDF is regenerated from [scripts/build_user_manual.py](scripts/build_user_manual.py)
 — the script holds the manual content as data so it stays in lockstep
@@ -289,7 +290,7 @@ Tracked in [implementation_plan.md](implementation_plan.md):
 8. ⏳ Multi-arch Docker image (`linux/amd64` + `linux/arm64`)
 9. ⏳ Future hardware (Bluetooth HT/mobile audio, hamlib CAT/CI-V rig control)
 10. ✅ TTY-to-radio-vernacular translation at TTS time (expand `GA`/`SK`/`73`/Q-signals to spoken form on TX)
-11. ✅ AI-summarized session journal (Gemini 2.0 Flash Lite generates a title + narrative summary from the transcript and detected callsigns; entries saved to `journals/` with a non-modal history viewer and per-entry delete)
+11. ✅ AI-summarized session journal (Gemini 3.5 Flash generates a title + narrative summary from the transcript and detected callsigns; entries saved to `journals/` with a non-modal history viewer and per-entry delete)
 12. ✅ Quick / common messages (one-click preset phrases like "Radio check", "Standing by", "QSY to channel {N}", editable per-user)
 13. ⏳ Parallel LoRa-mesh transmit (Meshtastic / Meshcore / other LoRa/Halo devices over USB or Bluetooth, fanned out alongside the GMRS voice TX)
 14. ✅ Rolling audio spectrometer (live RX waterfall — visual cue for signal activity, formants, squelch breaks, and band interference for the deaf/HoH operator)
