@@ -1,9 +1,6 @@
 import glob
 import os
 
-import numpy as np
-from piper.config import SynthesisConfig
-from piper.voice import PiperVoice
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
@@ -11,21 +8,21 @@ from PySide6.QtWidgets import (
     QPushButton, QSlider, QToolButton, QWidget,
 )
 
-from gmrs_tty.audio.playback import AudioPlayerThread
+from gmrs_tty.constants import VOICE_TEST_TEXT
 from gmrs_tty.ui.device_query import DeviceQueryThread
 
 
 class ConfigDialog(QDialog):
     """Dialog for editing user configuration."""
 
-    TEST_SAMPLE_TEXT = "GMRS-TTY voice test. Radio check, one two three."
+    TEST_SAMPLE_TEXT = VOICE_TEST_TEXT
 
-    def __init__(self, current_config, parent=None):
+    def __init__(self, current_config, voice_test_fn=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Configuration")
         self.setMinimumWidth(420)
         self.config = current_config
-        self._test_voice_cache = {}
+        self._voice_test_fn = voice_test_fn
         self._test_player = None
 
         layout = QFormLayout(self)
@@ -352,42 +349,19 @@ class ConfigDialog(QDialog):
             QMessageBox.warning(self, "Test Voice", "No valid Piper voice selected.")
             return
 
+        if self._voice_test_fn is None:
+            QMessageBox.warning(self, "Test Voice", "Voice test is not available.")
+            return
+
         self.test_voice_button.setEnabled(False)
-        self.test_voice_button.setText("Loading…")
+        self.test_voice_button.setText("Speaking…")
         QApplication.processEvents()
-
-        try:
-            if voice_path not in self._test_voice_cache:
-                self._test_voice_cache[voice_path] = PiperVoice.load(voice_path)
-            voice = self._test_voice_cache[voice_path]
-
-            self.test_voice_button.setText("Speaking…")
-            QApplication.processEvents()
-
-            syn_config = SynthesisConfig(
-                speaker_id=0 if voice.config.num_speakers > 1 else None,
-                length_scale=self.length_scale_slider.value() / 100.0,
-            )
-            chunks = [
-                c.audio_int16_array
-                for c in voice.synthesize(self.TEST_SAMPLE_TEXT, syn_config=syn_config)
-                if len(c.audio_int16_array) > 0
-            ]
-            if not chunks:
-                QMessageBox.warning(self, "Test Voice", "Voice generated no audio.")
-                self._reset_test_button()
-                return
-            data = chunks[0] if len(chunks) == 1 else np.concatenate(chunks)
-
-            self._test_player = AudioPlayerThread(
-                data, voice.config.sample_rate, device=self.output_device_input.currentData()
-            )
-            self._test_player.finished.connect(self._reset_test_button)
-            self._test_player.error.connect(lambda msg: QMessageBox.warning(self, "Test Voice", f"Playback error: {msg}"))
-            self._test_player.start()
-        except Exception as e:
-            QMessageBox.warning(self, "Test Voice", f"Failed: {e}")
-            self._reset_test_button()
+        self._voice_test_fn(
+            voice_path,
+            self.length_scale_slider.value() / 100.0,
+            self.output_device_input.currentData(),
+            self._reset_test_button,
+        )
 
     def _reset_test_button(self):
         self.test_voice_button.setEnabled(True)

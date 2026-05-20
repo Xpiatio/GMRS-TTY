@@ -18,6 +18,7 @@ from PySide6.QtCore import QObject, Signal
 from gmrs_tty.audio.playback import AudioPlayerThread
 from gmrs_tty.text.shorthand import expand_tty_abbreviations
 from gmrs_tty.tts.synthesizer import TTSSynthesisThread
+from gmrs_tty.constants import VOICE_TEST_TEXT
 from gmrs_tty.ui import theme
 
 
@@ -40,11 +41,13 @@ class TXController(QObject):
     def __init__(self, ptt, parent=None):
         super().__init__(parent)
         self.ptt = ptt
-        self._voice_cache: dict = {}
+        self._voice_cache: tuple[str, PiperVoice] | None = None  # (path, model)
         self._tx_busy = False
         self._tts_thread: TTSSynthesisThread | None = None
         self._audio_thread: AudioPlayerThread | None = None
         self._output_device = -1  # captured from config at synthesize time
+        self._test_tts_thread: TTSSynthesisThread | None = None
+        self._test_audio_thread: AudioPlayerThread | None = None
 
     # ------------------------------------------------------------------
     # Public interface
@@ -83,9 +86,9 @@ class TXController(QObject):
             self._set_busy(False)
             return
 
-        if voice_path not in self._voice_cache:
+        if self._voice_cache is None or self._voice_cache[0] != voice_path:
             try:
-                self._voice_cache[voice_path] = PiperVoice.load(voice_path)
+                self._voice_cache = (voice_path, PiperVoice.load(voice_path))
             except Exception as exc:
                 self.chat_message.emit(
                     f"<i>Failed to load voice model: {exc}</i>",
@@ -94,7 +97,7 @@ class TXController(QObject):
                 self._set_busy(False)
                 return
 
-        voice = self._voice_cache[voice_path]
+        voice = self._voice_cache[1]
         self._tts_thread = TTSSynthesisThread(
             voice, tts_text,
             self.ptt.lead_in_seconds, self.ptt.tail_seconds,
@@ -104,6 +107,42 @@ class TXController(QObject):
         self._tts_thread.ready.connect(self._on_tts_synthesized)
         self._tts_thread.error.connect(self._on_tts_synthesis_error)
         self._tts_thread.start()
+
+    def test_voice(self, voice_path: str, length_scale: float, output_device: int, done_cb) -> None:
+        """Synthesize a short test sample and play it back (no PTT keying).
+
+        Reuses the voice cache so the dialog test is free if the same voice
+        is already loaded. Calls ``done_cb()`` on completion or error.
+        """
+        if self._voice_cache is None or self._voice_cache[0] != voice_path:
+            try:
+                self._voice_cache = (voice_path, PiperVoice.load(voice_path))
+            except Exception as exc:
+                self.chat_message.emit(
+                    f"<i>Failed to load voice model: {exc}</i>",
+                    theme.palette().error,
+                )
+                done_cb()
+                return
+
+        voice = self._voice_cache[1]
+        self._test_tts_thread = TTSSynthesisThread(
+            voice, VOICE_TEST_TEXT, 0.0, 0.0,
+            length_scale=length_scale, parent=self,
+        )
+
+        def on_ready(audio, sample_rate: int) -> None:
+            if audio is None or len(audio) == 0:
+                done_cb()
+                return
+            self._test_audio_thread = AudioPlayerThread(audio, sample_rate, device=output_device)
+            self._test_audio_thread.finished.connect(done_cb)
+            self._test_audio_thread.error.connect(lambda _: done_cb())
+            self._test_audio_thread.start()
+
+        self._test_tts_thread.ready.connect(on_ready)
+        self._test_tts_thread.error.connect(lambda _: done_cb())
+        self._test_tts_thread.start()
 
     def close_ptt(self) -> None:
         """Release the PTT device. Call from MainWindow.closeEvent."""

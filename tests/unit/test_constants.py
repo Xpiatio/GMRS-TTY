@@ -2,11 +2,15 @@
 A typo or missing key has to fall back to GMRS — the licensed mode — so a
 malformed config can't accidentally drop the user into a permissive
 ID-less transmit path."""
+import re
+
 from gmrs_tty.constants import (
     DEFAULT_SERVICE,
+    HALLUCINATIONS,
     SERVICE_FRS,
     SERVICE_GMRS,
     normalize_service,
+    utc_now_iso,
 )
 
 
@@ -33,3 +37,24 @@ class TestNormalizeService:
         assert normalize_service(None) == SERVICE_GMRS
         assert normalize_service("") == SERVICE_GMRS
         assert normalize_service("   ") == SERVICE_GMRS
+
+
+class TestUtcNowIso:
+    _ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+    def test_format_is_iso8601_compact(self):
+        ts = utc_now_iso()
+        assert self._ISO_RE.match(ts), f"unexpected format: {ts!r}"
+
+    def test_returns_string(self):
+        assert isinstance(utc_now_iso(), str)
+
+
+class TestHallucinations:
+    def test_is_frozenset(self):
+        assert isinstance(HALLUCINATIONS, frozenset)
+
+    def test_common_false_positives_present(self):
+        assert "you" in HALLUCINATIONS
+        assert "thank you" in HALLUCINATIONS
+        assert "." in HALLUCINATIONS

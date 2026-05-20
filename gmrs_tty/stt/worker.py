@@ -1,4 +1,3 @@
-import collections
 import os
 import queue
 import threading
@@ -8,10 +7,9 @@ from PySide6.QtCore import QThread, Signal
 
 from gmrs_tty.audio.capture import open_input_source
 from gmrs_tty.audio.dsp import bandpass, denoise, make_bandpass_sos
-from gmrs_tty.audio.segmentation import pick_cut_index
-from gmrs_tty.audio.silence_watchdog import SilenceWatchdog
 from gmrs_tty.audio.squelch import SquelchDetector
-from gmrs_tty.audio.vad import load_vad_model, make_vad_iterator, reset_vad_state
+from gmrs_tty.audio.vad import load_vad_model, make_vad_iterator
+from gmrs_tty.stt.segmenter import SpeechSegmenter
 from gmrs_tty.stt.transcriber import WhisperTranscriber
 
 
@@ -158,25 +156,22 @@ class STTWorker(QThread):
         transcribe_thread.start()
 
         self.status.emit("Listening...")
-        rolling = collections.deque(maxlen=self.PRE_BUFFER_CHUNKS)
-        collected = []
-        in_speech = False
-        was_paused = False
-        utterance_id = 0
-        current_uid = -1
-        partials_emitted = 0
-        silence_watchdog = SilenceWatchdog(
-            int(self.SILENCE_RESET_S * self.SAMPLE_RATE / self.CHUNK_SAMPLES)
-        )
         squelch = SquelchDetector(
             open_threshold=self.SQUELCH_OPEN_THRESHOLD,
             open_hold_chunks=self.SQUELCH_OPEN_HOLD_CHUNKS,
             close_hold_chunks=self.SQUELCH_CLOSE_HOLD_CHUNKS,
         )
-        squelch_buffer = collections.deque(maxlen=self.SQUELCH_BUFFER_MAX_CHUNKS)
-        rolling_target_chunks = int(self.ROLLING_SEGMENT_S * self.SAMPLE_RATE / self.CHUNK_SAMPLES)
-        cut_window_chunks = int(self.CUT_WINDOW_S * self.SAMPLE_RATE / self.CHUNK_SAMPLES)
-        slice_trigger_chunks = rolling_target_chunks + cut_window_chunks
+        segmenter = SpeechSegmenter(
+            vad_iter, squelch,
+            sample_rate=self.SAMPLE_RATE,
+            rolling_target_chunks=int(self.ROLLING_SEGMENT_S * self.SAMPLE_RATE / self.CHUNK_SAMPLES),
+            cut_window_chunks=int(self.CUT_WINDOW_S * self.SAMPLE_RATE / self.CHUNK_SAMPLES),
+            pre_buffer_chunks=self.PRE_BUFFER_CHUNKS,
+            squelch_buffer_max_chunks=self.SQUELCH_BUFFER_MAX_CHUNKS,
+            min_speech_duration_s=self.MIN_SPEECH_DURATION_S,
+            silence_reset_chunks=int(self.SILENCE_RESET_S * self.SAMPLE_RATE / self.CHUNK_SAMPLES),
+        )
+        was_paused = False
 
         try:
             while self._running:
@@ -202,97 +197,21 @@ class STTWorker(QThread):
 
                 if self._paused:
                     if not was_paused:
-                        collected = []
-                        in_speech = False
-                        rolling.clear()
-                        squelch_buffer.clear()
-                        squelch.reset()
-                        reset_vad_state(vad_iter)
-                        silence_watchdog.reset()
+                        segmenter.reset()
                         self.status.emit("Paused (transmitting)")
                         was_paused = True
                     continue
 
                 if was_paused:
-                    squelch.reset()
-                    squelch_buffer.clear()
-                    reset_vad_state(vad_iter)
-                    silence_watchdog.reset()
+                    segmenter.reset()
                     self.status.emit("Listening...")
                     was_paused = False
 
-                squelch_event = squelch.update(peak)
-                if squelch_event == 'opened':
-                    squelch_buffer.clear()
-                    self.capture_event.emit('squelch_opened')
-                elif squelch_event == 'closed':
-                    self.capture_event.emit('squelch_closed')
-                    if not in_speech:
-                        # Carrier dropped without VAD ever firing — kerchunk or
-                        # noise burst with no human voice. Drop the buffer so it
-                        # never reaches the transcriber.
-                        squelch_buffer.clear()
-
-                try:
-                    speech_dict = vad_iter(chunk, return_seconds=False)
-                except Exception as e:
-                    print(f"VAD error on chunk: {e}")
-                    speech_dict = None
-
-                if speech_dict and 'start' in speech_dict:
-                    in_speech = True
-                    utterance_id += 1
-                    current_uid = utterance_id
-                    partials_emitted = 0
-                    if squelch.is_open and squelch_buffer:
-                        collected = list(squelch_buffer) + [chunk]
-                    else:
-                        collected = list(rolling) + [chunk]
-                    squelch_buffer.clear()
-                    silence_watchdog.note_speech()
-                    self.capture_event.emit('vad_start')
-                elif speech_dict and 'end' in speech_dict:
-                    collected.append(chunk)
-                    audio = np.concatenate(collected)
-                    in_speech = False
-                    collected = []
-                    silence_watchdog.note_speech()
-                    self.capture_event.emit('vad_end')
-                    # Drop the trailing piece only when we never emitted any
-                    # partial for this utterance — a long monologue's tail can
-                    # be much shorter than the kerchunk threshold yet still
-                    # carry meaningful last syllables.
-                    if partials_emitted > 0 or len(audio) / self.SAMPLE_RATE >= self.MIN_SPEECH_DURATION_S:
-                        transcribe_queue.put((current_uid, audio, True))
-                elif in_speech:
-                    collected.append(chunk)
-                    silence_watchdog.note_speech()
-                    if len(collected) >= slice_trigger_chunks:
-                        cut_idx = pick_cut_index(
-                            [float(np.max(np.abs(c))) for c in collected],
-                            rolling_target_chunks,
-                            rolling_target_chunks + cut_window_chunks,
-                        )
-                        if cut_idx is None:
-                            cut_idx = slice_trigger_chunks - 1
-                        slice_chunks = collected[: cut_idx + 1]
-                        collected = collected[cut_idx + 1:]
-                        audio = np.concatenate(slice_chunks)
-                        transcribe_queue.put((current_uid, audio, False))
-                        partials_emitted += 1
-                elif silence_watchdog.note_silence():
-                    # Silero's RNN state drifts after long silence; re-baseline so
-                    # the next speech onset still clears the threshold.
-                    reset_vad_state(vad_iter)
-                    silence_watchdog.reset()
-
-                rolling.append(chunk)
-                # Buffer pre-VAD audio while carrier is open so the leading
-                # syllables of a transmission survive VAD onset latency. The
-                # buffer is consumed (and cleared) the moment VAD fires, and
-                # discarded if the carrier drops without VAD ever firing.
-                if squelch.is_open and not in_speech:
-                    squelch_buffer.append(chunk)
+                segments, events = segmenter.feed(chunk, peak)
+                for event in events:
+                    self.capture_event.emit(event)
+                for uid, audio, is_final in segments:
+                    transcribe_queue.put((uid, audio, is_final))
         finally:
             try:
                 source.close()

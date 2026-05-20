@@ -1,5 +1,12 @@
+import datetime
+
 CONFIG_FILE = "config.json"
 CONTACTS_FILE = "contacts.json"
+
+
+def utc_now_iso() -> str:
+    """Return the current UTC time as a compact ISO-8601 string (YYYY-MM-DDTHH:MM:SSZ)."""
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 # Radio-service mode. GMRS requires a callsign; FRS doesn't, so when the user
 # selects FRS we disable every callsign-dependent feature (preface, ID rule,
@@ -39,3 +46,12 @@ PILL_BORDER = "#A16207"   # amber-700, 4.05:1 on white (UI border)
 # green-700) so the "verified" semantic reads consistently across surfaces.
 VERIFIED_GLYPH = "✓"
 VERIFIED_COLOR = COLOR_RX
+
+VOICE_TEST_TEXT = "GMRS-TTY voice test. Radio check, one two three."
+
+# Common Whisper hallucinations on silence/noise — drop these transcripts.
+HALLUCINATIONS: frozenset[str] = frozenset({
+    "you", "thank you", "thanks", "thanks for watching",
+    "thank you for watching", "thanks for watching!", "bye", ".",
+    "okay", "ok", "yeah", "mm", "hmm",
+})

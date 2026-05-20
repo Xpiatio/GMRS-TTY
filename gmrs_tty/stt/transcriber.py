@@ -1,11 +1,6 @@
 import os
 
-# Common Whisper hallucinations on silence/noise — drop these.
-HALLUCINATIONS = frozenset({
-    "you", "thank you", "thanks", "thanks for watching",
-    "thank you for watching", "thanks for watching!", "bye", ".",
-    "okay", "ok", "yeah", "mm", "hmm",
-})
+from gmrs_tty.constants import HALLUCINATIONS
 
 
 class WhisperTranscriber:
