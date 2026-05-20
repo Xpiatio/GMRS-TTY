@@ -88,6 +88,10 @@ class ChunkRing:
     Capacity is fixed at construction time. When the ring fills past
     capacity, the oldest samples are dropped — the spectrometer must
     never back-pressure the capture loop or it would starve VAD/STT.
+
+    The backing store is a single pre-allocated ndarray; push() never
+    allocates, eliminating ~31 heap objects/second at the default 512-sample
+    chunk rate.
     """
 
     def __init__(
@@ -105,7 +109,9 @@ class ChunkRing:
         self.frame_size = int(frame_size)
         self.hop_size = int(hop_size)
         self.capacity_samples = self.frame_size + self.hop_size * int(capacity_frames)
-        self._buffer = np.zeros(0, dtype=np.float32)
+        self._buf = np.zeros(self.capacity_samples, dtype=np.float32)
+        self._start = 0   # index of oldest valid sample in _buf
+        self._fill = 0    # number of valid samples currently stored
         self._lock = threading.Lock()
         self.dropped_samples = 0
 
@@ -115,31 +121,59 @@ class ChunkRing:
             return
         data = np.asarray(chunk, dtype=np.float32).reshape(-1)
         with self._lock:
-            self._buffer = np.concatenate((self._buffer, data))
-            if self._buffer.size > self.capacity_samples:
-                overflow = self._buffer.size - self.capacity_samples
-                # Snap overflow to a multiple of hop_size so the next pop
-                # lands on the same hop grid as the producer expected. If
-                # we just chopped raw samples, the consumer would see a
-                # ragged frame on the very next call after a drop.
-                overflow = ((overflow + self.hop_size - 1) // self.hop_size) * self.hop_size
-                overflow = min(overflow, self._buffer.size)
-                self._buffer = self._buffer[overflow:]
-                self.dropped_samples += overflow
+            n = data.size
+            cap = self.capacity_samples
+            total = self._fill + n
+            if total > cap:
+                drop = total - cap
+                # Snap to hop boundary so the consumer stays on the same grid.
+                drop = ((drop + self.hop_size - 1) // self.hop_size) * self.hop_size
+                if drop <= self._fill:
+                    self._start = (self._start + drop) % cap
+                    self._fill -= drop
+                    self.dropped_samples += drop
+                else:
+                    # Incoming chunk alone exceeds capacity — discard buffer
+                    # entirely and skip the leading part of the chunk.
+                    from_input = drop - self._fill
+                    from_input = min(from_input, n)
+                    self.dropped_samples += self._fill + from_input
+                    self._start = 0
+                    self._fill = 0
+                    data = data[from_input:]
+                    n = data.size
+            write_pos = (self._start + self._fill) % cap
+            space_to_end = cap - write_pos
+            if n <= space_to_end:
+                self._buf[write_pos:write_pos + n] = data
+            else:
+                self._buf[write_pos:] = data[:space_to_end]
+                self._buf[:n - space_to_end] = data[space_to_end:]
+            self._fill += n
 
     def pop_frame(self) -> np.ndarray | None:
         """Return one frame_size window and advance by hop_size, or None
         if not enough samples are buffered yet."""
         with self._lock:
-            if self._buffer.size < self.frame_size:
+            if self._fill < self.frame_size:
                 return None
-            frame = self._buffer[: self.frame_size].copy()
-            self._buffer = self._buffer[self.hop_size:]
+            cap = self.capacity_samples
+            end = self._start + self.frame_size
+            if end <= cap:
+                frame = self._buf[self._start:end].copy()
+            else:
+                frame = np.empty(self.frame_size, dtype=np.float32)
+                first = cap - self._start
+                frame[:first] = self._buf[self._start:]
+                frame[first:] = self._buf[:self.frame_size - first]
+            self._start = (self._start + self.hop_size) % cap
+            self._fill -= self.hop_size
             return frame
 
     def clear(self) -> None:
         with self._lock:
-            self._buffer = np.zeros(0, dtype=np.float32)
+            self._start = 0
+            self._fill = 0
 
 
 def frequency_bins(frame_size: int, sample_rate: int) -> np.ndarray:
