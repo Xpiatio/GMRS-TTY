@@ -1269,7 +1269,7 @@ class MainWindow(QMainWindow):
             )
 
     def open_config_dialog(self):
-        dlg = ConfigDialog(self.config, voice_test_fn=self.tx_controller.test_voice, parent=self)
+        dlg = ConfigDialog(self.config, voice_test_fn=self.tx.test_voice, parent=self)
         if dlg.exec():
             old_device = self.config.input_device
             old_threshold = self.config.vad_threshold
