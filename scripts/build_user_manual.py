@@ -715,7 +715,26 @@ def build_main_window(b: Builder):
                           "</font>, so an operator who finishes a session "
                           "in RX-only mode comes back up the same way. "
                           "Toggling back off re-enables transmission "
-                          "instantly."),
+                          "instantly — and simultaneously disables the "
+                          "Monitor toggle (see below)."),
+        ("Monitor (audio monitor)", "Sits to the right of Listen only. "
+                          "Mnemonic Alt+M. Checkable: when on, incoming "
+                          "radio audio is routed to the configured output "
+                          "device in real-time so the operator can hear "
+                          "the channel through speakers while the app "
+                          "simultaneously transcribes it. <b>Available "
+                          "only when Listen-only mode is active</b> — "
+                          "enabling Monitor on a channel where "
+                          "transmissions are possible would risk audio "
+                          "feedback through the radio mic, so the button "
+                          "is greyed out whenever Listen only is off. "
+                          "When Listen-only is turned off the monitor "
+                          "stream stops automatically. Persists to "
+                          "<font face=\"Courier\">config.json</font> "
+                          "under <font face=\"Courier\">monitor_enabled"
+                          "</font>. A power-on default is also configurable "
+                          "from <b>Settings &rarr; Configuration &rarr; "
+                          "Monitor audio</b>."),
         ("Live input-level meter", "Thin horizontal bar stretching across "
                                    "the middle of the strip — real-time "
                                    "peak amplitude of the captured audio. "
@@ -1065,6 +1084,12 @@ def build_config_dialog(b: Builder):
             ["Time Format (Alt+F)", "Dropdown",
              "24-hour (14:32:15) or 12-hour (2:32:15 PM) for RX "
              "timestamps."],
+            ["Monitor audio (Alt+M)", "Checkbox",
+             "Default off. When checked, the Monitor toggle on the main "
+             "window activates automatically each time Listen-only mode "
+             "is enabled, routing incoming radio audio to the output "
+             "device in real-time. The Monitor toggle is the live "
+             "control; this checkbox sets the power-on default only."],
             ["Filter profanity (Alt+Y)", "Checkbox",
              "Mask strong language with asterisks. Default on. Applies "
              "to both RX transcripts and TX messages before TTS speaks "
@@ -1272,6 +1297,7 @@ def build_keyboard(b: Builder):
             ["Clear chat button", "Alt+C"],
             ["Listen button", "Alt+L"],
             ["Listen only toggle (RX-only safety)", "Alt+O"],
+            ["Monitor toggle (audio monitor, Listen-only only)", "Alt+M"],
             ["Transmit button", "Alt+T"],
             ["This is button", "Alt+I"],
             ["Dismiss all (pending pills)", "Alt+D"],
@@ -1514,6 +1540,34 @@ def build_rx(b: Builder):
         "simple: short utterances arrive whole at unkey, long ones "
         "stream in as they're spoken."
     )
+    b.h3("Audio monitor")
+    b.p("The <b>Monitor</b> toggle (Alt+M, on the listen strip) routes "
+        "incoming radio audio to the configured output device in "
+        "real-time, letting a deaf or HoH operator hear the channel "
+        "through speakers simultaneously with the transcription pipeline.")
+    b.bullets([
+        ("When available", "Monitor is only enabled when <b>Listen-only</b> "
+                           "mode is on. Enabling it on a full-duplex "
+                           "session would risk audio feedback from the "
+                           "output device back into the radio mic, so the "
+                           "button is greyed out whenever Listen only is "
+                           "off. Turning Listen only off automatically "
+                           "stops the monitor stream."),
+        ("Ring buffer", "A thread-safe bounded deque (~1 s) absorbs "
+                        "burst-capture spikes. When the buffer would "
+                        "exceed capacity, the oldest samples are dropped "
+                        "so playback never lags behind live audio."),
+        ("Persistence", "The toggle state is saved to "
+                        "<font face=\"Courier\">monitor_enabled</font> in "
+                        "<font face=\"Courier\">config.json</font>. When "
+                        "the app starts with this flag set, the Monitor "
+                        "toggle activates automatically the next time "
+                        "Listen-only mode is turned on."),
+        ("Configuration default", "Settings &rarr; Configuration &rarr; "
+                                  "<b>Monitor audio</b> sets the power-on "
+                                  "default; the in-strip toggle controls "
+                                  "the live state."),
+    ])
 
 
 def build_tx(b: Builder):
@@ -1902,6 +1956,7 @@ def build_files(b: Builder):
         '    "filter_profanity": true,\n'
         '    "fuzzy_callsign": false,\n'
         '    "listen_only": false,\n'
+        '    "monitor_enabled": false,\n'
         '    "attendance": { "enabled": false },\n'
         '    "gemini_api_key": "",\n'
         '    "ptt_mode": "manual",\n'
@@ -1943,6 +1998,11 @@ def build_files(b: Builder):
                         "path at launch (matches the Alt+O toggle on the "
                         "Listen strip). Microphone capture and "
                         "transcription still run."),
+        ("monitor_enabled", "Boolean. Default false. When true the "
+                            "Monitor toggle (Alt+M) activates automatically "
+                            "each time Listen-only mode is turned on. "
+                            "Has no effect when Listen only is off (the "
+                            "button is disabled in that state)."),
         ("fuzzy_callsign", "Boolean. Off by default. When true a "
                             "detected callsign that differs from a "
                             "saved contact by exactly one same-class "
