@@ -40,6 +40,18 @@ class ConfigDialog(QDialog):
             "nothing plays through speakers. The stream loops automatically."
         )
         self.output_device_input = QComboBox()
+        self.monitor_enabled_input = QCheckBox("Play incoming radio audio through speakers by default")
+        self.monitor_enabled_input.setChecked(bool(self.config.get("monitor_enabled", False)))
+        self.monitor_enabled_input.setToolTip(
+            "When enabled, incoming radio audio is routed to the output device "
+            "whenever Listen is active. The Monitor toggle on the main window "
+            "controls this live; this setting determines the power-on default."
+        )
+        self.monitor_enabled_input.setAccessibleName("Monitor audio by default")
+        self.monitor_enabled_input.setAccessibleDescription(
+            "When checked, the Monitor toggle will be on automatically each time "
+            "you start listening."
+        )
         self.ptt_mode_input = QComboBox()
         self.ptt_mode_input.addItem("Manual (you press PTT on the radio)", "manual")
         self.ptt_mode_input.addItem("VOX (radio auto-keys on audio)", "vox")
@@ -249,6 +261,7 @@ class ConfigDialog(QDialog):
         layout.setRowVisible(self.youtube_url_input, False)
         self.input_device_input.currentIndexChanged.connect(self._update_input_device_fields)
         layout.addRow("&Output Device:", self.output_device_input)
+        layout.addRow("&Monitor audio:", self.monitor_enabled_input)
         layout.addRow("VA&D Threshold:", self.vad_threshold_input)
         layout.addRow("Time &Format:", self.time_format_input)
         layout.addRow("Filter profanit&y:", self.filter_profanity_input)
@@ -302,6 +315,7 @@ class ConfigDialog(QDialog):
             "input_device": self.input_device_input.currentData(),
             "youtube_url": self.youtube_url_input.text().strip(),
             "output_device": self.output_device_input.currentData(),
+            "monitor_enabled": self.monitor_enabled_input.isChecked(),
             "vad_threshold": round(self.vad_threshold_input.value(), 2),
             "time_format": self.time_format_input.currentData(),
             "filter_profanity": self.filter_profanity_input.isChecked(),
