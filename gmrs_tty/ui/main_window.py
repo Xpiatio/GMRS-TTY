@@ -495,12 +495,12 @@ class MainWindow(QMainWindow):
         self.monitor_btn.setEnabled(False)
         self.monitor_btn.setToolTip(
             "Route incoming radio audio to the output device (Alt+M). "
-            "Activates while listening; mutes automatically during transmissions."
+            "Available when Listen-only mode is active."
         )
         self.monitor_btn.setAccessibleName("Monitor audio toggle")
         self.monitor_btn.setAccessibleDescription(
             "Play incoming radio audio through the computer speakers. "
-            "Available only while Listen is active. Currently off."
+            "Available when Listen and Listen-only are both active. Currently off."
         )
         self.monitor_btn.toggled.connect(self._on_monitor_toggled)
         listen_strip.addWidget(self.monitor_btn)
@@ -1618,7 +1618,7 @@ class MainWindow(QMainWindow):
                 self.stt_worker.audio_chunk.connect(self._monitor.push)
             self.monitor_btn.setAccessibleDescription(
                 "Play incoming radio audio through the computer speakers. "
-                "Available only while Listen is active. Currently on."
+                "Available when Listen and Listen-only are both active. Currently on."
             )
         else:
             if self.stt_worker is not None:
@@ -1629,7 +1629,7 @@ class MainWindow(QMainWindow):
             self._monitor.stop()
             self.monitor_btn.setAccessibleDescription(
                 "Play incoming radio audio through the computer speakers. "
-                "Available only while Listen is active. Currently off."
+                "Available when Listen and Listen-only are both active. Currently off."
             )
         self.config["monitor_enabled"] = checked
         try:
@@ -1669,6 +1669,18 @@ class MainWindow(QMainWindow):
             f"Currently {'on' if self.listen_only else 'off'}."
         )
         self._refresh_tx_enabled()
+        # Monitor is only meaningful when transmitting is blocked — enable it
+        # when listen-only turns on (if Listen is active) and disable it when
+        # listen-only turns off (stopping any in-progress monitor stream).
+        if self.stt_worker is not None:
+            if self.listen_only:
+                self.monitor_btn.setEnabled(True)
+                if self.config.monitor_enabled and not self.monitor_btn.isChecked():
+                    self.monitor_btn.setChecked(True)
+            else:
+                if self.monitor_btn.isChecked():
+                    self.monitor_btn.setChecked(False)
+                self.monitor_btn.setEnabled(False)
         if self.listen_only:
             self.statusBar().showMessage("Listen-only mode: transmissions blocked", 4000)
         else:
@@ -1943,13 +1955,15 @@ class MainWindow(QMainWindow):
         # exists by the time we connect it through _start_spectro_worker.
         if self.spectro_settings.enabled:
             self._start_spectro_worker()
-        self.monitor_btn.setEnabled(True)
-        if self.config.monitor_enabled and not self.monitor_btn.isChecked():
-            self.monitor_btn.setChecked(True)
-        elif self.monitor_btn.isChecked():
-            # Button was already on from a previous session; rewire the signal
-            self._monitor.start(self.config.output_device)
-            self.stt_worker.audio_chunk.connect(self._monitor.push)
+        # Monitor is only available in listen-only mode (no TX path active).
+        if self.listen_only:
+            self.monitor_btn.setEnabled(True)
+            if self.config.monitor_enabled and not self.monitor_btn.isChecked():
+                self.monitor_btn.setChecked(True)
+            elif self.monitor_btn.isChecked():
+                # Button was already on from a previous cycle; rewire the signal.
+                self._monitor.start(self.config.output_device)
+                self.stt_worker.audio_chunk.connect(self._monitor.push)
         self.listen_btn.setText("&Listening…")
         self.listen_btn.setAccessibleDescription(
             "Microphone capture and live transcription are active. Toggle off to stop."

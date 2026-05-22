@@ -43,14 +43,14 @@ class ConfigDialog(QDialog):
         self.monitor_enabled_input = QCheckBox("Play incoming radio audio through speakers by default")
         self.monitor_enabled_input.setChecked(bool(self.config.get("monitor_enabled", False)))
         self.monitor_enabled_input.setToolTip(
-            "When enabled, incoming radio audio is routed to the output device "
-            "whenever Listen is active. The Monitor toggle on the main window "
+            "When enabled, the Monitor toggle turns on automatically when you "
+            "activate Listen-only mode. The Monitor toggle on the main window "
             "controls this live; this setting determines the power-on default."
         )
         self.monitor_enabled_input.setAccessibleName("Monitor audio by default")
         self.monitor_enabled_input.setAccessibleDescription(
             "When checked, the Monitor toggle will be on automatically each time "
-            "you start listening."
+            "you activate Listen-only mode."
         )
         self.ptt_mode_input = QComboBox()
         self.ptt_mode_input.addItem("Manual (you press PTT on the radio)", "manual")
