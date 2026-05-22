@@ -104,16 +104,43 @@ The pre-built installers bundle Python, all Python wheels, and the offline Whisp
 
 ### Debian / Ubuntu (`.deb`)
 
-Built by `scripts/build-deb.sh` (targets Debian 13 / Ubuntu 24.04+, x86-64, Python 3.13):
+Built by `scripts/build-deb.sh` (x86-64, Python 3.13, all wheels bundled offline).
+
+**Supported platforms:**
+
+| Platform | Python 3.13 source | Install method |
+|----------|--------------------|----------------|
+| Debian 13 (trixie) / LMDE 7 | native in apt | direct `apt install` |
+| Ubuntu 24.10+ (oracular, plucky, …) | native in apt | direct `apt install` |
+| Ubuntu 22.04 (jammy) / 24.04 (noble) | deadsnakes PPA | `install.sh` |
+| Linux Mint 21 / 22 | deadsnakes PPA | `install.sh` |
+| Pop!_OS 22.04 / 24.04 | deadsnakes PPA | `install.sh` |
+| Debian 12 (bookworm) | not available | build from source |
+| Ubuntu 20.04 (focal) | not available | build from source |
+
+**Debian 13 / LMDE 7 / Ubuntu 24.10+ — direct install:**
 
 ```bash
-sudo apt install ./gmrs-tty_0.0.1_amd64.deb   # installs system deps + runs postinst
-gmrs-tty                                        # launch
+sudo apt install ./gmrs-tty_0.0.1_amd64.deb
+gmrs-tty
 ```
+
+**Ubuntu 22.04 / 24.04 / Mint 21–22 / Pop!_OS — use the install script:**
+
+```bash
+# Place install.sh in the same directory as the .deb, then:
+sudo bash install.sh
+# or with an explicit path:
+sudo bash install.sh ./gmrs-tty_0.0.1_amd64.deb
+```
+
+`install.sh` is included on the release page alongside the `.deb`. It adds the
+[deadsnakes PPA](https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa) to get
+`python3.13`, installs required system libraries, then runs the `.deb` installer.
 
 The postinst creates a virtualenv at `/opt/gmrs-tty/.venv`, installs all bundled wheels offline, and seeds an initial `config.json`. Open **Settings → Configuration** to set your callsign, name, location, and Piper TTS voice.
 
-System dependencies installed automatically: `python3 (≥3.13)`, `python3-venv`, `libportaudio2`, `libxcb-cursor0`, `libegl1`, `libgl1`.
+System dependencies installed automatically: `python3.13`, `python3.13-venv`, `libportaudio2`, `libxcb-cursor0`, `libegl1`, `libgl1`.
 
 ### Windows (`.msi`)
 
