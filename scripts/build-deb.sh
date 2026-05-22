@@ -64,7 +64,14 @@ cp -r \
 find "$STAGE/opt/$PKG/" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# 2b. Bundle offline models.
+# 2b. Install helper scripts into package docs.
+# ---------------------------------------------------------------------------
+mkdir -p "$STAGE/usr/share/doc/$PKG"
+cp "$REPO_ROOT/scripts/install.sh" "$STAGE/usr/share/doc/$PKG/install.sh"
+chmod 755 "$STAGE/usr/share/doc/$PKG/install.sh"
+
+# ---------------------------------------------------------------------------
+# 2c. Bundle offline models.
 #     Both STT (Whisper) and Speaker (ECAPA-TDNN) models must be present.
 #     Run 'python bootstrap_models.py' on an internet-connected machine first.
 # ---------------------------------------------------------------------------
@@ -158,7 +165,7 @@ Version: $VERSION
 Section: hamradio
 Priority: optional
 Architecture: $ARCH
-Depends: python3 (>= 3.13), python3-venv, libportaudio2, libxcb-cursor0, libegl1, libgl1
+Depends: python3.13, python3.13-venv, libportaudio2, libxcb-cursor0, libegl1, libgl1
 Recommends: espeak-ng
 Installed-Size: $SIZE_KB
 Maintainer: Xpiatio <benjamin.zomberg@thestowcompany.com>
@@ -185,9 +192,16 @@ WHEELS="$APP_DIR/wheels"
 
 case "$1" in
     configure)
+        if ! command -v python3.13 >/dev/null 2>&1; then
+            echo "gmrs-tty ERROR: python3.13 not found." >&2
+            echo "  On Ubuntu 22.04/24.04: sudo bash /usr/share/doc/gmrs-tty/install.sh" >&2
+            exit 1
+        fi
+
         if [ ! -d "$VENV" ]; then
             echo "gmrs-tty: creating Python venv at $VENV ..."
-            python3 -m venv --system-site-packages=false "$VENV"
+            python3.13 -m venv --without-pip "$VENV"
+            "$VENV/bin/python" -m ensurepip --upgrade 2>/dev/null || true
         fi
 
         echo "gmrs-tty: installing bundled wheels (offline) ..."
