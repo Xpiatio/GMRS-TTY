@@ -7,7 +7,8 @@
 #   * Targets Debian 13 / LMDE 7 (glibc >= 2.41, Python 3.13, x86_64).
 #   * Vendors all Python wheels so the postinst is fully offline.
 #   * Uses CPU-only torch (drops ~1.6 GB of nvidia CUDA wheels).
-#   * Whisper / Piper voice models are NOT bundled — they download on first run.
+#   * Whisper STT model (Models/STT/) and Piper TTS voices (Voices/) are bundled.
+#     Run 'python bootstrap_models.py' and populate Voices/ before building.
 #
 # Usage:
 #   ./scripts/build-deb.sh              # version 0.0.1
@@ -45,7 +46,15 @@ mkdir -p \
     "$STAGE/opt/$PKG" \
     "$STAGE/opt/$PKG/wheels" \
     "$STAGE/usr/bin" \
-    "$STAGE/usr/share/applications"
+    "$STAGE/usr/share/applications" \
+    "$STAGE/usr/share/doc/$PKG" \
+    "$STAGE/usr/share/icons/hicolor/16x16/apps" \
+    "$STAGE/usr/share/icons/hicolor/24x24/apps" \
+    "$STAGE/usr/share/icons/hicolor/32x32/apps" \
+    "$STAGE/usr/share/icons/hicolor/48x48/apps" \
+    "$STAGE/usr/share/icons/hicolor/64x64/apps" \
+    "$STAGE/usr/share/icons/hicolor/128x128/apps" \
+    "$STAGE/usr/share/icons/hicolor/256x256/apps"
 
 # ---------------------------------------------------------------------------
 # 2. Copy the source tree into /opt/gmrs-tty/.
@@ -60,6 +69,15 @@ cp -r \
     "$REPO_ROOT/NOTICES.md" \
     "$REPO_ROOT/README.md" \
     "$STAGE/opt/$PKG/"
+
+# Bundle the Piper TTS voices so the package is fully self-contained.
+if [ ! -d "$REPO_ROOT/Voices" ]; then
+    echo "ERROR: Voices/ not found."
+    echo "       Populate Voices/ with .onnx + .onnx.json files before building."
+    exit 1
+fi
+echo ">>> Bundling TTS voices ..."
+cp -r "$REPO_ROOT/Voices" "$STAGE/opt/$PKG/"
 
 find "$STAGE/opt/$PKG/" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
@@ -79,6 +97,32 @@ cp -r "$REPO_ROOT/Models" "$STAGE/opt/$PKG/"
 # Strip HuggingFace download cache — only the model files are needed at runtime.
 find "$STAGE/opt/$PKG/Models" -type d -name ".cache" -exec rm -rf {} + 2>/dev/null || true
 find "$STAGE/opt/$PKG/Models" -name ".gitattributes" -delete 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# 2c. Install application icons into the hicolor theme tree.
+#     The desktop entry references Icon=gmrs-tty so every XDG-compliant
+#     desktop environment picks up the right image at any supported size.
+# ---------------------------------------------------------------------------
+echo ">>> Installing application icons ..."
+ICON_SRC="$REPO_ROOT/gmrs_tty/resources"
+for SIZE in 16 24 32 48 64 128 256; do
+    SRC_FILE="$ICON_SRC/icon_${SIZE}.png"
+    DEST_DIR="$STAGE/usr/share/icons/hicolor/${SIZE}x${SIZE}/apps"
+    if [ -f "$SRC_FILE" ]; then
+        cp "$SRC_FILE" "$DEST_DIR/$PKG.png"
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# 2d. Install user documentation.
+# ---------------------------------------------------------------------------
+if [ -f "$REPO_ROOT/docs/USER_MANUAL.pdf" ]; then
+    echo ">>> Installing user manual ..."
+    cp "$REPO_ROOT/docs/USER_MANUAL.pdf" "$STAGE/usr/share/doc/$PKG/"
+fi
+cp "$REPO_ROOT/README.md" "$STAGE/usr/share/doc/$PKG/"
+cp "$REPO_ROOT/NOTICES.md" "$STAGE/usr/share/doc/$PKG/"
+cp "$REPO_ROOT/LICENSE" "$STAGE/usr/share/doc/$PKG/"
 
 # A __main__.py so the launcher can `python -m gmrs_tty`.
 cat > "$STAGE/opt/$PKG/gmrs_tty/__main__.py" <<'PY'
@@ -139,11 +183,12 @@ Name=GMRS-TTY
 GenericName=GMRS Text-To-Talk
 Comment=Speech-to-text and text-to-speech for GMRS/FRS radios
 Exec=gmrs-tty
-Icon=utilities-terminal
+Icon=gmrs-tty
 Terminal=false
 Categories=AudioVideo;Audio;HamRadio;Network;
 Keywords=GMRS;FRS;radio;TTS;STT;ham;
 StartupNotify=true
+StartupWMClass=gmrs-tty
 DESKTOP
 chmod 644 "$STAGE/usr/share/applications/${PKG}.desktop"
 
@@ -169,8 +214,8 @@ Description: GMRS/FRS speech-to-text and text-to-speech assistant
  and text-to-speech on transmit (Piper), with PTT keying and noise
  reduction.
  .
- Whisper STT and speaker identification models are bundled offline.
- Piper TTS voice models are user-configured (see README.md for setup).
+ Whisper STT models and Piper TTS voices are bundled — no internet
+ access or extra downloads required after installation.
 CONTROL
 
 cat > "$STAGE/DEBIAN/postinst" <<'POSTINST'
@@ -210,9 +255,12 @@ case "$1" in
         if [ -x /usr/bin/update-desktop-database ]; then
             update-desktop-database -q /usr/share/applications || true
         fi
+        if [ -x /usr/bin/gtk-update-icon-cache ]; then
+            gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+        fi
 
         echo "gmrs-tty: install complete. Run 'gmrs-tty' to launch."
-        echo "gmrs-tty: open Settings → Configuration to set your callsign and Piper TTS voice."
+        echo "gmrs-tty: open Settings → Configuration to set your callsign and voice."
         ;;
     abort-upgrade|abort-remove|abort-deconfigure)
         ;;
@@ -254,6 +302,9 @@ case "$1" in
     remove|purge)
         if [ -x /usr/bin/update-desktop-database ]; then
             update-desktop-database -q /usr/share/applications || true
+        fi
+        if [ -x /usr/bin/gtk-update-icon-cache ]; then
+            gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
         fi
         ;;
 esac
