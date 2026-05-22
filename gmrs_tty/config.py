@@ -35,6 +35,10 @@ class AppConfig(dict):
         return self.get("output_device", -1)
 
     @property
+    def monitor_enabled(self) -> bool:
+        return bool(self.get("monitor_enabled", False))
+
+    @property
     def whisper_model(self) -> str:
         return self.get("whisper_model", "small.en")
 

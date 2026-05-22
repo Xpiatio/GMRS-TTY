@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 
 from gmrs_tty.config import AppConfig
 from gmrs_tty.ui.tx_controller import TXController
+from gmrs_tty.audio.monitor import AudioMonitor
 from gmrs_tty.audio.spectro_worker import SpectrogramWorker
 from gmrs_tty.constants import (
     CONFIG_FILE, CONTACTS_FILE,
@@ -127,6 +128,7 @@ class MainWindow(QMainWindow):
         self.tx.chat_message.connect(self.append_to_chat)
         self.tx.stt_pause_requested.connect(self._pause_stt_for_tx)
         self.tx.stt_resume_requested.connect(self._resume_stt_after_tx)
+        self._monitor = AudioMonitor()
         # Rolling-spectrometer state. Settings are read from config so the
         # operator's last choice (enabled, colormap, range, window) persists
         # across launches. The widget + FFT worker are created lazily in
@@ -210,6 +212,7 @@ class MainWindow(QMainWindow):
         # leave the FFT thread orphaned.
         self.stop_stt()
         self._stop_spectro_worker()
+        self._monitor.stop()
         for attr in ('tts_thread', 'audio_thread'):
             thread = getattr(self, attr, None)
             if thread is not None and thread.isRunning():
@@ -486,6 +489,21 @@ class MainWindow(QMainWindow):
         )
         self.listen_only_btn.toggled.connect(self._on_listen_only_toggled)
         listen_strip.addWidget(self.listen_only_btn)
+
+        self.monitor_btn = QPushButton("&Monitor", wrapper)
+        self.monitor_btn.setCheckable(True)
+        self.monitor_btn.setEnabled(False)
+        self.monitor_btn.setToolTip(
+            "Route incoming radio audio to the output device (Alt+M). "
+            "Activates while listening; mutes automatically during transmissions."
+        )
+        self.monitor_btn.setAccessibleName("Monitor audio toggle")
+        self.monitor_btn.setAccessibleDescription(
+            "Play incoming radio audio through the computer speakers. "
+            "Available only while Listen is active. Currently off."
+        )
+        self.monitor_btn.toggled.connect(self._on_monitor_toggled)
+        listen_strip.addWidget(self.monitor_btn)
 
         self.audio_level_meter = QProgressBar(wrapper)
         self.audio_level_meter.setRange(0, 100)
@@ -1272,6 +1290,7 @@ class MainWindow(QMainWindow):
         dlg = ConfigDialog(self.config, voice_test_fn=self.tx.test_voice, parent=self)
         if dlg.exec():
             old_device = self.config.input_device
+            old_output_device = self.config.output_device
             old_threshold = self.config.vad_threshold
             old_ptt = (
                 self.config.ptt_mode,
@@ -1311,6 +1330,8 @@ class MainWindow(QMainWindow):
             if new_ptt != old_ptt:
                 self.tx.close_ptt()
                 self.tx.ptt = make_ptt(self.config)
+            if old_output_device != self.config.output_device and self.monitor_btn.isChecked():
+                self._monitor.start(self.config.output_device)
 
     def open_contacts_dialog(self):
         dlg = ContactsDialog(self.contacts, parent=self)
@@ -1590,7 +1611,34 @@ class MainWindow(QMainWindow):
 
         self._synthesize_and_play(spell_digits_in_callsigns(spoken_text))
 
+    def _on_monitor_toggled(self, checked: bool) -> None:
+        if checked:
+            self._monitor.start(self.config.output_device)
+            if self.stt_worker is not None:
+                self.stt_worker.audio_chunk.connect(self._monitor.push)
+            self.monitor_btn.setAccessibleDescription(
+                "Play incoming radio audio through the computer speakers. "
+                "Available only while Listen is active. Currently on."
+            )
+        else:
+            if self.stt_worker is not None:
+                try:
+                    self.stt_worker.audio_chunk.disconnect(self._monitor.push)
+                except (TypeError, RuntimeError):
+                    pass
+            self._monitor.stop()
+            self.monitor_btn.setAccessibleDescription(
+                "Play incoming radio audio through the computer speakers. "
+                "Available only while Listen is active. Currently off."
+            )
+        self.config["monitor_enabled"] = checked
+        try:
+            save_json(CONFIG_FILE, self.config)
+        except Exception:
+            pass
+
     def _on_tx_busy_changed(self, busy: bool) -> None:
+        self._monitor.mute(busy)
         self._refresh_tx_enabled()
 
     def _refresh_tx_enabled(self):
@@ -1895,6 +1943,13 @@ class MainWindow(QMainWindow):
         # exists by the time we connect it through _start_spectro_worker.
         if self.spectro_settings.enabled:
             self._start_spectro_worker()
+        self.monitor_btn.setEnabled(True)
+        if self.config.monitor_enabled and not self.monitor_btn.isChecked():
+            self.monitor_btn.setChecked(True)
+        elif self.monitor_btn.isChecked():
+            # Button was already on from a previous session; rewire the signal
+            self._monitor.start(self.config.output_device)
+            self.stt_worker.audio_chunk.connect(self._monitor.push)
         self.listen_btn.setText("&Listening…")
         self.listen_btn.setAccessibleDescription(
             "Microphone capture and live transcription are active. Toggle off to stop."
@@ -1907,6 +1962,15 @@ class MainWindow(QMainWindow):
         if self._rx_session:
             self._rx_session.flush()
 
+        # Disconnect and stop the audio monitor before nulling the worker
+        # so the audio_chunk disconnect can still reach the live worker.
+        if self.stt_worker is not None and self.monitor_btn.isChecked():
+            try:
+                self.stt_worker.audio_chunk.disconnect(self._monitor.push)
+            except (TypeError, RuntimeError):
+                pass
+        self._monitor.stop()
+        self.monitor_btn.setEnabled(False)
         # Tear the spectrometer down first so its STT-signal disconnects
         # run while the worker is still alive — _stop_spectro_worker
         # reaches through self.stt_worker to undo the audio_chunk hookup.
