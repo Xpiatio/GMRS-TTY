@@ -82,6 +82,10 @@ class AppConfig(dict):
         return bool(self.get("dark_mode", False))
 
     @property
+    def touch_mode(self) -> bool:
+        return bool(self.get("touch_mode", False))
+
+    @property
     def time_format(self) -> str:
         return self.get("time_format", "24h")
 

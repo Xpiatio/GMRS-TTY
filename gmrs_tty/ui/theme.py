@@ -333,6 +333,41 @@ def checkable_btn_stylesheet(active_bg: str) -> str:
     )
 
 
+def touch_btn_stylesheet(active_bg: str) -> str:
+    """Tall, thumb-friendly variant of checkable_btn_stylesheet.
+
+    Same on/off logic as checkable_btn_stylesheet but with larger vertical
+    padding and a header-weight font so the button is usable on touchscreens.
+    """
+    p = palette()
+    return (
+        "QPushButton {"
+        f" border: 2px solid {p.header_border};"
+        " border-radius: 6px;"
+        f" padding: {SPACING_L}px {SPACING_M}px;"
+        " background-color: transparent;"
+        f" font-size: {_base_font().pointSize() + 4}pt;"
+        " font-weight: bold;"
+        "}"
+        "QPushButton:hover:!checked {"
+        f" background-color: {p.header_bg};"
+        "}"
+        "QPushButton:checked {"
+        f" background-color: {active_bg};"
+        f" color: {p.window_bg};"
+        f" border-color: {active_bg};"
+        "}"
+        "QPushButton:disabled {"
+        f" color: {p.placeholder_text};"
+        f" border-color: {p.header_border};"
+        " background-color: transparent;"
+        "}"
+        "QPushButton:focus {"
+        f" border-color: {p.focus_ring};"
+        "}"
+    )
+
+
 def toolbar_focus_stylesheet() -> str:
     """Focus-ring stylesheet for the service toolbar's QToolButton row.
     Audit F-014: ``autoRaise=True`` tool buttons have no painted resting

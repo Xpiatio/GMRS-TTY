@@ -303,6 +303,7 @@ def build_toc(b: Builder):
         ("4.",  "First run &amp; configuration"),
         ("5.",  "Main window tour"),
         ("5.11.", "Session Journals"),
+        ("5.12.", "Touch-screen mode"),
         ("6.",  "Configuration dialog"),
         ("7.",  "Contacts dialog"),
         ("8.",  "Quick Messages dialog"),
@@ -640,7 +641,18 @@ def build_main_window(b: Builder):
                        "<font face=\"Courier\">radio_service</font> in "
                        "config.json. See section 11 for the full "
                        "behavior diff."),
-        ("Theme toggle (left of the cluster)", "Moon glyph in light "
+        ("Touch toggle (⊞ / ⊟)", "Leftmost icon in the cluster. "
+                                "Click ⊞ to enter touch-screen "
+                                "mode; click ⊟ to return to the "
+                                "desktop layout. In touch mode all "
+                                "dock panels hide automatically and "
+                                "the central panel switches to a "
+                                "large-button view designed for "
+                                "finger operation. Persists to "
+                                "<font face=\"Courier\">touch_mode"
+                                "</font> in config.json. See "
+                                "section 5.12 for full details."),
+        ("Theme toggle (🌙 / ☀️)", "Moon glyph in light "
                                                "mode, sun glyph in dark "
                                                "mode. Repaints the "
                                                "entire UI instantly: "
@@ -1050,6 +1062,80 @@ def build_journals(b: Builder):
         "Gemini API. The rest of the app (RX, TX, contacts) is fully "
         "offline as always — journals are an opt-in cloud feature."
     )
+
+
+def build_touch_mode(b: Builder):
+    b.h1("5.12 Touch-screen mode")
+    b.p("Touch-screen mode replaces the normal docked-panel layout with a "
+        "single full-panel view optimised for finger operation. It is "
+        "designed for tablets, touch-enabled laptops, and Raspberry Pi "
+        "units attached to a touchscreen display.")
+    b.h3("Entering and leaving touch mode")
+    b.p("Click the <b>⊞</b> button (leftmost icon in the service toolbar "
+        "icon cluster) to enter touch mode. The label flips to <b>⊟</b> "
+        "while touch mode is active. Click <b>⊟</b> to return to the "
+        "standard desktop layout. The preference persists to "
+        "<font face=\"Courier\">touch_mode</font> in "
+        "<font face=\"Courier\">config.json</font> — operators who leave "
+        "the app in touch mode come back to the touch view on the next "
+        "launch.")
+    b.h3("Touch view layout (top → bottom)")
+    b.bullets([
+        ("Pending-stations pill row", "The same pill buttons that appear "
+                                      "on the Pending Stations dock are "
+                                      "mirrored here at the top of the "
+                                      "touch view. Tap a pill to open the "
+                                      "Add Station dialog exactly as in "
+                                      "the normal view."),
+        ("Conversation log", "Full-height chat display — all RX "
+                             "transcripts, TX echoes, and callsign "
+                             "highlights stream in real time. The log "
+                             "stays in sync with the normal view; "
+                             "switching modes never drops a message."),
+        ("Row 1 — primary radio controls (80 px tall)",
+         "<b>Listen</b> (checkable, green) | "
+         "<b>Listen Only</b> (checkable, amber). "
+         "Both mirror the corresponding controls on the normal Listen "
+         "strip — tapping either button on the touch view has exactly "
+         "the same effect as clicking it on the desktop strip."),
+        ("Row 2 — secondary controls (56 px tall)",
+         "<b>Monitor</b> (checkable; enabled only when Listen-only "
+         "is active, matching the desktop rule) | "
+         "<b>🌙/☀️ Theme</b> (toggles dark/light mode) | "
+         "<b>Callsigns</b> (floats the Callsigns Detected dock as an "
+         "overlay without leaving touch mode) | "
+         "<b>Generate Log</b> (visible only when a Gemini API key is "
+         "configured — generates an AI session journal entry) | "
+         "<b>View Logs</b> (opens the Session Journals browser)."),
+    ])
+    b.h3("Dock behaviour")
+    b.p("Entering touch mode automatically hides every dock panel "
+        "(Station, Waterfall, Pending Stations, Quick Messages, "
+        "Transmit). Their positions, sizes, and tab arrangements are "
+        "saved internally. Exiting touch mode restores each panel to "
+        "exactly the visibility it had before touch mode was activated "
+        "— the desktop layout is preserved across the round trip.")
+    b.note(
+        "The Transmit dock is hidden in touch mode because touch-screen "
+        "operation is receive-focused. All RX controls are available in "
+        "the touch view. If you need to transmit a typed message, exit "
+        "touch mode, type in the Transmit dock, then re-enter."
+    )
+    b.h3("State sync between views")
+    b.p("The touch view always mirrors the normal-view state — no manual "
+        "sync is needed when switching modes mid-session:")
+    b.bullets([
+        "Listen toggle state and label ("
+        "<i>Listen</i> / <i>Listening…</i>) stay in step.",
+        "Listen Only checked state stays in step.",
+        "Monitor checked state and enabled state stay in step.",
+        "Theme glyph (🌙 or ☀️) updates whenever the theme changes, "
+        "in either view.",
+        "Generate Log visibility updates whenever the Gemini API key "
+        "is saved or cleared in Configuration.",
+        "Pending-station pills are added and removed in both views "
+        "simultaneously.",
+    ])
 
 
 def build_config_dialog(b: Builder):
@@ -2008,6 +2094,7 @@ def build_files(b: Builder):
         '    "ptt_serial_port": "",\n'
         '    "ptt_serial_line": "RTS",\n'
         '    "radio_service": "GMRS",\n'
+        '    "touch_mode": false,\n'
         '    "quick_messages": [\n'
         '        "Radio check",\n'
         '        "Loud and clear",\n'
@@ -2078,6 +2165,10 @@ def build_files(b: Builder):
                             "<font face=\"Courier\">usb_ftdi</font>."),
         ("time_format", "<font face=\"Courier\">24h</font> or <font "
                         "face=\"Courier\">12h</font>."),
+        ("touch_mode", "Boolean. Default false. When true the app "
+                      "launches directly into touch-screen mode (section 5.12). "
+                      "The ⊞/⊟ toggle on the service toolbar writes this "
+                      "key automatically."),
         ("radio_service", "<font face=\"Courier\">GMRS</font> or "
                           "<font face=\"Courier\">FRS</font>. Default "
                           "GMRS if missing or unknown."),
@@ -2192,6 +2283,7 @@ def build_manual(path):
         build_first_run,
         build_main_window,
         build_journals,
+        build_touch_mode,
         build_config_dialog,
         build_contacts_dialog,
         build_quick_messages_dialog,

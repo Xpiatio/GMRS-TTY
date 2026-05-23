@@ -47,6 +47,11 @@ class PendingStationManager(QObject):
         self.pills_widget: QWidget | None = None
         self.flow: FlowLayout | None = None
         self.clear_btn: QPushButton | None = None
+        # Touch-view pill container — populated by build_touch_pills()
+        self.touch_buttons: dict = {}
+        self._touch_pills_widget: QWidget | None = None
+        self._touch_flow: FlowLayout | None = None
+        self._touch_scroll: QScrollArea | None = None
 
     def build_dock(self) -> QDockWidget:
         window = self._window
@@ -91,6 +96,28 @@ class PendingStationManager(QObject):
         dock_layout.install_dock_context_menu(window, dock)
         self.dock = dock
         return dock
+
+    def build_touch_pills(self, parent: QWidget) -> QScrollArea:
+        """Create the touch-view pill container and return a QScrollArea to embed."""
+        self._touch_pills_widget = QWidget(parent)
+        self._touch_flow = FlowLayout(self._touch_pills_widget, margin=0, spacing=theme.SPACING_S)
+
+        scroll = QScrollArea(parent)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setWidget(self._touch_pills_widget)
+        scroll.setMaximumHeight(72)
+        scroll.hide()
+        self._touch_scroll = scroll
+
+        # Seed with any pills that already exist in the dock (e.g. if
+        # touch mode is entered while pills are showing).
+        for callsign, btn in list(self.buttons.items()):
+            self._add_touch_pill(callsign, btn.toolTip())
+        self._update_touch_visibility()
+        return scroll
 
     # ---- Public API --------------------------------------------------------
 
@@ -160,13 +187,19 @@ class PendingStationManager(QObject):
         self.flow.addWidget(btn)
         self._cap_scroll_height(btn)
         self._update_visibility()
+        self._add_touch_pill(callsign, btn.toolTip())
 
     def remove_pill(self, callsign: str) -> None:
         btn = self.buttons.pop(callsign, None)
         if btn is not None:
             btn.setParent(None)
             btn.deleteLater()
+        touch_btn = self.touch_buttons.pop(callsign, None)
+        if touch_btn is not None:
+            touch_btn.setParent(None)
+            touch_btn.deleteLater()
         self._update_visibility()
+        self._update_touch_visibility()
 
     def clear_all_pills(self) -> None:
         for callsign in list(self.buttons.keys()):
@@ -179,10 +212,14 @@ class PendingStationManager(QObject):
         self.scroll.setVisible(not is_frs and bool(self.buttons))
         self.clear_btn.setVisible(not is_frs and bool(self.buttons))
         self.dock.setVisible(not is_frs and bool(self.buttons))
+        if self._touch_scroll is not None:
+            self._touch_scroll.setVisible(not is_frs and bool(self.touch_buttons))
 
     def restyle_pills(self) -> None:
         """Repaint all live pills with the current theme stylesheet."""
         for btn in self.buttons.values():
+            btn.setStyleSheet(theme.pill_stylesheet())
+        for btn in self.touch_buttons.values():
             btn.setStyleSheet(theme.pill_stylesheet())
 
     def open_add_contact_dialog(self, callsign: str, name: str, location: str) -> None:
@@ -275,6 +312,40 @@ class PendingStationManager(QObject):
         self.scroll.setVisible(has_pills)
         if self._window._service_mode() != SERVICE_FRS:
             self.dock.setVisible(has_pills)
+
+    def _update_touch_visibility(self) -> None:
+        if self._touch_scroll is None:
+            return
+        has_pills = bool(self.touch_buttons)
+        self._touch_scroll.setVisible(has_pills)
+
+    def _add_touch_pill(self, callsign: str, tooltip: str) -> None:
+        """Create a pill in the touch container mirroring the dock pill."""
+        if self._touch_pills_widget is None:
+            return
+        if callsign in self.touch_buttons:
+            return
+        btn = QPushButton(f"+ Add {callsign}", self._window)
+        btn.setStyleSheet(theme.pill_stylesheet())
+        btn.setToolTip(tooltip)
+        btn.setAccessibleName(f"Add station {callsign} (touch)")
+        btn.clicked.connect(
+            lambda _checked=False, cs=callsign: self._on_touch_pill_clicked(cs)
+        )
+        btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        btn.customContextMenuRequested.connect(
+            lambda pos, cs=callsign, b=btn: self._show_pill_menu(b, pos, cs)
+        )
+        self.touch_buttons[callsign] = btn
+        self._touch_flow.addWidget(btn)
+        self._update_touch_visibility()
+
+    def _on_touch_pill_clicked(self, callsign: str) -> None:
+        btn = self.buttons.get(callsign)
+        if btn is not None:
+            # Delegate to the dock pill's click handler so both pill sets
+            # share a single code path for the add-contact dialog.
+            btn.click()
 
     def _cap_scroll_height(self, sample_btn) -> None:
         if self._row_height is not None:
