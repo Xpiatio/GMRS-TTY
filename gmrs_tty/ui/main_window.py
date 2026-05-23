@@ -15,6 +15,7 @@ from gmrs_tty.ui.tx_controller import TXController
 from gmrs_tty.audio.monitor import AudioMonitor
 from gmrs_tty.constants import (
     CONFIG_FILE, CONTACTS_FILE,
+    DEFAULT_OPERATOR_NAME, UNSET_FIELD,
     SERVICE_FRS, SERVICE_GMRS, normalize_service,
     utc_now_iso,
 )
@@ -950,12 +951,12 @@ class MainWindow(QMainWindow):
         callsign segment is replaced with a 'FRS Mode' label since FRS has
         no callsign — the operator/location segments stay useful for the
         on-screen log."""
-        name = self.config.name or 'N/A'
-        loc = self.config.location or 'N/A'
+        name = self.config.name or UNSET_FIELD
+        loc = self.config.location or UNSET_FIELD
         if self._service_mode() == SERVICE_FRS:
             self.header_label.setText(f"FRS Mode | Operator: {name} | Location: {loc}")
         else:
-            call = self.config.callsign or 'N/A'
+            call = self.config.callsign or UNSET_FIELD
             self.header_label.setText(f"Station: {call} | Operator: {name} | Location: {loc}")
 
     def _service_mode(self):
@@ -1363,7 +1364,7 @@ class MainWindow(QMainWindow):
             target_call=target_call or "",
             target_name=target_name,
             my_call=self.config.callsign,
-            my_name=self.config.name or "Default User",
+            my_name=self.config.name or DEFAULT_OPERATOR_NAME,
             last_id_time=self.last_tx_time,
             now=datetime.datetime.now(),
             service=service,
@@ -1401,7 +1402,7 @@ class MainWindow(QMainWindow):
             return
         spoken_text, self.last_tx_time = format_standalone_id(
             my_call=self.config.callsign,
-            my_name=self.config.name or "Default User",
+            my_name=self.config.name or DEFAULT_OPERATOR_NAME,
             my_location=self.config.location,
             now=datetime.datetime.now(),
         )
@@ -1511,7 +1512,7 @@ class MainWindow(QMainWindow):
             self._attendance_toggle_action.setChecked(False)
             return
         self.attendance_enabled = new_state
-        self.config["attendance"] = {"enabled": new_state}
+        self.config.attendance_enabled = new_state
         save_json(CONFIG_FILE, self.config)
         self._set_attendance_dock_visible(new_state)
 

@@ -116,6 +116,10 @@ class AppConfig(dict):
     def attendance_enabled(self) -> bool:
         return bool((self.get("attendance") or {}).get("enabled", False))
 
+    @attendance_enabled.setter
+    def attendance_enabled(self, value: bool) -> None:
+        self["attendance"] = {"enabled": value}
+
     # ---- AI / journal ----------------------------------------------------
 
     @property
