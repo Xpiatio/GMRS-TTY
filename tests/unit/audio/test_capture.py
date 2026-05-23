@@ -1,9 +1,15 @@
-"""Unit tests for YouTubeSource._resolve_audio_url and _yt_dlp_auth_flags."""
+"""Unit tests for YouTubeSource._resolve_audio_url, _yt_dlp_auth_flags, and AudioInputSource."""
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gmrs_tty.audio.capture import YouTubeSource, _yt_dlp_auth_flags
+from gmrs_tty.audio.capture import (
+    AudioInputSource,
+    ParecSource,
+    PortAudioSource,
+    YouTubeSource,
+    _yt_dlp_auth_flags,
+)
 
 
 def _make_run_result(stdout="", stderr="", returncode=0):
@@ -114,3 +120,38 @@ class TestResolveAudioUrl:
         args = mock_run.call_args[0][0]
         assert "--cookies-from-browser" in args
         assert args[args.index("--cookies-from-browser") + 1] == "firefox"
+
+
+class TestAudioInputSourceProtocol:
+    """Verify all concrete sources satisfy the AudioInputSource Protocol."""
+
+    def _make_youtube_source(self):
+        src = YouTubeSource.__new__(YouTubeSource)
+        src._url = "https://www.youtube.com/watch?v=TEST"
+        src._sample_rate = 16000
+        src._chunk_samples = 512
+        src._bytes_per_chunk = 512 * 4
+        src._auth = []
+        src._proc = None
+        return src
+
+    def _make_parec_source(self):
+        src = ParecSource.__new__(ParecSource)
+        src.proc = MagicMock()
+        src.bytes_per_chunk = 1024
+        return src
+
+    def _make_portaudio_source(self):
+        src = PortAudioSource.__new__(PortAudioSource)
+        src.stream = MagicMock()
+        src.chunk_samples = 512
+        return src
+
+    def test_youtube_source_satisfies_protocol(self):
+        assert isinstance(self._make_youtube_source(), AudioInputSource)
+
+    def test_parec_source_satisfies_protocol(self):
+        assert isinstance(self._make_parec_source(), AudioInputSource)
+
+    def test_portaudio_source_satisfies_protocol(self):
+        assert isinstance(self._make_portaudio_source(), AudioInputSource)
