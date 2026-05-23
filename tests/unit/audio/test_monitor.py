@@ -91,6 +91,64 @@ class TestAudioMonitorCallback:
         assert np.all(outdata == 0)
 
 
+class TestAudioMonitorSoftFade:
+    def _audio_buffer(self, monitor, n_samples=1536):
+        """Seed the monitor buffer with a constant-level signal."""
+        monitor._buf.append(np.ones(n_samples, dtype=np.float32))
+        monitor._buf_samples = n_samples
+
+    def test_mute_fades_out_not_instant(self, monitor):
+        """First muted callback must contain a non-zero ramp, not instant silence."""
+        self._audio_buffer(monitor)
+        monitor.mute(True)
+        outdata = np.zeros((512, 1), dtype=np.float32)
+        monitor._callback(outdata, 512, None, None)
+        # Fade-out: first sample should still be near 1.0, last samples near 0
+        assert outdata[0, 0] > 0.9
+        assert outdata[-1, 0] == pytest.approx(0.0)
+
+    def test_mute_gain_settles_at_zero(self, monitor):
+        """After the fade completes the gain should be exactly 0.0."""
+        monitor.mute(True)
+        monitor._callback(np.zeros((512, 1), dtype=np.float32), 512, None, None)
+        assert monitor._gain == pytest.approx(0.0)
+
+    def test_unmute_fades_in(self, monitor):
+        """Unmuting from a fully muted state should produce a rising ramp."""
+        monitor._gain = 0.0
+        self._audio_buffer(monitor)
+        # _muted is clear (not set) by default — unmuted
+        outdata = np.zeros((512, 1), dtype=np.float32)
+        monitor._callback(outdata, 512, None, None)
+        assert outdata[0, 0] == pytest.approx(0.0, abs=0.01)
+        assert outdata[AudioMonitor._FADE_SAMPLES - 1, 0] > 0.0
+
+    def test_unmute_gain_settles_at_one(self, monitor):
+        """After fade-in completes the gain should be exactly 1.0."""
+        monitor._gain = 0.0
+        monitor._callback(np.zeros((512, 1), dtype=np.float32), 512, None, None)
+        assert monitor._gain == pytest.approx(1.0)
+
+    def test_steady_muted_takes_fast_path(self, monitor):
+        """Once fully muted, callback zeros without touching a ramp array."""
+        monitor._gain = 0.0
+        monitor.mute(True)
+        self._audio_buffer(monitor)
+        outdata = np.ones((512, 1), dtype=np.float32)
+        monitor._callback(outdata, 512, None, None)
+        assert np.all(outdata == 0)
+
+    def test_rapid_toggle_does_not_overshoot(self, monitor):
+        """Gain must stay in [0, 1] if mute is toggled mid-fade."""
+        monitor.mute(True)
+        for _ in range(5):
+            monitor._callback(np.zeros((512, 1), dtype=np.float32), 512, None, None)
+        monitor.mute(False)
+        for _ in range(5):
+            monitor._callback(np.zeros((512, 1), dtype=np.float32), 512, None, None)
+        assert 0.0 <= monitor._gain <= 1.0
+
+
 class TestAudioMonitorFilterState:
     def test_filter_state_resets_on_start(self, monitor):
         with patch("sounddevice.OutputStream") as mock_stream_cls:

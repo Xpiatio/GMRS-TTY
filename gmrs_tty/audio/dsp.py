@@ -32,3 +32,19 @@ def denoise(audio, sample_rate, prop_decrease=0.7):
     return nr.reduce_noise(
         y=audio, sr=sample_rate, prop_decrease=prop_decrease
     ).astype(np.float32)
+
+
+def normalize_rms(audio: np.ndarray, target_dbfs: float = -20.0) -> np.ndarray:
+    """Normalize audio to a target RMS level in dBFS, in-place.
+
+    Skips near-silent buffers to avoid amplifying pure noise. Clips to
+    [-1, 1] as a guard against transient peaks after gain application.
+    Returns the same array (modified in place).
+    """
+    rms = float(np.sqrt(np.mean(audio ** 2)))
+    if rms < 1e-6:
+        return audio
+    gain = (10.0 ** (target_dbfs / 20.0)) / rms
+    audio *= gain
+    np.clip(audio, -1.0, 1.0, out=audio)
+    return audio

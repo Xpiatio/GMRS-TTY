@@ -30,6 +30,7 @@ class AudioMonitor:
     CHANNELS = 1
     DTYPE = "float32"
     _MAX_BUFFER_SAMPLES = OUTPUT_RATE  # ~1 s at output rate before dropping oldest
+    _FADE_SAMPLES = 240  # 5 ms linear fade at 48 kHz
 
     def __init__(self):
         self._buf: collections.deque = collections.deque()
@@ -38,6 +39,7 @@ class AudioMonitor:
         self._stream: sd.OutputStream | None = None
         self._stream_lock = threading.Lock()
         self._muted = threading.Event()
+        self._gain = 1.0  # current output gain; slides toward 0.0/1.0 during fades
 
         self._sos = make_bandpass_sos(self.INPUT_RATE, 300, 3000)
         self._zi = sosfilt_zi(self._sos)  # persistent filter state across chunks
@@ -55,6 +57,7 @@ class AudioMonitor:
         """Open the output stream. device is a PortAudio index or None/−1 for default."""
         sd_device = device if device not in (None, -1) else None
         self._zi = sosfilt_zi(self._sos)  # reset filter state on each new session
+        self._gain = 1.0
         with self._stream_lock:
             if self._stream is not None:
                 try:
@@ -116,9 +119,10 @@ class AudioMonitor:
     # ------------------------------------------------------------------
 
     def _callback(self, outdata: np.ndarray, frames: int, time, status) -> None:
-        if self._muted.is_set():
-            outdata[:] = 0
-            return
+        self._fill_from_buffer(outdata, frames)
+        self._apply_gain_envelope(outdata, frames)
+
+    def _fill_from_buffer(self, outdata: np.ndarray, frames: int) -> None:
         remaining = frames
         write_pos = 0
         with self._buf_lock:
@@ -137,3 +141,35 @@ class AudioMonitor:
                     self._buf_samples -= take
         if remaining > 0:
             outdata[write_pos:, 0] = 0
+
+    def _apply_gain_envelope(self, outdata: np.ndarray, frames: int) -> None:
+        """Apply a linear fade toward the mute/unmute target gain.
+
+        Only allocates a ramp array during the brief transition window;
+        steady-state (gain == target) takes the fast path with no allocation.
+        """
+        target = 0.0 if self._muted.is_set() else 1.0
+        gain = self._gain
+
+        if gain == target:
+            if gain == 0.0:
+                outdata[:] = 0
+            return
+
+        fade_rate = 1.0 / self._FADE_SAMPLES
+        step = fade_rate if target > gain else -fade_rate
+        end_gain = gain + step * frames
+
+        if (step > 0 and end_gain >= target) or (step < 0 and end_gain <= target):
+            # Fade completes within this callback
+            fade_frames = max(1, round(abs(target - gain) / fade_rate))
+            ramp = np.linspace(gain, target, fade_frames, dtype=np.float32, endpoint=False)
+            outdata[:fade_frames, 0] *= ramp
+            if target == 0.0:
+                outdata[fade_frames:] = 0
+            self._gain = target
+        else:
+            # Fade spans multiple callbacks
+            ramp = np.linspace(gain, end_gain, frames, dtype=np.float32, endpoint=False)
+            outdata[:, 0] *= ramp
+            self._gain = end_gain
