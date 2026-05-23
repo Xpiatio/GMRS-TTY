@@ -58,8 +58,8 @@ class TestScanRespectsCrossReferences:
              "gmrs_callsign": "WRPN553", "ham_callsign": "KE8RXN"},
         ])
         try:
-            w.scan_for_unknown_stations("hello KE8RXN here")
-            assert "KE8RXN" not in w.pending_buttons
+            w.pending_manager.scan_for_unknown_stations("hello KE8RXN here")
+            assert "KE8RXN" not in w.pending_manager.buttons
         finally:
             w.close()
 
@@ -71,8 +71,8 @@ class TestScanRespectsCrossReferences:
              "gmrs_callsign": "WRPN553", "ham_callsign": "KE8RXN"},
         ])
         try:
-            w.scan_for_unknown_stations("hello WRPN553 here")
-            assert "WRPN553" not in w.pending_buttons
+            w.pending_manager.scan_for_unknown_stations("hello WRPN553 here")
+            assert "WRPN553" not in w.pending_manager.buttons
         finally:
             w.close()
 
@@ -84,8 +84,8 @@ class TestScanRespectsCrossReferences:
              "gmrs_callsign": "WSLZ233", "ham_callsign": "KD8AAA"},
         ])
         try:
-            w.scan_for_unknown_stations("hello KE8NEW here")
-            assert "KE8NEW" in w.pending_buttons
+            w.pending_manager.scan_for_unknown_stations("hello KE8NEW here")
+            assert "KE8NEW" in w.pending_manager.buttons
         finally:
             w.close()
 
@@ -104,8 +104,8 @@ class TestScanRespectsFuzzyToggle:
             extra_config={"fuzzy_callsign": True},
         )
         try:
-            w.scan_for_unknown_stations("hello WSLZ234 here")
-            assert "WSLZ234" not in w.pending_buttons
+            w.pending_manager.scan_for_unknown_stations("hello WSLZ234 here")
+            assert "WSLZ234" not in w.pending_manager.buttons
         finally:
             w.close()
 
@@ -116,8 +116,8 @@ class TestScanRespectsFuzzyToggle:
             extra_config={"fuzzy_callsign": False},
         )
         try:
-            w.scan_for_unknown_stations("hello WSLZ234 here")
-            assert "WSLZ234" in w.pending_buttons
+            w.pending_manager.scan_for_unknown_stations("hello WSLZ234 here")
+            assert "WSLZ234" in w.pending_manager.buttons
         finally:
             w.close()
 
@@ -129,7 +129,7 @@ class TestScanRespectsFuzzyToggle:
             extra_config={"fuzzy_callsign": True},
         )
         try:
-            w.scan_for_unknown_stations("hello WSLZ244 here")
-            assert "WSLZ244" in w.pending_buttons
+            w.pending_manager.scan_for_unknown_stations("hello WSLZ244 here")
+            assert "WSLZ244" in w.pending_manager.buttons
         finally:
             w.close()

@@ -155,11 +155,11 @@ class TestToggleHidesCallsignSurfaces:
     def test_frs_clears_existing_pending_pills(self, qapp):
         w = _make_window(qapp)
         try:
-            w.add_pending_station("WSLZ501", "Stranger", "")
-            assert "WSLZ501" in w.pending_buttons
+            w.pending_manager.add_pending_station("WSLZ501", "Stranger", "")
+            assert "WSLZ501" in w.pending_manager.buttons
             w.frs_radio.setChecked(True)
-            assert w.pending_buttons == {}
-            assert w.pending_scroll.isVisible() is False
+            assert w.pending_manager.buttons == {}
+            assert w.pending_manager.scroll.isVisible() is False
         finally:
             w.close()
 
@@ -170,8 +170,8 @@ class TestToggleGatesDetectionAndTx:
         try:
             # Even though this transcription contains a recognizable
             # callsign, FRS mode must not generate a pill.
-            w.scan_for_unknown_stations("just heard WSLZ501 calling")
-            assert "WSLZ501" not in w.pending_buttons
+            w.pending_manager.scan_for_unknown_stations("just heard WSLZ501 calling")
+            assert "WSLZ501" not in w.pending_manager.buttons
         finally:
             w.close()
 
@@ -180,8 +180,8 @@ class TestToggleGatesDetectionAndTx:
         try:
             w.frs_radio.setChecked(True)
             w.gmrs_radio.setChecked(True)
-            w.scan_for_unknown_stations("just heard WSLZ501 calling")
-            assert "WSLZ501" in w.pending_buttons
+            w.pending_manager.scan_for_unknown_stations("just heard WSLZ501 calling")
+            assert "WSLZ501" in w.pending_manager.buttons
         finally:
             w.close()
 
