@@ -23,6 +23,7 @@ HAM_COL = 4
 VERIFIED_COL = 5
 COLUMN_COUNT = 6
 
+
 def _now_iso():
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -143,7 +144,8 @@ class ContactsDialog(QDialog):
         btn_layout.addWidget(self.verify_all_btn)
         layout.addLayout(btn_layout)
 
-        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        self.buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)

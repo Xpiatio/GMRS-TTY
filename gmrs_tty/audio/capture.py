@@ -30,14 +30,18 @@ class YouTubeSource:
         self._start()
 
     def _resolve_audio_url(self) -> str:
-        result = subprocess.run(
-            ["yt-dlp", "-f", "bestaudio", "--get-url", self._url],
-            capture_output=True, text=True, timeout=30,
-        )
-        line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
-        if not line:
-            raise IOError(f"yt-dlp returned no audio URL for {self._url!r}")
-        return line
+        result = None
+        for fmt in ("bestaudio", "bestaudio/best"):
+            result = subprocess.run(
+                ["yt-dlp", "-f", fmt, "--get-url", self._url],
+                capture_output=True, text=True, timeout=30,
+            )
+            line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+            if line:
+                return line
+        stderr = result.stderr.strip() if result else ""
+        detail = f": {stderr}" if stderr else ""
+        raise IOError(f"yt-dlp returned no audio URL for {self._url!r}{detail}")
 
     def _start(self):
         audio_url = self._resolve_audio_url()

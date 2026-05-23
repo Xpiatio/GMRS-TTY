@@ -4,7 +4,6 @@ These tests avoid loading any ML model by injecting stub VAD iterators and
 SquelchDetector instances, exercising only the state machine logic.
 """
 import numpy as np
-import pytest
 
 from gmrs_tty.audio.squelch import SquelchDetector
 from gmrs_tty.stt.segmenter import SpeechSegmenter

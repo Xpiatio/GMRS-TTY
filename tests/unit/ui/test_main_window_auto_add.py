@@ -138,7 +138,7 @@ def _install_sync_worker(result):
 
 
 def _verified_result(license_name="Zomberg, Benjamin J", city="JENISON",
-                    gmrs="WSLZ233", ham="KE8RXN"):
+                     gmrs="WSLZ233", ham="KE8RXN"):
     return VerificationResult(
         status="verified",
         license_name=license_name,

@@ -71,7 +71,8 @@ class TestLoadJournals:
 
     def test_returns_entries_newest_first(self):
         journal_mod.save_journal("First", "S", [], "")
-        import time; time.sleep(0.01)  # noqa: E401  ensure distinct mtime/name
+        import time
+        time.sleep(0.01)  # ensure distinct mtime/name
         # Write a second file with a later timestamp by manipulating the name
         later_path = os.path.join(
             journal_mod.JOURNALS_DIR, "20260101_120001.json"
@@ -93,7 +94,7 @@ class TestLoadJournals:
         bad = os.path.join(journal_mod.JOURNALS_DIR, "20260101_000000.json")
         with open(bad, "w") as fh:
             fh.write("not json{{{")
-        good_path = journal_mod.save_journal("Good", "S", [], "")
+        journal_mod.save_journal("Good", "S", [], "")
         entries = journal_mod.load_journals()
         assert len(entries) == 1
         assert entries[0]["title"] == "Good"

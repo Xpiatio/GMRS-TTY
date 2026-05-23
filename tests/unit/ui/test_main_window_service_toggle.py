@@ -193,7 +193,7 @@ class TestToggleGatesDetectionAndTx:
             captured = {}
 
             def fake_format(*, text, target_call, target_name, my_call, my_name,
-                           last_id_time, now, service=SERVICE_GMRS):
+                            last_id_time, now, service=SERVICE_GMRS):
                 captured["service"] = service
                 captured["target_call"] = target_call
                 captured["target_name"] = target_name
