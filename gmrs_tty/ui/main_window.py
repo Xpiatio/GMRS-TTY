@@ -202,7 +202,7 @@ class MainWindow(QMainWindow):
         # service keys ride alongside.
         try:
             dock_layout.save_layout(self, self.config)
-            save_json(CONFIG_FILE, self.config)
+            self.config.save()
         except Exception:
             # A failed save here must never block window close —
             # next launch falls back to the default layout instead.
@@ -984,7 +984,7 @@ class MainWindow(QMainWindow):
         if self.config.radio_service == new_mode:
             return
         self.config["radio_service"] = new_mode
-        save_json(CONFIG_FILE, self.config)
+        self.config.save()
         self._apply_service_mode()
 
     def toggle_theme(self):
@@ -992,7 +992,7 @@ class MainWindow(QMainWindow):
         repaint every widget that doesn't follow QPalette automatically."""
         new_dark = not theme.is_dark()
         self.config["dark_mode"] = new_dark
-        save_json(CONFIG_FILE, self.config)
+        self.config.save()
         theme.apply_theme(QApplication.instance(), new_dark)
         self._apply_theme_to_widgets()
 
@@ -1172,7 +1172,7 @@ class MainWindow(QMainWindow):
             old_fuzzy = self.config.fuzzy_callsign
             old_attendance = self.attendance_enabled
             self.config.update(dlg.get_config())
-            save_json(CONFIG_FILE, self.config)
+            self.config.save()
             self.update_header()
             new_attendance = self.config.attendance_enabled
             if old_attendance != new_attendance:
@@ -1218,7 +1218,7 @@ class MainWindow(QMainWindow):
         dlg = QuickMessagesDialog(self._quick_messages(), parent=self)
         if dlg.exec():
             self.config["quick_messages"] = dlg.get_quick_messages()
-            save_json(CONFIG_FILE, self.config)
+            self.config.save()
             self.populate_quick_messages_strip()
 
     def _quick_messages(self):
@@ -1432,7 +1432,7 @@ class MainWindow(QMainWindow):
             )
         self.config["monitor_enabled"] = checked
         try:
-            save_json(CONFIG_FILE, self.config)
+            self.config.save()
         except Exception:
             pass
 
@@ -1458,7 +1458,7 @@ class MainWindow(QMainWindow):
         self.listen_only = bool(checked)
         self.config["listen_only"] = self.listen_only
         try:
-            save_json(CONFIG_FILE, self.config)
+            self.config.save()
         except Exception:
             # A persistence failure must not block the safety toggle from
             # taking effect — runtime state already updated above.
@@ -1511,7 +1511,7 @@ class MainWindow(QMainWindow):
             return
         self.attendance_enabled = new_state
         self.config.attendance_enabled = new_state
-        save_json(CONFIG_FILE, self.config)
+        self.config.save()
         self._set_attendance_dock_visible(new_state)
 
     def _on_attendance_dock_visibility_changed(self, visible):

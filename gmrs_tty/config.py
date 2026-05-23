@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from gmrs_tty.constants import CONFIG_FILE
+from gmrs_tty.persistence.json_store import save_json
+
 
 class AppConfig(dict):
     """Typed wrapper around the JSON config dict.
@@ -131,3 +134,9 @@ class AppConfig(dict):
     @property
     def quick_messages(self) -> list:
         return self.get("quick_messages", [])
+
+    # ---- persistence ---------------------------------------------------------
+
+    def save(self) -> None:
+        """Persist this config to disk."""
+        save_json(CONFIG_FILE, self)

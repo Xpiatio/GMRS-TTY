@@ -62,7 +62,7 @@ def _make_window(qapp, *, dark_mode=None, save_capture=None):
             save_capture.append((path, dict(data) if isinstance(data, dict) else data))
 
     with patch.object(mw_mod, "load_json", side_effect=fake_load_json), \
-         patch.object(mw_mod, "save_json", side_effect=fake_save_json), \
+         patch("gmrs_tty.config.save_json", side_effect=fake_save_json), \
          patch.object(mw_mod, "make_ptt", return_value=_FakePTT()), \
          patch.object(mw_mod, "is_online", return_value=True):
         return mw_mod.MainWindow()
@@ -162,7 +162,7 @@ class TestThemeToggleGlyph:
         window = _make_window(qapp, dark_mode=False)
         try:
             before = window.theme_toggle_btn.text()
-            with patch.object(mw_mod, "save_json"):
+            with patch("gmrs_tty.config.save_json"):
                 window.theme_toggle_btn.click()
             after = window.theme_toggle_btn.text()
             assert before != after, "toggle did not update its glyph"
@@ -184,7 +184,7 @@ class TestThemeTogglePersistence:
             def capture(path, data):
                 saved.append((path, dict(data) if isinstance(data, dict) else data))
 
-            with patch.object(mw_mod, "save_json", side_effect=capture):
+            with patch("gmrs_tty.config.save_json", side_effect=capture):
                 window.theme_toggle_btn.click()
             payloads = [data for _, data in saved if isinstance(data, dict)]
             assert payloads, "expected save_json to be called with the config dict"
@@ -202,7 +202,7 @@ class TestThemeTogglePersistence:
             def capture(path, data):
                 saved.append((path, dict(data) if isinstance(data, dict) else data))
 
-            with patch.object(mw_mod, "save_json", side_effect=capture):
+            with patch("gmrs_tty.config.save_json", side_effect=capture):
                 window.theme_toggle_btn.click()
                 window.theme_toggle_btn.click()
             payloads = [data for _, data in saved if isinstance(data, dict)]
@@ -246,7 +246,7 @@ class TestThemeAppliedToWidgets:
         try:
             light_sheet = window.header_label.styleSheet()
             assert theme.LIGHT.header_bg.lower() in light_sheet.lower()
-            with patch.object(mw_mod, "save_json"):
+            with patch("gmrs_tty.config.save_json"):
                 window.theme_toggle_btn.click()
             dark_sheet = window.header_label.styleSheet()
             assert theme.DARK.header_bg.lower() in dark_sheet.lower()
@@ -265,7 +265,7 @@ class TestThemeAppliedToWidgets:
             window.pending_manager.add_pending_station("WSLZ999", "Test", "Nowhere")
             btn = window.pending_manager.buttons["WSLZ999"]
             assert theme.LIGHT.pill_bg.lower() in btn.styleSheet().lower()
-            with patch.object(mw_mod, "save_json"):
+            with patch("gmrs_tty.config.save_json"):
                 window.theme_toggle_btn.click()
             assert theme.DARK.pill_bg.lower() in btn.styleSheet().lower()
         finally:
