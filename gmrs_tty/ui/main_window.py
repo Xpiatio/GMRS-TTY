@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QComboBox, QDockWidget, QHBoxLayout,
     QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox,
     QProgressBar, QPushButton, QRadioButton, QSizePolicy,
-    QToolBar, QToolButton, QVBoxLayout, QWidget,
+    QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
 )
 
 from gmrs_tty.config import AppConfig
@@ -47,6 +47,7 @@ from gmrs_tty.ui.pending_station_manager import PendingStationManager
 from gmrs_tty.ui.quick_messages_dialog import QuickMessagesDialog
 from gmrs_tty.ui.rx_session import RXSession
 from gmrs_tty.ui.spectro_manager import SpectrometerManager
+from gmrs_tty.ui.touch_view import TouchView
 
 PENDING_PILL_MAX_ROWS = 3
 QUICK_MESSAGE_SHORTCUT_COUNT = 9
@@ -66,6 +67,44 @@ ONLINE_LABEL_OFFLINE = "○ Offline"
 # "you are this".
 THEME_GLYPH_TO_DARK = "\U0001F319"   # 🌙 crescent moon
 THEME_GLYPH_TO_LIGHT = "☀️"  # ☀️ sun
+
+TOUCH_GLYPH_ENTER = "⊞"   # ⊞ — click to enter touch mode
+TOUCH_GLYPH_EXIT  = "⊟"   # ⊟ — click to exit touch mode
+
+
+class _DualChatProxy:
+    """Routes RXSession append calls to two ChatDisplay widgets in parallel.
+
+    RXSession uses ``append_message`` to open a new line and
+    ``append_to_block`` to grow it in place for streaming partials. Block
+    numbers are integers local to each QTextDocument. This proxy maps
+    primary block numbers to their secondary counterparts so both displays
+    grow the same line simultaneously.
+    """
+
+    def __init__(self, primary, secondary) -> None:
+        self._primary = primary
+        self._secondary = secondary
+        self._block_map: dict[int, int] = {}
+
+    def append_message(self, html, color="black"):
+        pb = self._primary.append_message(html, color=color)
+        sb = self._secondary.append_message(html, color=color)
+        if pb is not None and sb is not None:
+            self._block_map[pb] = sb
+        return pb
+
+    def append_to_block(self, block, text, color="black"):
+        result = self._primary.append_to_block(block, text, color=color)
+        sb = self._block_map.get(block)
+        if sb is not None:
+            self._secondary.append_to_block(sb, text, color=color)
+        return result
+
+    def clear(self):
+        self._primary.clear()
+        self._secondary.clear()
+        self._block_map.clear()
 
 
 class MainWindow(QMainWindow):
@@ -126,6 +165,9 @@ class MainWindow(QMainWindow):
         # the title-bar X.
         self._suppress_attendance_visibility = False
         self.journal_controller = JournalController(self, parent=self)
+        # Dock visibility snapshot taken when entering touch mode so the
+        # previous layout can be restored on exit.
+        self._pre_touch_dock_state: dict[str, bool] = {}
 
         self._ui_ready = False
 
@@ -166,6 +208,8 @@ class MainWindow(QMainWindow):
         self._refresh_callsign_index()
         self._apply_service_mode()
         self._check_bundled_models()
+        if self.config.touch_mode:
+            self._apply_touch_mode(True)
 
     def _check_bundled_models(self):
         model_name = self.config.whisper_model
@@ -223,6 +267,9 @@ class MainWindow(QMainWindow):
         self.spectro_manager.build_dock()
         self._build_attendance_dock()
         self.pending_manager.build_dock()
+        touch_pending_scroll = self.pending_manager.build_touch_pills(self.touch_view)
+        self.touch_view.set_pending_widget(touch_pending_scroll)
+        self._rx_proxy = _DualChatProxy(self.chat_display, self.touch_view.chat_display)
         self._build_quick_messages_dock()
         self._build_transmit_dock()
         self._build_status_bar()
@@ -294,13 +341,29 @@ class MainWindow(QMainWindow):
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
 
-        # Right-anchored quick-access icon strip: 🌙/☀️ (theme) | Q (Quick
-        # Messages) | 👤 (Contacts) | ⚙️ (Configuration). Theme sits leftmost
-        # because it's the only item that isn't "open a dialog"; the three
-        # dialog-launchers stay grouped on the right with the cog rightmost
-        # per the established "settings last" toolbar convention. All icons
-        # share one font bump so the row height stays balanced.
+        # Right-anchored quick-access icon strip: ⊞/⊟ (touch) | 🌙/☀️ (theme)
+        # | Q (Quick Messages) | 👤 (Contacts) | ⚙️ (Configuration). Touch and
+        # theme sit leftmost as view-mode toggles; the three dialog-launchers
+        # stay grouped on the right with the cog rightmost per the established
+        # "settings last" convention. All icons share one font bump.
         icon_font = theme.font_icon()
+
+        # Touch-mode toggle. Switches the central widget to the large-button
+        # touch-optimised layout. Stays enabled in both GMRS and FRS modes;
+        # the touch layout is service-agnostic.
+        self.touch_toggle_btn = QToolButton(tb)
+        self.touch_toggle_btn.setFont(icon_font)
+        self.touch_toggle_btn.setAutoRaise(True)
+        self.touch_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.touch_toggle_btn.setAccessibleName("Toggle touch-screen mode")
+        self.touch_toggle_btn.setAccessibleDescription(
+            "Switch between the standard desktop layout and the large-button "
+            "touch-screen optimised view. Your preference is saved and "
+            "restored on next launch."
+        )
+        self.touch_toggle_btn.clicked.connect(self.toggle_touch_mode)
+        self._refresh_touch_toggle_glyph()
+        tb.addWidget(self.touch_toggle_btn)
 
         # Theme (dark-mode) toggle. The glyph reflects the *destination*
         # state — moon when in light, sun when in dark — so the affordance
@@ -533,7 +596,31 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(self.chat_display, 1)
 
-        self.setCentralWidget(wrapper)
+        self._central_stack = QStackedWidget(self)
+        self.normal_view = wrapper
+        self._central_stack.addWidget(wrapper)               # index 0 — normal view
+        self.touch_view = TouchView(self._central_stack)
+        self._central_stack.addWidget(self.touch_view)       # index 1 — touch view
+        self.setCentralWidget(self._central_stack)
+
+        # Touch buttons delegate to the normal-view handlers so each handler
+        # path stays the single source of truth for its feature's state.
+        self.touch_view.listen_btn.clicked.connect(
+            lambda: self.listen_btn.toggle()
+        )
+        self.touch_view.listen_only_btn.clicked.connect(
+            lambda: self.listen_only_btn.toggle()
+        )
+        self.touch_view.monitor_btn.clicked.connect(
+            lambda: self.monitor_btn.toggle()
+        )
+        self.touch_view.theme_btn.clicked.connect(self.toggle_theme)
+        self.touch_view.attendance_btn.clicked.connect(self._show_touch_attendance)
+        self.touch_view.generate_btn.clicked.connect(self.journal_controller.generate)
+        self.touch_view.journals_btn.clicked.connect(self.journal_controller.open_dialog)
+        # Seed initial states so touch view is consistent on first show.
+        self.touch_view.sync_listen_only_state(self.listen_only)
+        self.touch_view.set_generate_visible(bool(self.config.gemini_api_key))
 
     def _build_station_dock(self):
         """Station-info dock: callsign / operator / location card. Docked
@@ -1025,6 +1112,7 @@ class MainWindow(QMainWindow):
         self.listen_btn.setStyleSheet(theme.checkable_btn_stylesheet(p.rx))
         self.listen_only_btn.setStyleSheet(theme.checkable_btn_stylesheet(p.warn))
         self.monitor_btn.setStyleSheet(theme.checkable_btn_stylesheet(p.tx))
+        self.touch_view.restyle()   # includes sync_theme_glyph()
 
     def _refresh_theme_toggle_glyph(self):
         """Set the toggle's glyph + tooltip to advertise the next theme.
@@ -1130,6 +1218,13 @@ class MainWindow(QMainWindow):
         else:
             self._set_attendance_dock_visible(self.attendance_enabled)
 
+        # Touch-view Callsigns button: disable in FRS (no callsigns to attend).
+        self._set_frs_gate(
+            self.touch_view.attendance_btn, is_frs,
+            frs_tip="Callsigns Detected is GMRS-only — switch to GMRS to enable.",
+            gmrs_tip="Show / hide the Callsigns Detected panel.",
+        )
+
         # Chat-display pill highlighting: clearing the index suppresses all
         # callsign highlighting on existing and future lines.
         self._refresh_callsign_index()
@@ -1210,6 +1305,7 @@ class MainWindow(QMainWindow):
             if old_output_device != self.config.output_device and self.monitor_btn.isChecked():
                 self._monitor.start(self.config.output_device)
             self.generate_journal_btn.setVisible(bool(self.config.gemini_api_key))
+            self.touch_view.set_generate_visible(bool(self.config.gemini_api_key))
 
     def open_contacts_dialog(self):
         dlg = ContactsDialog(self.contacts, parent=self)
@@ -1441,6 +1537,7 @@ class MainWindow(QMainWindow):
             self.config.save()
         except Exception:
             pass
+        self.touch_view.sync_monitor_state(checked, self.monitor_btn.isEnabled())
 
     def _on_tx_busy_changed(self, busy: bool) -> None:
         self._monitor.mute(busy)
@@ -1486,6 +1583,10 @@ class MainWindow(QMainWindow):
                 if self.monitor_btn.isChecked():
                     self.monitor_btn.setChecked(False)
                 self.monitor_btn.setEnabled(False)
+        self.touch_view.sync_listen_only_state(self.listen_only)
+        self.touch_view.sync_monitor_state(
+            self.monitor_btn.isChecked(), self.monitor_btn.isEnabled()
+        )
         if self.listen_only:
             self.statusBar().showMessage("Listen-only mode: transmissions blocked", 4000)
         else:
@@ -1559,8 +1660,9 @@ class MainWindow(QMainWindow):
             self.stt_worker.resume()
 
     def append_to_chat(self, text, color="black"):
-        """Appends HTML formatted text to the chat display."""
+        """Appends HTML formatted text to both the normal and touch chat displays."""
         self.chat_display.append_message(text, color=color)
+        self.touch_view.chat_display.append_message(text, color=color)
 
     def clear_chat(self):
         """Wipe the chat display after confirming with the operator.
@@ -1577,7 +1679,9 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            self.chat_display.clear()
+            # Clear both displays and reset the block map so RXSession's
+            # in-progress block tracking doesn't reference stale blocks.
+            self._rx_proxy.clear()
             # Streaming RX would otherwise try to grow a block that no
             # longer exists. The fallback in RXSession catches it, but
             # flushing here prevents the next partial from appearing under
@@ -1598,16 +1702,17 @@ class MainWindow(QMainWindow):
             index = {}
         else:
             index = index_contacts_by_callsign(self.contacts)
+        fuzzy_on = self._service_mode() != SERVICE_FRS and self.config.fuzzy_callsign
         self.chat_display.set_callsign_index(index)
         # Fuzzy mode is meaningless without an index, and meaningless in FRS
         # mode where there are no callsigns to be fuzzy about. Pushing the
         # flag here keeps the chat widget's state in sync with the active
         # service alongside the index it depends on.
-        self.chat_display.set_fuzzy_enabled(
-            self._service_mode() != SERVICE_FRS
-            and self.config.fuzzy_callsign
-        )
+        self.chat_display.set_fuzzy_enabled(fuzzy_on)
         self.chat_display.rescan_all_blocks()
+        self.touch_view.chat_display.set_callsign_index(index)
+        self.touch_view.chat_display.set_fuzzy_enabled(fuzzy_on)
+        self.touch_view.chat_display.rescan_all_blocks()
         if self.attendance_panel is not None:
             self.attendance_panel.refresh(self.contacts)
 
@@ -1655,6 +1760,10 @@ class MainWindow(QMainWindow):
         self.listen_btn.setText("&Listening…")
         self.listen_btn.setAccessibleDescription(
             "Microphone capture and live transcription are active. Toggle off to stop."
+        )
+        self.touch_view.sync_listen_state(True, "Listening…")
+        self.touch_view.sync_monitor_state(
+            self.monitor_btn.isChecked(), self.monitor_btn.isEnabled()
         )
 
     def stop_stt(self):
@@ -1706,6 +1815,8 @@ class MainWindow(QMainWindow):
         self.listen_btn.setAccessibleDescription(
             "Start or stop transcribing incoming radio audio. Currently stopped."
         )
+        self.touch_view.sync_listen_state(False, "Listen")
+        self.touch_view.sync_monitor_state(False, False)
 
     def _format_timestamp(self, now=None):
         """Render an HH:MM:SS clock string honoring the configured time_format
@@ -1720,7 +1831,7 @@ class MainWindow(QMainWindow):
 
     def _make_rx_session(self) -> RXSession:
         return RXSession(
-            chat=self.chat_display,
+            chat=self._rx_proxy,
             on_utterance_complete=self.pending_manager.scan_for_unknown_stations,
             format_timestamp=self._format_timestamp,
             filter_fn=lambda t: mask_profanity(t) if self.config.filter_profanity else t,
@@ -1738,9 +1849,85 @@ class MainWindow(QMainWindow):
             "Start or stop transcribing incoming radio audio. Currently stopped."
         )
         self.listen_btn.blockSignals(False)
+        self.touch_view.sync_listen_state(False, "Listen")
 
     def on_stt_status(self, msg):
         self.statusBar().showMessage(msg, 5000)
+
+    def _show_touch_attendance(self) -> None:
+        """Toggle the Callsigns Detected dock from the touch view.
+
+        Floats the dock so it appears as an overlay above the touch view rather
+        than trying to dock into an area that is hidden. Closing the dock via
+        its title-bar X is the natural exit gesture on a touchscreen."""
+        dock = self.attendance_dock
+        if dock.isVisible():
+            self._suppress_attendance_visibility = True
+            try:
+                dock.setVisible(False)
+            finally:
+                self._suppress_attendance_visibility = False
+        else:
+            dock.setFloating(True)
+            self._suppress_attendance_visibility = True
+            try:
+                dock.setVisible(True)
+            finally:
+                self._suppress_attendance_visibility = False
+
+    def toggle_touch_mode(self) -> None:
+        """Flip the touch-screen mode flag, persist it, and apply the new state."""
+        new_touch = not self.config.touch_mode
+        self.config["touch_mode"] = new_touch
+        try:
+            self.config.save()
+        except Exception:
+            pass
+        self._apply_touch_mode(new_touch)
+
+    def _apply_touch_mode(self, touch: bool) -> None:
+        """Switch the central stack and manage dock visibility for touch mode.
+
+        Entering touch mode: snapshot visible docks, hide them all, and switch
+        to the touch view (index 1). Exiting: restore the snapshotted visibility
+        and switch back to the normal view (index 0).
+        """
+        if touch:
+            self._pre_touch_dock_state = {
+                dock.objectName(): dock.isVisible()
+                for dock in self.findChildren(QDockWidget)
+            }
+            self._suppress_attendance_visibility = True
+            try:
+                for dock in self.findChildren(QDockWidget):
+                    dock.setVisible(False)
+            finally:
+                self._suppress_attendance_visibility = False
+            self._central_stack.setCurrentIndex(1)
+        else:
+            self._central_stack.setCurrentIndex(0)
+            self._suppress_attendance_visibility = True
+            try:
+                for dock in self.findChildren(QDockWidget):
+                    was_visible = self._pre_touch_dock_state.get(
+                        dock.objectName(), False
+                    )
+                    dock.setVisible(was_visible)
+            finally:
+                self._suppress_attendance_visibility = False
+        self._refresh_touch_toggle_glyph()
+
+    def _refresh_touch_toggle_glyph(self) -> None:
+        """Update the touch toggle button glyph and tooltip to advertise the
+        next state — same 'destination' convention as the theme toggle."""
+        if not hasattr(self, "touch_toggle_btn"):
+            return
+        if self.config.touch_mode:
+            self.touch_toggle_btn.setText(TOUCH_GLYPH_EXIT)
+            self.touch_toggle_btn.setToolTip("Switch to desktop mode")
+        else:
+            self.touch_toggle_btn.setText(TOUCH_GLYPH_ENTER)
+            self.touch_toggle_btn.setToolTip("Switch to touch-screen mode")
 
     def _refresh_online_indicator(self):
         """Re-probe internet connectivity and update the status-bar label.

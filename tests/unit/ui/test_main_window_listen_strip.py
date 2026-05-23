@@ -67,16 +67,15 @@ class TestListenStripParentage:
     def test_listen_btn_lives_in_central_widget(self, main_window):
         # The whole point of the relocation: keyboard / mouse / a11y reach
         # to the Listen toggle can no longer depend on the Transmit dock's
-        # visibility or position.
-        central = main_window.centralWidget()
-        assert main_window.listen_btn.parentWidget() is central, (
-            "listen_btn must be parented to the central widget so it is "
+        # visibility or position. normal_view is the desktop-layout wrapper
+        # inside the QStackedWidget that forms the central widget.
+        assert main_window.listen_btn.parentWidget() is main_window.normal_view, (
+            "listen_btn must be parented to the normal view so it is "
             "always reachable independent of dock state"
         )
 
     def test_audio_level_meter_lives_in_central_widget(self, main_window):
-        central = main_window.centralWidget()
-        assert main_window.audio_level_meter.parentWidget() is central
+        assert main_window.audio_level_meter.parentWidget() is main_window.normal_view
 
     def test_listen_btn_is_not_inside_transmit_dock(self, main_window):
         # Belt-and-braces: even if a future refactor accidentally re-creates
@@ -96,10 +95,9 @@ class TestListenStripParentage:
 class TestListenStripLayout:
     def test_listen_strip_sits_above_chat_display(self, main_window):
         # Visually the strip must precede the chat. We assert this through
-        # the central widget's QVBoxLayout — the Listen QHBoxLayout's item
+        # the normal-view QVBoxLayout — the Listen QHBoxLayout's item
         # index must be less than the chat-display widget's index.
-        central = main_window.centralWidget()
-        layout = central.layout()
+        layout = main_window.normal_view.layout()
         chat_index = None
         listen_index = None
         for i in range(layout.count()):
@@ -122,8 +120,7 @@ class TestListenStripLayout:
     def test_level_meter_stretches_between_buttons(self, main_window):
         # The meter is the only widget in the strip that should grow with
         # the window — the buttons should keep their natural width.
-        central = main_window.centralWidget()
-        layout = central.layout()
+        layout = main_window.normal_view.layout()
         strip = None
         for i in range(layout.count()):
             child = layout.itemAt(i).layout()

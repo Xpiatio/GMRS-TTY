@@ -121,10 +121,10 @@ class TestListenOnlyToggleSurface:
         assert window.listen_only_btn.isCheckable() is True
 
     def test_button_lives_on_listen_strip(self, main_window):
-        # Should be parented to the central widget — same parentage rules
-        # as the Listen button so it's reachable independent of dock state.
+        # Should be parented to the normal view — same parentage rules as the
+        # Listen button so it's reachable independent of dock state.
         window, _ = main_window
-        assert window.listen_only_btn.parentWidget() is window.centralWidget()
+        assert window.listen_only_btn.parentWidget() is window.normal_view
 
     def test_button_starts_off_when_config_missing(self, main_window):
         window, _ = main_window
