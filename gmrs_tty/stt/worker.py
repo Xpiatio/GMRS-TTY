@@ -6,7 +6,7 @@ import numpy as np
 from PySide6.QtCore import QThread, Signal
 
 from gmrs_tty.audio.capture import open_input_source
-from gmrs_tty.audio.dsp import bandpass, denoise, make_bandpass_sos
+from gmrs_tty.audio.dsp import bandpass, denoise, make_bandpass_sos, normalize_rms
 from gmrs_tty.audio.squelch import SquelchDetector
 from gmrs_tty.audio.vad import load_vad_model, make_vad_iterator
 from gmrs_tty.stt.segmenter import SpeechSegmenter
@@ -235,6 +235,7 @@ class STTWorker(QThread):
             try:
                 filtered = bandpass(audio, bandpass_sos)
                 denoised = denoise(filtered, self.SAMPLE_RATE, prop_decrease=0.7)
+                normalize_rms(denoised)
                 text = transcriber.transcribe(denoised)
                 if text:
                     self.transcribed_segment.emit(uid, text, is_final)
