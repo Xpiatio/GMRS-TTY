@@ -1,0 +1,10 @@
+[flake8]
+max-line-length = 120
+exclude =
+    .venv,
+    __pycache__,
+    build,
+    Models,
+    Voices
+per-file-ignores =
+    scripts/*.py: E127,E128,E131,E221

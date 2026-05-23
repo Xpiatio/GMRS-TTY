@@ -8,6 +8,7 @@ def utc_now_iso() -> str:
     """Return the current UTC time as a compact ISO-8601 string (YYYY-MM-DDTHH:MM:SSZ)."""
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+
 # Radio-service mode. GMRS requires a callsign; FRS doesn't, so when the user
 # selects FRS we disable every callsign-dependent feature (preface, ID rule,
 # contacts, pill highlighting, detection, online verification). Stored on
@@ -28,6 +29,7 @@ def normalize_service(value):
     if upper == SERVICE_FRS:
         return SERVICE_FRS
     return SERVICE_GMRS
+
 
 # WCAG 2.1 AA color palette. Text colors meet ≥4.5:1 contrast against white;
 # UI borders/icons meet ≥3:1. Picked from the Tailwind palette which has

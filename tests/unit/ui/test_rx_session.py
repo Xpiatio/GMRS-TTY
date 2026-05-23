@@ -1,6 +1,4 @@
 """Unit tests for RXSession — no Qt required."""
-import pytest
-
 from gmrs_tty.ui.rx_session import RXSession
 
 

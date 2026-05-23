@@ -40,7 +40,7 @@ from gmrs_tty.text.profanity import mask_profanity
 from gmrs_tty.text.placeholders import find_placeholders, substitute_placeholders
 
 from gmrs_tty.ai.journal_worker import JournalWorker
-from gmrs_tty.persistence.journal import load_journals, save_journal
+from gmrs_tty.persistence.journal import save_journal
 from gmrs_tty.ui import theme
 from gmrs_tty.ui import dock_layout
 from gmrs_tty.ui.attendance_panel import AttendancePanel
@@ -1816,7 +1816,7 @@ class MainWindow(QMainWindow):
         self._persist_spectro_settings()
 
     def _build_spectro_option_menu(self, parent_menu, title, options,
-                                     label_fn, checked_fn, setter_fn, actions_attr):
+                                   label_fn, checked_fn, setter_fn, actions_attr):
         """Build a checkable-action submenu for one spectrometer parameter."""
         menu = parent_menu.addMenu(title)
         actions = {}

@@ -107,6 +107,7 @@ class TestToggleAction:
         from gmrs_tty.ui import main_window as mw_mod
         win = _make_window(qapp)
         saves = []
+
         def capture(_path, data):
             saves.append(dict(data) if isinstance(data, dict) else data)
         try:
@@ -122,6 +123,7 @@ class TestToggleAction:
         from gmrs_tty.ui import main_window as mw_mod
         win = _make_window(qapp, spectrometer_cfg={"enabled": True})
         saves = []
+
         def capture(_path, data):
             saves.append(dict(data) if isinstance(data, dict) else data)
         try:

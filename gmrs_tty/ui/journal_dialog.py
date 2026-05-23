@@ -5,7 +5,7 @@ import html
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QListWidget,
+    QDialog, QDialogButtonBox, QLabel, QListWidget,
     QListWidgetItem, QMessageBox, QPushButton, QSplitter, QTextEdit,
     QVBoxLayout, QWidget,
 )

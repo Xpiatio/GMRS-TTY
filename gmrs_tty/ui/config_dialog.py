@@ -273,7 +273,8 @@ class ConfigDialog(QDialog):
         layout.addRow("Control Lin&e:", self.ptt_serial_line_input)
         self._update_ptt_fields()
 
-        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        self.buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         # OK stays disabled until DeviceQueryThread finishes so the user
