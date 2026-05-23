@@ -1,8 +1,26 @@
+import datetime
 import shutil
 import subprocess
 
 import numpy as np
 import sounddevice as sd
+
+
+def fetch_youtube_upload_date(url: str) -> str | None:
+    """Return the YouTube upload date as 'YYYY-MM-DD', or None on failure."""
+    if not shutil.which("yt-dlp"):
+        return None
+    try:
+        result = subprocess.run(
+            ["yt-dlp", "--print", "%(upload_date)s", "--no-playlist", url],
+            capture_output=True, text=True, timeout=30,
+        )
+        raw = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+        if len(raw) == 8 and raw.isdigit():
+            return datetime.datetime.strptime(raw, "%Y%m%d").strftime("%Y-%m-%d")
+    except Exception:
+        pass
+    return None
 
 
 class YouTubeSource:

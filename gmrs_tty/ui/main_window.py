@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 
 from gmrs_tty.config import AppConfig
 from gmrs_tty.ui.tx_controller import TXController
+from gmrs_tty.audio.capture import fetch_youtube_upload_date
 from gmrs_tty.audio.monitor import AudioMonitor
 from gmrs_tty.audio.spectro_worker import SpectrogramWorker
 from gmrs_tty.constants import (
@@ -1327,7 +1328,7 @@ class MainWindow(QMainWindow):
             )
             old_fuzzy = self.config.fuzzy_callsign
             old_attendance = self.attendance_enabled
-            self.config = AppConfig(dlg.get_config())
+            self.config.update(dlg.get_config())
             save_json(CONFIG_FILE, self.config)
             self.update_header()
             new_attendance = self.config.attendance_enabled
@@ -1406,6 +1407,10 @@ class MainWindow(QMainWindow):
 
         callsigns = self.attendance_panel.callsigns() if self.attendance_panel else []
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if self.config.input_device == "youtube" and self.config.youtube_url:
+            yt_date = fetch_youtube_upload_date(self.config.youtube_url)
+            if yt_date:
+                timestamp = yt_date
 
         self._generate_journal_action.setEnabled(False)
         self.journal_icon_btn.setEnabled(False)
