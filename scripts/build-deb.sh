@@ -87,6 +87,18 @@ cp -r "$REPO_ROOT/Models" "$STAGE/opt/$PKG/"
 find "$STAGE/opt/$PKG/Models" -type d -name ".cache" -exec rm -rf {} + 2>/dev/null || true
 find "$STAGE/opt/$PKG/Models" -name ".gitattributes" -delete 2>/dev/null || true
 
+# ---------------------------------------------------------------------------
+# 2d. Bundle Piper TTS voice models.
+# ---------------------------------------------------------------------------
+if [ ! -d "$REPO_ROOT/Voices" ] || [ -z "$(ls -A "$REPO_ROOT/Voices" 2>/dev/null)" ]; then
+    echo "ERROR: Voices/ directory not found or empty."
+    echo "       Download Piper voice models into Voices/ before building."
+    exit 1
+fi
+
+echo ">>> Bundling Piper voice models ..."
+cp -r "$REPO_ROOT/Voices" "$STAGE/opt/$PKG/"
+
 # A __main__.py so the launcher can `python -m gmrs_tty`.
 cat > "$STAGE/opt/$PKG/gmrs_tty/__main__.py" <<'PY'
 from gmrs_tty.app import main
@@ -179,7 +191,7 @@ Description: GMRS/FRS speech-to-text and text-to-speech assistant
  reduction.
  .
  Whisper STT and speaker identification models are bundled offline.
- Piper TTS voice models are user-configured (see README.md for setup).
+ Piper TTS voice models are bundled offline.
 CONTROL
 
 cat > "$STAGE/DEBIAN/postinst" <<'POSTINST'
