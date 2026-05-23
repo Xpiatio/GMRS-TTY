@@ -215,6 +215,13 @@ def font_header() -> QFont:
     return f
 
 
+def font_chat() -> QFont:
+    """Chat display body font: +2pt above OS default for ADA legibility."""
+    f = _base_font()
+    f.setPointSize(f.pointSize() + 2)
+    return f
+
+
 def font_icon() -> QFont:
     f = _base_font()
     f.setPointSize(f.pointSize() + 4)

@@ -512,9 +512,10 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(listen_strip)
 
-        # Main chat-display surface. No hardcoded font-size so OS font-scale
-        # carries through (WCAG 1.4.4).
+        # Main chat-display surface. +2pt relative bump for ADA legibility;
+        # OS font-scale still carries through (WCAG 1.4.4).
         self.chat_display = ChatDisplay(wrapper)
+        self.chat_display.setFont(theme.font_chat())
         self.chat_display.setStyleSheet(theme.chat_display_stylesheet())
         self.chat_display.setAccessibleName("Conversation log")
         self.chat_display.setAccessibleDescription(
