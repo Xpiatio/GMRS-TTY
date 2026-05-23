@@ -533,6 +533,20 @@ class MainWindow(QMainWindow):
         )
         self.clear_chat_btn.clicked.connect(self.clear_chat)
         listen_strip.addWidget(self.clear_chat_btn)
+
+        self.generate_journal_btn = QPushButton("Generate &log entry", wrapper)
+        self.generate_journal_btn.setToolTip(
+            "Generate an AI-powered journal entry from the conversation log (Ctrl+J). "
+            "Requires a Gemini API key in Settings → Configuration."
+        )
+        self.generate_journal_btn.setAccessibleName("Generate session journal")
+        self.generate_journal_btn.setAccessibleDescription(
+            "Use the Gemini API to summarise the conversation log into a saved journal entry."
+        )
+        self.generate_journal_btn.clicked.connect(self._generate_journal)
+        self.generate_journal_btn.setVisible(bool(self.config.gemini_api_key))
+        listen_strip.addWidget(self.generate_journal_btn)
+
         layout.addLayout(listen_strip)
 
         # Main chat-display surface. No hardcoded font-size so OS font-scale
@@ -1334,6 +1348,7 @@ class MainWindow(QMainWindow):
                 self.tx.ptt = make_ptt(self.config)
             if old_output_device != self.config.output_device and self.monitor_btn.isChecked():
                 self._monitor.start(self.config.output_device)
+            self.generate_journal_btn.setVisible(bool(self.config.gemini_api_key))
 
     def open_contacts_dialog(self):
         dlg = ContactsDialog(self.contacts, parent=self)
@@ -1382,6 +1397,7 @@ class MainWindow(QMainWindow):
 
         self._generate_journal_action.setEnabled(False)
         self.journal_icon_btn.setEnabled(False)
+        self.generate_journal_btn.setEnabled(False)
         self.statusBar().showMessage("Generating journal entry via Gemini…")
 
         self._journal_worker = JournalWorker(
@@ -1404,6 +1420,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Journal Save Error", f"Could not save journal:\n{exc}")
         self._generate_journal_action.setEnabled(True)
         self.journal_icon_btn.setEnabled(True)
+        self.generate_journal_btn.setEnabled(True)
         self._journal_worker = None
 
     def _on_journal_error(self, message: str):
@@ -1415,6 +1432,7 @@ class MainWindow(QMainWindow):
         )
         self._generate_journal_action.setEnabled(True)
         self.journal_icon_btn.setEnabled(True)
+        self.generate_journal_btn.setEnabled(True)
         self._journal_worker = None
 
     def open_quick_messages_dialog(self):
