@@ -1,9 +1,9 @@
 # GMRS-TTY Technical Specification
 
 ## 1. Overview
-The GMRS-TTY (Amateur Radio Accessibility Communicator) is a software application designed to assist hard-of-hearing, deaf, or mute individuals in communicating over GMRS (General Mobile Radio Service) radio frequencies. It acts as a modern TTY interface, converting incoming voice transmissions to text (STT) and outgoing typed messages to voice (TTS). The application is built using **Python and the PySide6 framework** to ensure rapid development, accessible machine learning libraries, and robust cross-platform support (Windows, Linux, Raspberry Pi).
+The GMRS-TTY (Amateur Radio Accessibility Communicator) is a software application designed to assist hard-of-hearing, deaf, or mute individuals in communicating over GMRS (General Mobile Radio Service) radio frequencies. It acts as a modern TTY interface, converting incoming voice transmissions to text (STT) and outgoing typed messages to voice (TTS). The application is built using **Python and the PySide6 framework** to ensure rapid development, accessible machine learning libraries, and robust cross-platform support (Linux, Raspberry Pi).
 
-The application is designed for **fully off-grid operation**: all speech-to-text, text-to-speech, voice-activity-detection, and contact-management features must function without any internet connectivity, suitable for emergency communications, remote field deployments, and disaster scenarios. Distribution targets include native installation on Raspberry Pi (ARM64), Linux (x86_64), and Windows (10/11), as well as a Docker container image for reproducible deployment across all supported platforms.
+The application is designed for **fully off-grid operation**: all speech-to-text, text-to-speech, voice-activity-detection, and contact-management features must function without any internet connectivity, suitable for emergency communications, remote field deployments, and disaster scenarios. Distribution targets include native installation on Raspberry Pi (ARM64) and Linux (x86_64), as well as a Docker container image for reproducible deployment across all supported platforms.
 
 ## 2. User Interface (UI) Requirements
 The application will feature a user-friendly interface divided into Configuration and Main Communication views.
@@ -111,7 +111,6 @@ The application must operate end-to-end without internet connectivity. This is a
 The application must run on each of the following targets with feature parity:
 - **Raspberry Pi** (Raspberry Pi OS 64-bit on Pi 4 / Pi 5, ARM64) — primary target for portable, battery-powered field deployments. Model size and CPU choices must keep STT/TTS latency usable on Pi-class hardware.
 - **Linux** (x86_64, Debian/Ubuntu and derivatives) — primary target for operator workstations and development.
-- **Windows** (10/11, x86_64) — supported for operators who prefer Windows.
 
 All audio I/O, configuration paths, and file handling must be portable across these platforms.
 
@@ -119,8 +118,8 @@ All audio I/O, configuration paths, and file handling must be portable across th
 The application will be packaged as a Docker container for reproducible, dependency-free deployment.
 - **Single self-contained image**: includes the Python runtime, all dependencies (PySide6, faster-whisper / CTranslate2, Silero VAD, Piper, noisereduce, sounddevice, etc.), and all bundled models (STT, VAD, and at least one default TTS voice).
 - **Multi-architecture build**: published for `linux/amd64` and `linux/arm64` so a single image tag works on Pi and on x86_64 hosts.
-- **Audio passthrough**: container must support host audio devices via PulseAudio socket or ALSA device passthrough on Linux/Pi, and the equivalent on Windows hosts (e.g., via WSL2 / Docker Desktop audio routing).
-- **GUI passthrough**: the Qt window must render on the host display via X11 socket mount (or Wayland equivalent) on Linux/Pi, and via Docker Desktop's display integration on Windows.
+- **Audio passthrough**: container must support host audio devices via PulseAudio socket or ALSA device passthrough on Linux/Pi.
+- **GUI passthrough**: the Qt window must render on the host display via X11 socket mount (or Wayland equivalent) on Linux/Pi.
 - **USB device passthrough**: USB serial adapters (for future PTT control) and external USB sound cards (Signalink, Digirig, etc.) must be mappable into the container.
 - **Persistent volumes**: `config.json`, `contacts.json`, and the `Voices/` directory must be mountable as host volumes so user state survives container rebuilds.
 

@@ -67,14 +67,13 @@ Status legend: ✅ complete · ⏳ pending
 *   **Ongoing constraint:** any PR that introduces a new actionable widget must (a) give it a unique mnemonic / shortcut, (b) set `accessibleName`, (c) avoid pixel `font-size`, and (d) ensure any color used as a state cue is paired with a text or shape cue. The Accessibility section of `technical_spec.md` is the normative reference.
 
 ## Stage 7: Cross-Platform Packaging & Distribution — ⏳ pending
-*   **Goal:** Produce installable artifacts for Windows, Linux, and Raspberry Pi (per spec §5.2).
+*   **Goal:** Produce installable artifacts for Linux and Raspberry Pi (per spec §5.2).
 *   **Tasks:**
-    *   ⏳ Verify `sounddevice` / PortAudio works on Pi (ALSA), Linux desktop (PulseAudio / PipeWire), and Windows (WASAPI). Note device-enumeration quirks per platform in `README.md`.
+    *   ⏳ Verify `sounddevice` / PortAudio works on Pi (ALSA) and Linux desktop (PulseAudio / PipeWire). Note device-enumeration quirks per platform in `README.md`.
     *   ⏳ Resolve platform-specific Python dependency issues (PySide6 wheels on ARM64, CTranslate2 ARM wheels, ONNX Runtime ARM wheels). Pin versions in `requirements.txt` to known-good combinations.
     *   ⏳ Benchmark STT latency on Raspberry Pi 4 / Pi 5 using bundled `small.en` int8. If unusable, fall back to `base.en` or `tiny.en` (already exposed via the `whisper_model` config key).
     *   ⏳ Package portable artifacts:
         *   Linux/Pi: tarball or `.deb` that bundles a Python venv, all wheels, and the `Models/` and `Voices/` directories.
-        *   Windows: PyInstaller (or similar) one-folder distribution including the same bundled models.
     *   ⏳ Verify each artifact runs on a freshly imaged machine with networking disabled.
 
 ## Stage 8: Dockerization (Multi-Architecture) — ⏳ pending

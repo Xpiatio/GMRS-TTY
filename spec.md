@@ -23,4 +23,4 @@ The shipped app has grown past this initial statement. The following capabilitie
 - **NATO phonetic & digit readout for callsigns** — TTS spells callsign digits one at a time; the standalone ID button reads the call letters in NATO phonetic ("Whiskey Sierra Lima Zulu 2 3 3").
 - **Standalone "This is" ID button** — one-click station ID that also resets the 15-minute ID timer.
 - **Pending stations bar** — one-click `+ Add` pills for callsigns detected on RX that aren't yet in your contact list. Supports compact (`WSLZ233`), spaced (`W S L Z 2 3 3`), separator (`WSLZ-233`, `WSLZ.233`), and NATO-phonetic forms.
-- **Cross-platform target list** — Raspberry Pi, Linux desktop, Windows. Multi-arch Docker image planned.
+- **Cross-platform target list** — Raspberry Pi, Linux desktop. Multi-arch Docker image planned.

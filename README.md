@@ -71,11 +71,10 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
 - Manual contact management dialog (callsign, name, location, verified status).
 
 ### Cross-platform & off-grid
-- Targets Raspberry Pi, Linux, Windows.
+- Targets Raspberry Pi and Linux.
 - All STT/TTS/VAD models run locally — **the core radio workflow needs no internet at runtime**. The Whisper model is pre-staged via a one-time `bootstrap_models.py` run on a connected machine, after which the entire source tree (including `Models/` and `Voices/`) is portable to air-gapped targets.
 - **Online features (FCC callsign verification) are strictly opt-in via connectivity**: a periodic probe of the crossref API decides whether they're available. If the probe fails — no network, DNS broken, API down — the relevant UI controls disable themselves and the app falls back to its fully-offline behavior. The radio workflow (RX transcription, TX synthesis, PTT keying, contact management) never depends on the network.
 - **Debian/Ubuntu**: self-contained `.deb` built by `scripts/build-deb.sh` (bundles all Python wheels + offline models; requires Python 3.13 on target).
-- **Windows**: self-contained `.msi` built by `scripts/build-msi.ps1` on Windows (bundles Python embeddable runtime + all packages + offline models).
 - Future stages: multi-arch Docker image, Raspberry Pi tarball.
 
 ### Accessibility (WCAG 2.1 AA)
@@ -143,12 +142,6 @@ The postinst creates a virtualenv at `/opt/gmrs-tty/.venv`, installs all bundled
 
 System dependencies installed automatically: `python3.13`, `python3.13-venv`, `libportaudio2`, `libxcb-cursor0`, `libegl1`, `libgl1`.
 
-### Windows (`.msi`)
-
-Built by `scripts/build-msi.ps1` (requires WiX v4 on Windows). Bundles Python 3.13 embeddable + all packages + models. Installs to `C:\Program Files\GMRS-TTY\` and creates Start Menu + Desktop shortcuts.
-
-After install, double-click **GMRS-TTY** on the Desktop, then open **Settings → Configuration** to configure your callsign and voice.
-
 ### Adding Piper TTS voices
 
 The installers do **not** bundle Piper voice models — they are large, numerous, and user-chosen. Drop `.onnx` + `.onnx.json` pairs into the `Voices/` subdirectory of the install location:
@@ -156,7 +149,6 @@ The installers do **not** bundle Piper voice models — they are large, numerous
 | Platform | Location |
 |----------|----------|
 | Linux (.deb) | `/opt/gmrs-tty/Voices/` |
-| Windows (.msi) | `C:\Program Files\GMRS-TTY\Voices\` |
 
 Download voices from: https://github.com/rhasspy/piper/blob/master/VOICES.md
 
@@ -173,8 +165,7 @@ git clone <repo-url> GMRS-TTY
 cd GMRS-TTY
 
 python3 -m venv .venv
-source .venv/bin/activate              # Linux/macOS
-# .venv\Scripts\activate                # Windows
+source .venv/bin/activate
 
 pip install -r requirements.txt
 ```
@@ -324,12 +315,7 @@ GMRS-TTY/
 ├── config.example.json     # Template — copy to config.json and edit
 ├── scripts/
 │   ├── build-deb.sh        # Build the Debian .deb installer
-│   ├── build-msi.ps1       # Build the Windows .msi installer (run on Windows)
 │   └── build_user_manual.py # Regenerate docs/USER_MANUAL.pdf
-├── packaging/
-│   └── windows/
-│       ├── product.wxs     # WiX v4 installer definition
-│       └── LICENSE.rtf     # License text for the WiX installer UI
 ├── journals/               # AI-generated session journal entries (auto-created; gitignored)
 ├── Voices/                 # Piper voice models (gitignored; download yourself)
 ├── Models/                 # Bundled STT model artifacts (gitignored; run bootstrap_models.py)
@@ -363,7 +349,7 @@ Tracked in [implementation_plan.md](implementation_plan.md):
 4. ✅ Refinement (auto-scroll, input/output device pickers, timer reset)
 5. ✅ Hardware hooks (`pyserial` PTT keying around TTS — Manual / VOX / USB FTDI modes)
 6. ✅ Off-grid model bundling (Whisper via `bootstrap_models.py`; Silero VAD ONNX ships in the wheel)
-7. ✅ Cross-platform packaging (Debian `.deb` via `scripts/build-deb.sh`; Windows `.msi` via `scripts/build-msi.ps1` + WiX v4)
+7. ✅ Cross-platform packaging (Debian `.deb` via `scripts/build-deb.sh`)
 8. ⏳ Multi-arch Docker image (`linux/amd64` + `linux/arm64`)
 9. ⏳ Future hardware (Bluetooth HT/mobile audio, hamlib CAT/CI-V rig control)
 10. ✅ TTY-to-radio-vernacular translation at TTS time (expand `GA`/`SK`/`73`/Q-signals to spoken form on TX)
