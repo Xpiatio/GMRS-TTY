@@ -42,6 +42,10 @@ class AppConfig(dict):
         return bool(self.get("monitor_enabled", False))
 
     @property
+    def monitor_passthrough(self) -> bool:
+        return bool(self.get("monitor_passthrough", False))
+
+    @property
     def whisper_model(self) -> str:
         return self.get("whisper_model", "small.en")
 

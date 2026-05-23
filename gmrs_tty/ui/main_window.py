@@ -468,6 +468,21 @@ class MainWindow(QMainWindow):
         self.monitor_btn.toggled.connect(self._on_monitor_toggled)
         listen_strip.addWidget(self.monitor_btn)
 
+        self.passthrough_btn = QPushButton("Pass&through", wrapper)
+        self.passthrough_btn.setCheckable(True)
+        self.passthrough_btn.setEnabled(False)
+        self.passthrough_btn.setToolTip(
+            "Send audio straight to the speaker without the bandpass filter. "
+            "Active only while Monitor is on."
+        )
+        self.passthrough_btn.setAccessibleName("Monitor passthrough toggle")
+        self.passthrough_btn.setAccessibleDescription(
+            "When on, audio bypasses the 300–3000 Hz filter and plays unprocessed. "
+            "Transcription is not affected."
+        )
+        self.passthrough_btn.toggled.connect(self._on_passthrough_toggled)
+        listen_strip.addWidget(self.passthrough_btn)
+
         self.audio_level_meter = QProgressBar(wrapper)
         self.audio_level_meter.setRange(0, 100)
         self.audio_level_meter.setValue(0)
@@ -1413,9 +1428,14 @@ class MainWindow(QMainWindow):
 
     def _on_monitor_toggled(self, checked: bool) -> None:
         if checked:
+            self._monitor.set_passthrough(self.config.monitor_passthrough)
             self._monitor.start(self.config.output_device)
             if self.stt_worker is not None:
                 self.stt_worker.audio_chunk.connect(self._monitor.push)
+            self.passthrough_btn.setEnabled(True)
+            self.passthrough_btn.blockSignals(True)
+            self.passthrough_btn.setChecked(self.config.monitor_passthrough)
+            self.passthrough_btn.blockSignals(False)
             self.monitor_btn.setAccessibleDescription(
                 "Play incoming radio audio through the computer speakers. "
                 "Available when Listen and Listen-only are both active. Currently on."
@@ -1427,11 +1447,20 @@ class MainWindow(QMainWindow):
                 except (TypeError, RuntimeError):
                     pass
             self._monitor.stop()
+            self.passthrough_btn.setEnabled(False)
             self.monitor_btn.setAccessibleDescription(
                 "Play incoming radio audio through the computer speakers. "
                 "Available when Listen and Listen-only are both active. Currently off."
             )
         self.config["monitor_enabled"] = checked
+        try:
+            self.config.save()
+        except Exception:
+            pass
+
+    def _on_passthrough_toggled(self, checked: bool) -> None:
+        self._monitor.set_passthrough(checked)
+        self.config["monitor_passthrough"] = checked
         try:
             self.config.save()
         except Exception:
@@ -1674,6 +1703,7 @@ class MainWindow(QMainWindow):
         self.monitor_btn.setChecked(False)
         self.monitor_btn.blockSignals(False)
         self.monitor_btn.setEnabled(False)
+        self.passthrough_btn.setEnabled(False)
         # Tear the spectrometer down first so its STT-signal disconnects
         # run while the worker is still alive — spectro_manager.stop()
         # reaches through self.stt_worker to undo the audio_chunk hookup.

@@ -40,6 +40,7 @@ class AudioMonitor:
         self._stream_lock = threading.Lock()
         self._muted = threading.Event()
         self._gain = 1.0  # current output gain; slides toward 0.0/1.0 during fades
+        self._passthrough = False  # when True, skip bandpass filter
 
         self._sos = make_bandpass_sos(self.INPUT_RATE, 300, 3000)
         self._zi = sosfilt_zi(self._sos)  # persistent filter state across chunks
@@ -95,17 +96,25 @@ class AudioMonitor:
         with self._stream_lock:
             if self._stream is None:
                 return
-        # Bandpass 300–3000 Hz; sosfilt carries state across calls so there
-        # are no edge transients at chunk boundaries.
-        filtered, self._zi = sosfilt(self._sos, chunk, zi=self._zi)
-        # Upsample 16 kHz → 48 kHz with polyphase sinc resampler.
-        upsampled = resample_poly(filtered, self._UPSAMPLE_RATIO, 1).astype(np.float32)
+        if self._passthrough:
+            # Raw path: skip bandpass, upsample only (hardware requires 48 kHz).
+            upsampled = resample_poly(chunk, self._UPSAMPLE_RATIO, 1).astype(np.float32)
+        else:
+            # Bandpass 300–3000 Hz; sosfilt carries state across calls so there
+            # are no edge transients at chunk boundaries.
+            filtered, self._zi = sosfilt(self._sos, chunk, zi=self._zi)
+            # Upsample 16 kHz → 48 kHz with polyphase sinc resampler.
+            upsampled = resample_poly(filtered, self._UPSAMPLE_RATIO, 1).astype(np.float32)
         with self._buf_lock:
             while self._buf_samples + len(upsampled) > self._MAX_BUFFER_SAMPLES and self._buf:
                 dropped = self._buf.popleft()
                 self._buf_samples -= len(dropped)
             self._buf.append(upsampled)
             self._buf_samples += len(upsampled)
+
+    def set_passthrough(self, enabled: bool) -> None:
+        """Skip the bandpass filter so raw audio goes straight to the speaker."""
+        self._passthrough = enabled
 
     def mute(self, muted: bool) -> None:
         """Suppress output without stopping the stream (called during TX)."""
