@@ -249,8 +249,7 @@ def _fake_stt_worker():
     stop_stt and _on_listen_only_toggled without starting real threads."""
     worker = MagicMock()
     worker.isRunning.return_value = False
-    worker.whisper = None
-    worker.vad_model = None
+    worker.model_cache = None
     return worker
 
 

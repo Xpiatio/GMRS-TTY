@@ -28,7 +28,7 @@ from gmrs_tty.persistence.contacts import (
 )
 from gmrs_tty.persistence.json_store import load_json, save_json
 from gmrs_tty.ptt import make_ptt
-from gmrs_tty.stt.worker import STTWorker
+from gmrs_tty.stt.worker import ModelCache, STTWorker
 from gmrs_tty.text.callsigns import spell_digits_in_callsigns
 from gmrs_tty.text.profanity import mask_profanity
 from gmrs_tty.text.placeholders import find_placeholders, substitute_placeholders
@@ -97,9 +97,7 @@ class MainWindow(QMainWindow):
         self._quick_message_buttons = []
         # Reused across Listen toggles so we don't pay the ~1–3s Whisper
         # load on every restart. Invalidated when whisper_model changes.
-        self._stt_whisper = None
-        self._stt_vad_model = None
-        self._stt_whisper_model_name = None
+        self._stt_model_cache: ModelCache | None = None
         # Streaming-RX session: long utterances arrive as multiple partial
         # transcription_segment signals. RXSession tracks the open line,
         # growing it in-place, and fires scan_for_unknown_stations on
@@ -1616,15 +1614,13 @@ class MainWindow(QMainWindow):
         if self.stt_worker and self.stt_worker.isRunning():
             return
         desired_model = self.config.whisper_model
-        if desired_model != self._stt_whisper_model_name:
-            self._stt_whisper = None
-            self._stt_vad_model = None
+        if self._stt_model_cache is not None and self._stt_model_cache.model_name != desired_model:
+            self._stt_model_cache = None
         self.stt_worker = STTWorker(
             input_device=self.config.input_device,
             whisper_model=desired_model,
             vad_threshold=self.config.vad_threshold,
-            whisper=self._stt_whisper,
-            vad_model=self._stt_vad_model,
+            model_cache=self._stt_model_cache,
             youtube_url=self.config.youtube_url,
             youtube_cookies_from_browser=self.config.youtube_cookies_from_browser,
             youtube_cookies_file=self.config.youtube_cookies_file,
@@ -1695,10 +1691,8 @@ class MainWindow(QMainWindow):
                 worker.wait(15000)
             # Hoist loaded models out before the worker is destroyed so the
             # next start_stt can skip the multi-second model load.
-            if worker.whisper is not None and worker.vad_model is not None:
-                self._stt_whisper = worker.whisper
-                self._stt_vad_model = worker.vad_model
-                self._stt_whisper_model_name = worker.whisper_model_name
+            if worker.model_cache is not None:
+                self._stt_model_cache = worker.model_cache
             worker.deleteLater()
         self.audio_level_meter.setValue(0)
         self.listen_btn.setText("&Listen")
