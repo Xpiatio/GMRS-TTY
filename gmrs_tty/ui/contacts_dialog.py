@@ -109,8 +109,14 @@ class ContactsDialog(QDialog):
 
         btn_layout = QHBoxLayout()
         self.add_btn = QPushButton("Add Contact")
+        self.add_btn.setAccessibleName("Add contact")
+        self.add_btn.setAccessibleDescription("Append a new blank row to the contacts table.")
         self.add_btn.clicked.connect(self.add_row)
         self.remove_btn = QPushButton("Remove Selected")
+        self.remove_btn.setAccessibleName("Remove selected contact")
+        self.remove_btn.setAccessibleDescription(
+            "Delete the currently selected row from the contacts table."
+        )
         self.remove_btn.clicked.connect(self.remove_row)
         self.sort_suffix_btn = QPushButton("Sort by &Suffix")
         self.sort_suffix_btn.setToolTip(
@@ -129,6 +135,10 @@ class ContactsDialog(QDialog):
         # the sibling buttons (Add Contact, Remove Selected, Sort by Suffix).
         self.verify_all_btn = QPushButton("&Verify all")
         self.verify_all_btn.setAccessibleName("Verify all callsigns against FCC database")
+        self.verify_all_btn.setAccessibleDescription(
+            "Look up every callsign in the FCC database and update each row's "
+            "verified status. Disabled when the app is offline."
+        )
         self.verify_all_btn.clicked.connect(self.verify_all)
         self._apply_online_state()
 
@@ -143,6 +153,15 @@ class ContactsDialog(QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
+
+        self.setTabOrder(self.table, self.add_btn)
+        self.setTabOrder(self.add_btn, self.remove_btn)
+        self.setTabOrder(self.remove_btn, self.sort_suffix_btn)
+        self.setTabOrder(self.sort_suffix_btn, self.verify_all_btn)
+        ok_btn = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
+        cancel_btn = self.buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        self.setTabOrder(self.verify_all_btn, ok_btn)
+        self.setTabOrder(ok_btn, cancel_btn)
 
     def _apply_online_state(self):
         self.verify_all_btn.setEnabled(self._online)

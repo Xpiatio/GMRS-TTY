@@ -54,6 +54,10 @@ class JournalDialog(QDialog):
         self._title_label = QLabel()
         self._title_label.setWordWrap(True)
         self._title_label.setStyleSheet("font-weight: bold; font-size: 13px;")
+        self._title_label.setAccessibleName("Journal entry title")
+        self._title_label.setAccessibleDescription(
+            "Title of the currently selected journal entry."
+        )
         self._detail = QTextEdit()
         self._detail.setReadOnly(True)
         self._detail.setAccessibleName("Journal entry detail")
@@ -68,6 +72,8 @@ class JournalDialog(QDialog):
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
         buttons.rejected.connect(self.reject)
+        close_btn = buttons.button(QDialogButtonBox.StandardButton.Close)
+        close_btn.setAccessibleDescription("Close the journal browser.")
         root.addWidget(buttons)
 
         self._reload()
