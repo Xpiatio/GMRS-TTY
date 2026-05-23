@@ -272,3 +272,28 @@ class TestAutoAddNoOp:
             assert len(factory.factory_calls) == 1
         finally:
             w.close()
+
+
+class TestPendingLookupCap:
+    def test_lookup_skipped_when_cap_reached(self, qapp):
+        from gmrs_tty.ui.pending_station_manager import _MAX_PENDING_LOOKUPS
+
+        w = _make_window(qapp, [{"callsign": "All", "name": "Everyone"}])
+        try:
+            # Pre-fill _lookups to the cap with worker stubs that satisfy
+            # disconnect_workers (needs result_ready.disconnect and isRunning).
+            w.pending_manager._lookups = {
+                f"FAKE{i:03d}": _SyncWorkerInstance(f"FAKE{i:03d}", "", "", None)
+                for i in range(_MAX_PENDING_LOOKUPS)
+            }
+
+            ctx, factory = _install_sync_worker(_verified_result())
+            with ctx, _patch_save():
+                w.pending_manager._start_callsign_lookup("WSLZ233", "Benjamin", "Jenison")
+
+            assert factory.factory_calls == [], (
+                "No worker should be created when _lookups is at capacity"
+            )
+        finally:
+            w.pending_manager._lookups.clear()
+            w.close()

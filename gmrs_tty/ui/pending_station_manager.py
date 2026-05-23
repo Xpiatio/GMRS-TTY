@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
+
+_log = logging.getLogger(__name__)
 
 from PySide6.QtCore import QObject, Qt
 from PySide6.QtWidgets import (
@@ -26,6 +29,7 @@ if TYPE_CHECKING:
     from gmrs_tty.ui.main_window import MainWindow
 
 PENDING_PILL_MAX_ROWS = 3
+_MAX_PENDING_LOOKUPS = 50
 
 
 class PendingStationManager(QObject):
@@ -215,6 +219,10 @@ class PendingStationManager(QObject):
     # ---- Private -----------------------------------------------------------
 
     def _start_callsign_lookup(self, callsign: str, name: str, location: str) -> None:
+        if len(self._lookups) >= _MAX_PENDING_LOOKUPS:
+            _log.warning("Pending lookup cap reached (%d); skipping FCC lookup for %s.",
+                         _MAX_PENDING_LOOKUPS, callsign)
+            return
         from gmrs_tty.fcc.auto_add import CallsignLookupWorker
         worker = CallsignLookupWorker(callsign, name, location, parent=self._window)
         worker.result_ready.connect(self._on_lookup_result)
