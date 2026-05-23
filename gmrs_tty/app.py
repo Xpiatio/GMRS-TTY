@@ -1,7 +1,8 @@
+import signal
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
@@ -24,6 +25,16 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setWindowIcon(_build_icon())
+
+    # Forward Ctrl+C to Qt's quit slot so closeEvent runs and all worker
+    # threads are torn down cleanly before the process exits.
+    signal.signal(signal.SIGINT, lambda *_: app.quit())
+    # QTimer wakes Python's signal-checker between Qt events so the handler
+    # above is called promptly even when the event loop is otherwise idle.
+    _sigcheck = QTimer()
+    _sigcheck.start(200)
+    _sigcheck.timeout.connect(lambda: None)
+
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

@@ -137,6 +137,7 @@ class MainWindow(QMainWindow):
         self.spectro_settings = SpectroSettings.from_config(self.config)
         self.spectro_widget = None
         self.spectro_worker = None
+        self._spectro_capture_event_hooked = False
         # Attendance grid: feature flag persists at ``attendance.enabled``
         # (default off) so the panel + RX-side recording are both opt-in.
         # The dock itself is always *built* — we just hide it and skip the
@@ -231,6 +232,17 @@ class MainWindow(QMainWindow):
             if worker.isRunning():
                 worker.wait(100)
         self._callsign_lookups.clear()
+        # Journal worker makes a 30s HTTP request that can't be interrupted.
+        # Disconnect its signals so a late result can't touch a torn-down
+        # window, then give it a brief window to exit before the process does.
+        if self._journal_worker is not None and self._journal_worker.isRunning():
+            try:
+                self._journal_worker.finished.disconnect()
+                self._journal_worker.error.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            self._journal_worker.wait(300)
+        self._journal_worker = None
         self.tx.close_ptt()
         # Persist dock placements + window geometry so the next launch
         # lands the operator back in the layout they were using. Saves
@@ -1860,6 +1872,7 @@ class MainWindow(QMainWindow):
         if self.stt_worker is not None:
             self.stt_worker.audio_chunk.connect(self.spectro_worker.push_chunk)
             self.stt_worker.capture_event.connect(self.spectro_widget.mark_event)
+            self._spectro_capture_event_hooked = True
         self.spectro_worker.start()
 
     def _stop_spectro_worker(self):
@@ -1872,12 +1885,14 @@ class MainWindow(QMainWindow):
                 )
             except (TypeError, RuntimeError, AttributeError):
                 pass
-            try:
-                self.stt_worker.capture_event.disconnect(
-                    self.spectro_widget.mark_event
-                )
-            except (TypeError, RuntimeError, AttributeError):
-                pass
+            if self._spectro_capture_event_hooked:
+                try:
+                    self.stt_worker.capture_event.disconnect(
+                        self.spectro_widget.mark_event
+                    )
+                except (TypeError, RuntimeError):
+                    pass
+                self._spectro_capture_event_hooked = False
         worker = self.spectro_worker
         self.spectro_worker = None
         if worker is not None:
