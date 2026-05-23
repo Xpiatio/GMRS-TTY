@@ -1,14 +1,20 @@
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QHeaderView,
-    QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout,
+    QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout,
+    QHeaderView, QLineEdit, QMessageBox, QPushButton, QTableWidget,
+    QTableWidgetItem, QVBoxLayout,
 )
 
 from gmrs_tty.constants import VERIFIED_COLOR, VERIFIED_GLYPH, utc_now_iso
 from gmrs_tty.fcc.crossref import apply_verification, verify_callsign
 from gmrs_tty.net.online import is_online
 from gmrs_tty.persistence.contacts import normalize_callsign, sort_contacts_by_suffix
+from gmrs_tty.persistence.contacts_io import (
+    export_contacts_csv, export_contacts_json,
+    import_contacts_csv, import_contacts_json,
+    merge_contacts,
+)
 
 # Column layout. Personal-identifying fields cluster left (Callsign / Name /
 # Location), FCC cross-reference fields next (GMRS / HAM), and the verified-
@@ -142,10 +148,27 @@ class ContactsDialog(QDialog):
         self.verify_all_btn.clicked.connect(self.verify_all)
         self._apply_online_state()
 
+        self.import_btn = QPushButton("&Import…")
+        self.import_btn.setAccessibleName("Import contacts from file")
+        self.import_btn.setAccessibleDescription(
+            "Load contacts from a JSON or CSV file and merge them into the current list."
+        )
+        self.import_btn.clicked.connect(self.import_contacts)
+
+        self.export_btn = QPushButton("E&xport…")
+        self.export_btn.setAccessibleName("Export contacts to file")
+        self.export_btn.setAccessibleDescription(
+            "Save all contacts to a JSON or CSV file."
+        )
+        self.export_btn.clicked.connect(self.export_contacts)
+
         btn_layout.addWidget(self.add_btn)
         btn_layout.addWidget(self.remove_btn)
         btn_layout.addWidget(self.sort_suffix_btn)
         btn_layout.addWidget(self.verify_all_btn)
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.import_btn)
+        btn_layout.addWidget(self.export_btn)
         layout.addLayout(btn_layout)
 
         self.buttons = QDialogButtonBox(
@@ -158,9 +181,11 @@ class ContactsDialog(QDialog):
         self.setTabOrder(self.add_btn, self.remove_btn)
         self.setTabOrder(self.remove_btn, self.sort_suffix_btn)
         self.setTabOrder(self.sort_suffix_btn, self.verify_all_btn)
+        self.setTabOrder(self.verify_all_btn, self.import_btn)
+        self.setTabOrder(self.import_btn, self.export_btn)
         ok_btn = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
         cancel_btn = self.buttons.button(QDialogButtonBox.StandardButton.Cancel)
-        self.setTabOrder(self.verify_all_btn, ok_btn)
+        self.setTabOrder(self.export_btn, ok_btn)
         self.setTabOrder(ok_btn, cancel_btn)
 
     def _apply_online_state(self):
@@ -268,6 +293,41 @@ class ContactsDialog(QDialog):
             rows[idx] = apply_verification(contact, result, now_iso=now)
         self.contacts = rows
         self.populate_table()
+
+    def import_contacts(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Contacts", "",
+            "JSON contacts (*.json);;CSV contacts (*.csv);;All files (*)"
+        )
+        if not path:
+            return
+        try:
+            incoming = (
+                import_contacts_csv(path)
+                if path.lower().endswith(".csv")
+                else import_contacts_json(path)
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Import Failed", str(exc))
+            return
+        self.contacts = merge_contacts(self._read_rows_from_table(), incoming)
+        self.populate_table()
+
+    def export_contacts(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Contacts", "contacts",
+            "JSON contacts (*.json);;CSV contacts (*.csv);;All files (*)"
+        )
+        if not path:
+            return
+        try:
+            contacts = self._read_rows_from_table()
+            if path.lower().endswith(".csv"):
+                export_contacts_csv(contacts, path)
+            else:
+                export_contacts_json(contacts, path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Export Failed", str(exc))
 
     def get_contacts(self):
         """Hand the current rows back to the caller, verifying any row that
