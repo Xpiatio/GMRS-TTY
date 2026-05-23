@@ -1,3 +1,4 @@
+import gmrs_tty.ptt.factory as ptt_factory
 from gmrs_tty.ptt import ManualPTT, VoxPTT, make_ptt
 
 
@@ -36,6 +37,20 @@ class TestUsbFtdiFallback:
         )
         assert isinstance(result, ManualPTT)
         assert "failed to open serial port" in caplog.text
+
+
+class TestFactoryRegistration:
+    def test_new_mode_registered_without_modifying_make_ptt(self):
+        """Registering a new factory in _FACTORIES is all that's needed."""
+        sentinel = object()
+
+        original = ptt_factory._FACTORIES.copy()
+        try:
+            ptt_factory._FACTORIES["test_mode"] = lambda _: sentinel
+            assert make_ptt({"ptt_mode": "test_mode"}) is sentinel
+        finally:
+            ptt_factory._FACTORIES.clear()
+            ptt_factory._FACTORIES.update(original)
 
 
 class TestVoxTailSilence:
