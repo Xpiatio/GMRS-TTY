@@ -1447,10 +1447,7 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             self.statusBar().clearMessage()
             QMessageBox.warning(self, "Journal Save Error", f"Could not save journal:\n{exc}")
-        self._generate_journal_action.setEnabled(True)
-        self.journal_icon_btn.setEnabled(True)
-        self.generate_journal_btn.setEnabled(True)
-        self._journal_worker = None
+        self._reset_journal_ui()
 
     def _on_journal_error(self, message: str):
         self.statusBar().clearMessage()
@@ -1459,6 +1456,9 @@ class MainWindow(QMainWindow):
             "Journal Generation Failed",
             f"Gemini returned an error:\n\n{message}",
         )
+        self._reset_journal_ui()
+
+    def _reset_journal_ui(self) -> None:
         self._generate_journal_action.setEnabled(True)
         self.journal_icon_btn.setEnabled(True)
         self.generate_journal_btn.setEnabled(True)
