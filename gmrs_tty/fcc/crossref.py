@@ -136,7 +136,7 @@ def verify_callsign(callsign, expected_name):
     url = API_BASE + urllib.parse.quote(cs, safe="")
     try:
         with urllib.request.urlopen(url, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
-            body = resp.read()
+            body = resp.read(1024 * 1024)
     except urllib.error.HTTPError as e:
         if e.code == 404:
             return VerificationResult(status="not_found")
