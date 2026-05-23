@@ -1,4 +1,5 @@
 import datetime
+import os
 
 CONFIG_FILE = "config.json"
 CONTACTS_FILE = "contacts.json"
@@ -50,6 +51,11 @@ VERIFIED_GLYPH = "✓"
 VERIFIED_COLOR = COLOR_RX
 
 VOICE_TEST_TEXT = "GMRS-TTY voice test. Radio check, one two three."
+
+
+def validate_voice_path(voice_path: str) -> bool:
+    """Return True iff ``voice_path`` is non-empty and points to an existing file."""
+    return bool(voice_path) and os.path.isfile(voice_path)
 
 # Common Whisper hallucinations on silence/noise — drop these transcripts.
 HALLUCINATIONS: frozenset[str] = frozenset({

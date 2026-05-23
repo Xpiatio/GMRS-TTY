@@ -11,6 +11,7 @@ from gmrs_tty.constants import (
     SERVICE_GMRS,
     normalize_service,
     utc_now_iso,
+    validate_voice_path,
 )
 
 
@@ -48,6 +49,25 @@ class TestUtcNowIso:
 
     def test_returns_string(self):
         assert isinstance(utc_now_iso(), str)
+
+
+class TestValidateVoicePath:
+    def test_empty_string_is_invalid(self):
+        assert validate_voice_path("") is False
+
+    def test_none_is_invalid(self):
+        assert validate_voice_path(None) is False
+
+    def test_nonexistent_path_is_invalid(self):
+        assert validate_voice_path("/nonexistent/voice.onnx") is False
+
+    def test_existing_file_is_valid(self, tmp_path):
+        f = tmp_path / "voice.onnx"
+        f.write_bytes(b"")
+        assert validate_voice_path(str(f)) is True
+
+    def test_directory_is_invalid(self, tmp_path):
+        assert validate_voice_path(str(tmp_path)) is False
 
 
 class TestHallucinations:
