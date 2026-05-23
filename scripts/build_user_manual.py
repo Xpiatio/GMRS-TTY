@@ -717,39 +717,29 @@ def build_main_window(b: Builder):
                           "Toggling back off re-enables transmission "
                           "instantly — and simultaneously disables the "
                           "Monitor toggle (see below)."),
-        ("Monitor (audio monitor)", "Sits to the right of Listen only. "
-                          "Mnemonic Alt+M. Checkable: when on, incoming "
-                          "radio audio is routed to the configured output "
-                          "device in real-time so the operator can hear "
-                          "the channel through speakers while the app "
-                          "simultaneously transcribes it. <b>Available "
-                          "only when Listen-only mode is active</b> — "
-                          "enabling Monitor on a channel where "
-                          "transmissions are possible would risk audio "
-                          "feedback through the radio mic, so the button "
-                          "is greyed out whenever Listen only is off. "
-                          "When Listen-only is turned off the monitor "
-                          "stream stops automatically. Persists to "
-                          "<font face=\"Courier\">config.json</font> "
-                          "under <font face=\"Courier\">monitor_enabled"
-                          "</font>. A power-on default is also configurable "
-                          "from <b>Settings &rarr; Configuration &rarr; "
-                          "Monitor audio</b>."),
-        ("Passthrough toggle", "Sits immediately to the right of Monitor. "
-                          "Checkable; enabled only while Monitor is on. "
-                          "When checked, incoming audio bypasses the "
-                          "300&ndash;3000 Hz bandpass filter and plays "
-                          "directly to the output device — only the "
+        ("Monitor (audio monitor)", "Sits to the right of the Listen only "
+                          "toggle, separated by a small gap that signals "
+                          "it is a conditional sub-tool. Mnemonic Alt+M. "
+                          "Checkable: when on, incoming radio audio is "
+                          "routed unfiltered to the configured output "
+                          "device in real-time — only the "
                           "16&nbsp;kHz&nbsp;&rarr;&nbsp;48&nbsp;kHz "
-                          "upsample is applied. Transcription (VAD + "
-                          "Whisper) is not affected; the filter is only "
-                          "removed from the speaker path. Useful when "
-                          "the operator wants to hear the raw channel "
-                          "audio without any frequency shaping. "
-                          "Persists to <font face=\"Courier\">config.json"
-                          "</font> under <font face=\"Courier\">"
-                          "monitor_passthrough</font> and is restored "
-                          "automatically when Monitor is activated."),
+                          "polyphase upsample is applied — so the "
+                          "operator hears the raw channel through "
+                          "speakers while the app simultaneously "
+                          "transcribes it. Transcription is not "
+                          "affected. <b>Available only when Listen-only "
+                          "mode is active</b> — enabling Monitor on a "
+                          "channel where transmissions are possible would "
+                          "risk audio feedback through the radio mic, so "
+                          "the button is greyed out whenever Listen only "
+                          "is off. When Listen-only is turned off the "
+                          "monitor stream stops automatically. Persists "
+                          "to <font face=\"Courier\">config.json</font> "
+                          "under <font face=\"Courier\">monitor_enabled"
+                          "</font>. A power-on default is also "
+                          "configurable from <b>Settings &rarr; "
+                          "Configuration &rarr; Monitor audio</b>."),
         ("Live input-level meter", "Thin horizontal bar stretching across "
                                    "the middle of the strip — real-time "
                                    "peak amplitude of the captured audio. "
@@ -758,11 +748,12 @@ def build_main_window(b: Builder):
                                    "zero while you key audio into the "
                                    "radio, the app isn't getting audio. "
                                    "Stays at zero when Listen is off."),
-        ("Clear chat button", "Right-aligned on the strip. Alt+C "
-                              "on the button, or Ctrl+K from anywhere. "
-                              "Asks for Yes/No confirmation then wipes the "
-                              "log. Chat history is in-memory only — "
-                              "it cannot be recovered once cleared."),
+        ("Clear chat button", "Right-aligned on the strip. Ctrl+K "
+                              "from anywhere, or Tools &rarr; Clear Chat "
+                              "from the menu. Asks for Yes/No confirmation "
+                              "then wipes the log. Chat history is "
+                              "in-memory only — it cannot be recovered "
+                              "once cleared."),
         ("Conversation log", "Timestamped messages. Incoming lines are "
                              "green <font face=\"Courier\">[RX HH:MM:SS]:"
                              "</font>. Outgoing lines are blue "
@@ -948,7 +939,8 @@ def build_main_window(b: Builder):
     b.h3("5.10 Menubar")
     b.p("Three menus: <b>Settings</b> (Alt+S), <b>View</b> (Alt+V), "
         "and <b>Tools</b> (Alt+T).")
-    b.p("Settings contains:")
+    b.p("Settings contains persistent configuration only — nothing "
+        "destructive:")
     b.bullets([
         ("Configuration… (Alt+C or Ctrl+,)", "Opens the Configuration "
                                                    "dialog (section 6)."),
@@ -957,12 +949,10 @@ def build_main_window(b: Builder):
                                               "FRS mode."),
         ("Quick Messages… (Alt+Q)", "Opens the Quick Messages "
                                           "editor (section 8)."),
-        ("Clear chat (Alt+R or Ctrl+K)", "Erases every message from the "
-                                          "log after a Yes/No confirmation."),
     ])
-    b.p("View contains the waterfall toggle (Show waterfall, "
-        "Ctrl+Shift+W) and its three submenus (Color map, Frequency "
-        "range, Time window), the callsigns-detected toggle "
+    b.p("View contains a <b>Waterfall</b> submenu (Show waterfall "
+        "Ctrl+Shift+W, Color map, Frequency range, Time window — all "
+        "waterfall controls co-located), the callsigns-detected toggle "
         "(<b>Show callsigns detected</b>, Ctrl+Shift+A — keeps "
         "<font face=\"Courier\">attendance.enabled</font> in sync with "
         "the Configuration dialog checkbox so both surfaces are "
@@ -970,7 +960,7 @@ def build_main_window(b: Builder):
         "show/hide checkboxes for Station, Pending Stations, Quick "
         "Messages, and Transmit, and a <b>Reset layout to default</b> "
         "action (Ctrl+Shift+0).")
-    b.p("Tools contains:")
+    b.p("Tools contains session-level actions:")
     b.bullets([
         ("Generate Session Journal… (Ctrl+J)", "Sends the current "
                                                "conversation transcript "
@@ -995,6 +985,11 @@ def build_main_window(b: Builder):
                                                   "(section 5.11). Same "
                                                   "destination as the 📓 "
                                                   "toolbar button."),
+        ("Clear Chat (Ctrl+K)", "Erases every message from the "
+                                "conversation log after a Yes/No "
+                                "confirmation. Chat history is "
+                                "in-memory only and cannot be "
+                                "recovered once cleared."),
     ])
 
 
@@ -1103,16 +1098,9 @@ def build_config_dialog(b: Builder):
             ["Monitor audio (Alt+M)", "Checkbox",
              "Default off. When checked, the Monitor toggle on the main "
              "window activates automatically each time Listen-only mode "
-             "is enabled, routing incoming radio audio to the output "
-             "device in real-time. The Monitor toggle is the live "
+             "is enabled, routing incoming radio audio unfiltered to the "
+             "output device in real-time. The Monitor toggle is the live "
              "control; this checkbox sets the power-on default only."],
-            ["Monitor passthrough", "Checkbox",
-             "Default off. When checked, the Passthrough toggle on the "
-             "Listen strip is pre-enabled whenever Monitor turns on — "
-             "audio will reach the speaker without the bandpass filter. "
-             "Persisted as "
-             "<font face=\"Courier\">monitor_passthrough</font> in "
-             "config.json. Does not affect transcription."],
             ["Filter profanity (Alt+Y)", "Checkbox",
              "Mask strong language with asterisks. Default on. Applies "
              "to both RX transcripts and TX messages before TTS speaks "

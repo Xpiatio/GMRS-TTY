@@ -67,13 +67,15 @@ class SpectrometerManager(QObject):
         return dock
 
     def install_menu_actions(self, view_menu) -> QAction:
-        """Add the waterfall toggle and its three option submenus to view_menu.
+        """Add a Waterfall submenu (toggle + option submenus) to view_menu.
 
         Returns the toggle QAction so MainWindow can store a reference for the
         Panels submenu dock-shortcut table (which skips the waterfall dock's
         own toggleViewAction in favour of this action)."""
         window = self._window
-        toggle_action = QAction("Show &waterfall", window)
+        waterfall_menu = view_menu.addMenu("&Waterfall")
+
+        toggle_action = QAction("&Show waterfall", window)
         toggle_action.setCheckable(True)
         toggle_action.setChecked(self.settings.enabled)
         toggle_action.setShortcut(QKeySequence("Ctrl+Shift+W"))
@@ -81,27 +83,29 @@ class SpectrometerManager(QObject):
             "Toggle the rolling RX spectrometer (waterfall) below the chat."
         )
         toggle_action.triggered.connect(self.toggle)
-        view_menu.addAction(toggle_action)
+        waterfall_menu.addAction(toggle_action)
         self._toggle_action = toggle_action
+
+        waterfall_menu.addSeparator()
 
         freq_labels = {FREQ_RANGE_VOICE: "&Voice band (300–3400 Hz)",
                        FREQ_RANGE_FULL:  "&Full band (0–Nyquist)"}
         self._build_option_menu(
-            view_menu, "&Color map", AVAILABLE_COLORMAPS,
+            waterfall_menu, "&Color map", AVAILABLE_COLORMAPS,
             label_fn=str.capitalize,
             checked_fn=lambda n: self.settings.colormap == n,
             setter_fn=self.set_colormap,
             actions_attr="_cmap_actions",
         )
         self._build_option_menu(
-            view_menu, "&Frequency range", AVAILABLE_FREQ_RANGES,
+            waterfall_menu, "&Frequency range", AVAILABLE_FREQ_RANGES,
             label_fn=freq_labels.__getitem__,
             checked_fn=lambda k: self.settings.freq_range == k,
             setter_fn=self.set_freq_range,
             actions_attr="_freq_actions",
         )
         self._build_option_menu(
-            view_menu, "&Time window", TIME_WINDOWS_S,
+            waterfall_menu, "&Time window", TIME_WINDOWS_S,
             label_fn=lambda s: f"{s} seconds",
             checked_fn=lambda s: self.settings.time_window_s == s,
             setter_fn=self.set_time_window,
