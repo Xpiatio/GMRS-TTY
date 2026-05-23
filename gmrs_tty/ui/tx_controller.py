@@ -10,7 +10,6 @@ import-time dependency on the window or its widgets.
 from __future__ import annotations
 
 import logging
-import os
 
 from piper.voice import PiperVoice
 
@@ -20,7 +19,7 @@ from PySide6.QtCore import QObject, Signal
 from gmrs_tty.audio.playback import AudioPlayerThread
 from gmrs_tty.text.shorthand import expand_tty_abbreviations
 from gmrs_tty.tts.synthesizer import TTSSynthesisThread
-from gmrs_tty.constants import VOICE_TEST_TEXT
+from gmrs_tty.constants import VOICE_TEST_TEXT, validate_voice_path
 from gmrs_tty.ui import theme
 
 
@@ -79,7 +78,7 @@ class TXController(QObject):
         self._set_busy(True)
         self._output_device = output_device
 
-        if not voice_path or not os.path.exists(voice_path):
+        if not validate_voice_path(voice_path):
             self.chat_message.emit(
                 "<i>Error: No valid Piper voice selected. "
                 "Please select one in Settings → Configuration.</i>",

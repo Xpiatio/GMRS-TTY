@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QPushButton, QSlider, QToolButton, QWidget,
 )
 
-from gmrs_tty.constants import VOICE_TEST_TEXT
+from gmrs_tty.constants import VOICE_TEST_TEXT, validate_voice_path
 from gmrs_tty.ui.device_query import DeviceQueryThread
 
 
@@ -427,7 +427,7 @@ class ConfigDialog(QDialog):
 
     def test_voice(self):
         voice_path = self.voice_input.currentData()
-        if not voice_path or not os.path.exists(voice_path):
+        if not validate_voice_path(voice_path):
             QMessageBox.warning(self, "Test Voice", "No valid Piper voice selected.")
             return
 
