@@ -297,6 +297,42 @@ def dock_title_stylesheet() -> str:
     )
 
 
+def checkable_btn_stylesheet(active_bg: str) -> str:
+    """Strong on/off visual for checkable QPushButtons.
+
+    Off: ghost (transparent fill, muted border).
+    On (:checked): solid fill with active_bg and contrasting text.
+    Uses window_bg as checked text so the contrast adapts across themes:
+    light theme fills are dark → white (window_bg=#FFF) reads fine;
+    dark theme fills are bright → near-black (window_bg=#1F2937) reads fine.
+    """
+    p = palette()
+    return (
+        "QPushButton {"
+        f" border: 2px solid {p.header_border};"
+        " border-radius: 4px;"
+        f" padding: {SPACING_XS}px {SPACING_S}px;"
+        " background-color: transparent;"
+        "}"
+        "QPushButton:hover:!checked {"
+        f" background-color: {p.header_bg};"
+        "}"
+        "QPushButton:checked {"
+        f" background-color: {active_bg};"
+        f" color: {p.window_bg};"
+        f" border-color: {active_bg};"
+        "}"
+        "QPushButton:disabled {"
+        f" color: {p.placeholder_text};"
+        f" border-color: {p.header_border};"
+        " background-color: transparent;"
+        "}"
+        "QPushButton:focus {"
+        f" border-color: {p.focus_ring};"
+        "}"
+    )
+
+
 def toolbar_focus_stylesheet() -> str:
     """Focus-ring stylesheet for the service toolbar's QToolButton row.
     Audit F-014: ``autoRaise=True`` tool buttons have no painted resting

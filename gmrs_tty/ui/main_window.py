@@ -421,6 +421,8 @@ class MainWindow(QMainWindow):
         listen_strip.setContentsMargins(0, 0, 0, 0)
         listen_strip.setSpacing(theme.SPACING_S)
 
+        p = theme.palette()
+
         self.listen_btn = QPushButton("&Listen", wrapper)
         self.listen_btn.setCheckable(True)
         self.listen_btn.setToolTip("Toggle microphone capture / live transcription (Alt+L, Ctrl+L)")
@@ -428,6 +430,7 @@ class MainWindow(QMainWindow):
         self.listen_btn.setAccessibleDescription(
             "Start or stop transcribing incoming radio audio. Currently stopped."
         )
+        self.listen_btn.setStyleSheet(theme.checkable_btn_stylesheet(p.rx))
         self.listen_btn.toggled.connect(self.toggle_listening)
         listen_strip.addWidget(self.listen_btn)
 
@@ -450,38 +453,29 @@ class MainWindow(QMainWindow):
             "Block all outgoing transmissions while still receiving. "
             "Currently on."
         )
+        self.listen_only_btn.setStyleSheet(theme.checkable_btn_stylesheet(p.warn))
         self.listen_only_btn.toggled.connect(self._on_listen_only_toggled)
         listen_strip.addWidget(self.listen_only_btn)
+
+        # Separator: Monitor is only available when both Listen and Listen-only
+        # are active, so a small gap visually groups it as a conditional sub-tool.
+        listen_strip.addSpacing(theme.SPACING_M)
 
         self.monitor_btn = QPushButton("&Monitor", wrapper)
         self.monitor_btn.setCheckable(True)
         self.monitor_btn.setEnabled(False)
         self.monitor_btn.setToolTip(
-            "Route incoming radio audio to the output device (Alt+M). "
+            "Play incoming radio audio through the speakers unfiltered (Alt+M). "
             "Available when Listen-only mode is active."
         )
         self.monitor_btn.setAccessibleName("Monitor audio toggle")
         self.monitor_btn.setAccessibleDescription(
-            "Play incoming radio audio through the computer speakers. "
+            "Play incoming radio audio unfiltered through the computer speakers. "
             "Available when Listen and Listen-only are both active. Currently off."
         )
+        self.monitor_btn.setStyleSheet(theme.checkable_btn_stylesheet(p.tx))
         self.monitor_btn.toggled.connect(self._on_monitor_toggled)
         listen_strip.addWidget(self.monitor_btn)
-
-        self.passthrough_btn = QPushButton("Pass&through", wrapper)
-        self.passthrough_btn.setCheckable(True)
-        self.passthrough_btn.setEnabled(False)
-        self.passthrough_btn.setToolTip(
-            "Send audio straight to the speaker without the bandpass filter. "
-            "Active only while Monitor is on."
-        )
-        self.passthrough_btn.setAccessibleName("Monitor passthrough toggle")
-        self.passthrough_btn.setAccessibleDescription(
-            "When on, audio bypasses the 300–3000 Hz filter and plays unprocessed. "
-            "Transcription is not affected."
-        )
-        self.passthrough_btn.toggled.connect(self._on_passthrough_toggled)
-        listen_strip.addWidget(self.passthrough_btn)
 
         self.audio_level_meter = QProgressBar(wrapper)
         self.audio_level_meter.setRange(0, 100)
@@ -856,27 +850,9 @@ class MainWindow(QMainWindow):
         quick_action.triggered.connect(self.open_quick_messages_dialog)
         settings_menu.addAction(quick_action)
 
-        settings_menu.addSeparator()
-
-        # Clear-chat lives on the Settings menu rather than a new top-level menu
-        # so we don't grow the menubar for a single action; the menu entry
-        # surfaces the Ctrl+K shortcut for keyboard-only operators who don't
-        # spot the toolbar button.
-        # In-menu mnemonic differs from the button's "Clear &chat" because the
-        # 'c' inside the open Settings menu already belongs to Configuration —
-        # use 'r' to avoid the collision while keeping the button intuitive.
-        clear_chat_action = QAction("Clea&r chat", self)
-        clear_chat_action.setShortcut(QKeySequence("Ctrl+K"))
-        clear_chat_action.setStatusTip(
-            "Erase every message from the conversation log."
-        )
-        clear_chat_action.triggered.connect(self.clear_chat)
-        settings_menu.addAction(clear_chat_action)
-
-        # View Menu — Alt+V mnemonic. Houses the rolling RX spectrometer
-        # toggle plus its presentation options (color map, frequency range,
-        # time window). All actions persist their choice to config.json so
-        # the next launch comes up the same way the operator left it.
+        # View Menu — Alt+V mnemonic. Waterfall (with option submenus),
+        # callsigns panel toggle, and dock layout controls. All display
+        # preferences persist to config.json so the next launch is identical.
         view_menu = menubar.addMenu("&View")
 
         # Waterfall toggle + color/freq/window submenus are owned by the
@@ -937,7 +913,8 @@ class MainWindow(QMainWindow):
         reset_action.triggered.connect(self._reset_layout_to_default)
         panels_menu.addAction(reset_action)
 
-        # Tools Menu — Alt+T mnemonic. AI-assisted session tools.
+        # Tools Menu — Alt+T mnemonic. Session-level actions: AI journal
+        # generation and session resets. Settings-like prefs stay in Settings.
         tools_menu = menubar.addMenu("&Tools")
 
         generate_journal_action = QAction("&Generate Session Journal…", self)
@@ -950,8 +927,6 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(generate_journal_action)
         self._generate_journal_action = generate_journal_action
 
-        tools_menu.addSeparator()
-
         view_journals_action = QAction("&View Session Journals…", self)
         view_journals_action.setShortcut(QKeySequence("Ctrl+Shift+J"))
         view_journals_action.setStatusTip(
@@ -959,6 +934,16 @@ class MainWindow(QMainWindow):
         )
         view_journals_action.triggered.connect(self.journal_controller.open_dialog)
         tools_menu.addAction(view_journals_action)
+
+        tools_menu.addSeparator()
+
+        clear_chat_action = QAction("&Clear Chat", self)
+        clear_chat_action.setShortcut(QKeySequence("Ctrl+K"))
+        clear_chat_action.setStatusTip(
+            "Erase every message from the conversation log."
+        )
+        clear_chat_action.triggered.connect(self.clear_chat)
+        tools_menu.addAction(clear_chat_action)
 
     def update_header(self):
         """Updates the top bar with current user info. In FRS mode the
@@ -1036,6 +1021,10 @@ class MainWindow(QMainWindow):
             if isinstance(bar, CompactTitleBar):
                 bar.refresh_palette()
         self._service_toolbar.setStyleSheet(theme.toolbar_focus_stylesheet())
+        p = theme.palette()
+        self.listen_btn.setStyleSheet(theme.checkable_btn_stylesheet(p.rx))
+        self.listen_only_btn.setStyleSheet(theme.checkable_btn_stylesheet(p.warn))
+        self.monitor_btn.setStyleSheet(theme.checkable_btn_stylesheet(p.tx))
 
     def _refresh_theme_toggle_glyph(self):
         """Set the toggle's glyph + tooltip to advertise the next theme.
@@ -1428,16 +1417,12 @@ class MainWindow(QMainWindow):
 
     def _on_monitor_toggled(self, checked: bool) -> None:
         if checked:
-            self._monitor.set_passthrough(self.config.monitor_passthrough)
+            self._monitor.set_passthrough(True)
             self._monitor.start(self.config.output_device)
             if self.stt_worker is not None:
                 self.stt_worker.audio_chunk.connect(self._monitor.push)
-            self.passthrough_btn.setEnabled(True)
-            self.passthrough_btn.blockSignals(True)
-            self.passthrough_btn.setChecked(self.config.monitor_passthrough)
-            self.passthrough_btn.blockSignals(False)
             self.monitor_btn.setAccessibleDescription(
-                "Play incoming radio audio through the computer speakers. "
+                "Play incoming radio audio unfiltered through the computer speakers. "
                 "Available when Listen and Listen-only are both active. Currently on."
             )
         else:
@@ -1447,20 +1432,11 @@ class MainWindow(QMainWindow):
                 except (TypeError, RuntimeError):
                     pass
             self._monitor.stop()
-            self.passthrough_btn.setEnabled(False)
             self.monitor_btn.setAccessibleDescription(
-                "Play incoming radio audio through the computer speakers. "
+                "Play incoming radio audio unfiltered through the computer speakers. "
                 "Available when Listen and Listen-only are both active. Currently off."
             )
         self.config["monitor_enabled"] = checked
-        try:
-            self.config.save()
-        except Exception:
-            pass
-
-    def _on_passthrough_toggled(self, checked: bool) -> None:
-        self._monitor.set_passthrough(checked)
-        self.config["monitor_passthrough"] = checked
         try:
             self.config.save()
         except Exception:
@@ -1703,7 +1679,6 @@ class MainWindow(QMainWindow):
         self.monitor_btn.setChecked(False)
         self.monitor_btn.blockSignals(False)
         self.monitor_btn.setEnabled(False)
-        self.passthrough_btn.setEnabled(False)
         # Tear the spectrometer down first so its STT-signal disconnects
         # run while the worker is still alive — spectro_manager.stop()
         # reaches through self.stt_worker to undo the audio_chunk hookup.
