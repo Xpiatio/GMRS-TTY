@@ -104,6 +104,8 @@ echo ">>> Downloading wheels (this can take a few minutes) ..."
     -r "$REPO_ROOT/requirements.txt" \
     -d "$STAGE/opt/$PKG/wheels" \
     --extra-index-url https://download.pytorch.org/whl/cpu
+"$PY" -m pip download pip setuptools wheel \
+    -d "$STAGE/opt/$PKG/wheels"
 
 # ---------------------------------------------------------------------------
 # 4. Launcher script.
@@ -168,7 +170,7 @@ Architecture: $ARCH
 Depends: python3.13, python3.13-venv, libportaudio2, libxcb-cursor0, libegl1, libgl1
 Recommends: espeak-ng
 Installed-Size: $SIZE_KB
-Maintainer: Xpiatio <benjamin.zomberg@thestowcompany.com>
+Maintainer: Xpiatio <xpiatio@users.noreply.github.com>
 Homepage: https://github.com/Xpiatio/GMRS-TTY
 Description: GMRS/FRS speech-to-text and text-to-speech assistant
  GMRS-TTY is a Qt desktop application that lets you talk over GMRS/FRS
@@ -205,9 +207,9 @@ case "$1" in
         fi
 
         echo "gmrs-tty: installing bundled wheels (offline) ..."
-        "$VENV/bin/pip" install --quiet --no-index --find-links "$WHEELS" \
+        "$VENV/bin/python" -m pip install --quiet --no-index --find-links "$WHEELS" \
             --upgrade pip setuptools wheel || true
-        "$VENV/bin/pip" install --quiet --no-index --find-links "$WHEELS" \
+        "$VENV/bin/python" -m pip install --quiet --no-index --find-links "$WHEELS" \
             -r "$APP_DIR/requirements.txt"
 
         # Allow all users to write config.json / contacts.json in-place.
