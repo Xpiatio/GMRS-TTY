@@ -1,9 +1,20 @@
+from __future__ import annotations
+
 import datetime
 import shutil
 import subprocess
+from typing import Protocol, runtime_checkable
 
 import numpy as np
 import sounddevice as sd
+
+
+@runtime_checkable
+class AudioInputSource(Protocol):
+    """Structural interface for all audio capture sources."""
+
+    def read(self) -> np.ndarray: ...
+    def close(self) -> None: ...
 
 
 def _yt_dlp_auth_flags(cookies_from_browser: str = "", cookies_file: str = "") -> list:
@@ -116,7 +127,7 @@ class YouTubeSource:
                 pass
             self._start()
 
-    def close(self):
+    def close(self) -> None:
         if self._proc is not None:
             try:
                 self._proc.terminate()
@@ -153,7 +164,7 @@ class ParecSource:
             stderr=subprocess.DEVNULL,
         )
 
-    def read(self):
+    def read(self) -> np.ndarray:
         buf = self.proc.stdout.read(self.bytes_per_chunk)
         while len(buf) < self.bytes_per_chunk:
             more = self.proc.stdout.read(self.bytes_per_chunk - len(buf))
@@ -162,7 +173,7 @@ class ParecSource:
             buf = buf + more
         return np.frombuffer(buf, dtype=np.int16).astype(np.float32) / 32768.0
 
-    def close(self):
+    def close(self) -> None:
         try:
             self.proc.terminate()
             self.proc.wait(timeout=2)
@@ -192,11 +203,11 @@ class PortAudioSource:
         )
         self.stream.start()
 
-    def read(self):
+    def read(self) -> np.ndarray:
         data, _ = self.stream.read(self.chunk_samples)
         return data[:, 0].copy()
 
-    def close(self):
+    def close(self) -> None:
         try:
             self.stream.stop()
             self.stream.close()
@@ -205,13 +216,13 @@ class PortAudioSource:
 
 
 def open_input_source(
-    sample_rate,
-    chunk_samples,
-    input_device=None,
-    youtube_url=None,
-    youtube_cookies_from_browser="",
-    youtube_cookies_file="",
-):
+    sample_rate: int,
+    chunk_samples: int,
+    input_device: str | int | None = None,
+    youtube_url: str | None = None,
+    youtube_cookies_from_browser: str = "",
+    youtube_cookies_file: str = "",
+) -> AudioInputSource:
     """Open an InputSource for the active capture path.
 
     Prefers `parec` over PortAudio when the operator has not selected a
