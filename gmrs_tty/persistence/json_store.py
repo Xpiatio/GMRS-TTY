@@ -1,5 +1,8 @@
 import json
+import logging
 import os
+
+_log = logging.getLogger(__name__)
 
 
 def load_json(filepath, default_data):
@@ -9,7 +12,7 @@ def load_json(filepath, default_data):
             with open(filepath, 'r') as f:
                 return json.load(f)
         except json.JSONDecodeError:
-            print(f"Error decoding {filepath}. Using defaults.")
+            _log.warning("Error decoding %s. Using defaults.", filepath)
     return default_data
 
 
@@ -19,4 +22,4 @@ def save_json(filepath, data):
         with open(filepath, 'w') as f:
             json.dump(data, f, indent=4)
     except Exception as e:
-        print(f"Error saving {filepath}: {e}")
+        _log.error("Error saving %s: %s", filepath, e)

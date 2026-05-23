@@ -9,10 +9,12 @@ import-time dependency on the window or its widgets.
 """
 from __future__ import annotations
 
+import logging
 import os
-import traceback
 
 from piper.voice import PiperVoice
+
+_log = logging.getLogger(__name__)
 from PySide6.QtCore import QObject, Signal
 
 from gmrs_tty.audio.playback import AudioPlayerThread
@@ -184,7 +186,7 @@ class TXController(QObject):
         self._audio_thread.start()
 
     def _on_tts_synthesis_error(self, msg: str) -> None:
-        traceback.print_exc()
+        _log.exception("TTS synthesis error: %s", msg)
         self.chat_message.emit(f"<i>TTS Error: {msg}</i>", theme.palette().error)
         self.stt_resume_requested.emit()
         self._set_busy(False)
