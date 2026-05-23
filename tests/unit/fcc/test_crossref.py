@@ -13,7 +13,7 @@ class FakeResponse:
         self._payload = payload
         self.status = status
 
-    def read(self):
+    def read(self, size=-1):
         return self._payload.encode("utf-8") if isinstance(self._payload, str) else self._payload
 
     def __enter__(self):

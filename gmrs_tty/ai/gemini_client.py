@@ -59,7 +59,7 @@ def generate_journal(
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read(1024 * 1024))
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode(errors="replace")
+        detail = exc.read(1024 * 1024).decode(errors="replace")
         raise GeminiError(f"HTTP {exc.code}: {detail}") from exc
     except Exception as exc:
         raise GeminiError(str(exc)) from exc
