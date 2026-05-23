@@ -48,16 +48,16 @@ def generate_journal(
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"responseMimeType": "application/json"},
     }).encode()
-    url = f"{_BASE_URL}/{_MODEL}:generateContent?key={api_key}"
+    url = f"{_BASE_URL}/{_MODEL}:generateContent"
     req = urllib.request.Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
+            data = json.loads(resp.read(1024 * 1024))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")
         raise GeminiError(f"HTTP {exc.code}: {detail}") from exc
