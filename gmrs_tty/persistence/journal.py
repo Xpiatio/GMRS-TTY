@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime
+from pathlib import Path
 
 JOURNALS_DIR = "journals"
 
@@ -61,4 +62,8 @@ def load_journals() -> list[dict]:
 
 def delete_journal(file_path: str) -> None:
     """Delete the journal entry at *file_path*."""
-    os.remove(file_path)
+    journals_dir = Path(JOURNALS_DIR).resolve()
+    target = Path(file_path).resolve()
+    if not target.is_relative_to(journals_dir):
+        raise ValueError(f"Refusing to delete file outside journals directory: {file_path}")
+    os.remove(target)
