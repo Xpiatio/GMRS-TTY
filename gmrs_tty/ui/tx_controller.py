@@ -115,6 +115,10 @@ class TXController(QObject):
         Reuses the voice cache so the dialog test is free if the same voice
         is already loaded. Calls ``done_cb()`` on completion or error.
         """
+        if self._tx_busy:
+            _log.warning("test_voice called while TX is in progress; ignoring.")
+            done_cb()
+            return
         if self._voice_cache is None or self._voice_cache[0] != voice_path:
             try:
                 self._voice_cache = (voice_path, PiperVoice.load(voice_path))
