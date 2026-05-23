@@ -4,17 +4,15 @@ import os
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QButtonGroup, QComboBox, QDockWidget, QFrame, QHBoxLayout,
-    QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
-    QProgressBar, QPushButton, QRadioButton, QScrollArea, QSizePolicy,
+    QApplication, QButtonGroup, QComboBox, QDockWidget, QHBoxLayout,
+    QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox,
+    QProgressBar, QPushButton, QRadioButton, QSizePolicy,
     QToolBar, QToolButton, QVBoxLayout, QWidget,
 )
 
 from gmrs_tty.config import AppConfig
 from gmrs_tty.ui.tx_controller import TXController
-from gmrs_tty.audio.capture import fetch_youtube_upload_date
 from gmrs_tty.audio.monitor import AudioMonitor
-from gmrs_tty.audio.spectro_worker import SpectrogramWorker
 from gmrs_tty.constants import (
     CONFIG_FILE, CONTACTS_FILE,
     SERVICE_FRS, SERVICE_GMRS, normalize_service,
@@ -31,33 +29,23 @@ from gmrs_tty.persistence.contacts import (
 from gmrs_tty.persistence.json_store import load_json, save_json
 from gmrs_tty.ptt import make_ptt
 from gmrs_tty.stt.worker import STTWorker
-from gmrs_tty.text.callsigns import (
-    detect_callsigns,
-    fuzzy_match_callsign,
-    spell_digits_in_callsigns,
-)
-from gmrs_tty.text.metadata import extract_name_location
+from gmrs_tty.text.callsigns import spell_digits_in_callsigns
 from gmrs_tty.text.profanity import mask_profanity
 from gmrs_tty.text.placeholders import find_placeholders, substitute_placeholders
 
-from gmrs_tty.ai.journal_worker import JournalWorker
-from gmrs_tty.persistence.journal import save_journal
 from gmrs_tty.ui import theme
 from gmrs_tty.ui import dock_layout
 from gmrs_tty.ui.attendance_panel import AttendancePanel
 from gmrs_tty.ui.chat_display import ChatDisplay
 from gmrs_tty.ui.config_dialog import ConfigDialog
-from gmrs_tty.ui.contacts_dialog import AddContactDialog, ContactsDialog
+from gmrs_tty.ui.contacts_dialog import ContactsDialog
 from gmrs_tty.ui.dock_layout import CompactTitleBar
 from gmrs_tty.ui.flow_layout import FlowLayout
-from gmrs_tty.ui.journal_dialog import JournalDialog
+from gmrs_tty.ui.journal_controller import JournalController
+from gmrs_tty.ui.pending_station_manager import PendingStationManager
 from gmrs_tty.ui.quick_messages_dialog import QuickMessagesDialog
 from gmrs_tty.ui.rx_session import RXSession
-from gmrs_tty.ui.spectro_colormap import AVAILABLE_COLORMAPS
-from gmrs_tty.ui.spectrogram_widget import (
-    AVAILABLE_FREQ_RANGES, FREQ_RANGE_FULL, FREQ_RANGE_VOICE,
-    SpectrogramWidget, SpectroSettings, TIME_WINDOWS_S,
-)
+from gmrs_tty.ui.spectro_manager import SpectrometerManager
 
 PENDING_PILL_MAX_ROWS = 3
 QUICK_MESSAGE_SHORTCUT_COUNT = 9
@@ -118,27 +106,14 @@ class MainWindow(QMainWindow):
         # utterance completion. Built lazily after init_ui so chat_display
         # and _format_timestamp are both available; see _make_rx_session().
         self._rx_session: RXSession | None = None
-        self.pending_buttons = {}  # callsign -> QPushButton
-        self._pending_row_height = None  # cached pill row height for scroll cap
-        # In-flight FCC auto-add lookups, keyed by callsign. A second detection
-        # of the same callsign mid-lookup is suppressed so we don't hammer the
-        # API with duplicate requests for one operator who keys up twice.
-        self._callsign_lookups = {}
+        self.pending_manager = PendingStationManager(self, parent=self)
         self.tx = TXController(make_ptt(self.config), parent=self)
         self.tx.tx_busy_changed.connect(self._on_tx_busy_changed)
         self.tx.chat_message.connect(self.append_to_chat)
         self.tx.stt_pause_requested.connect(self._pause_stt_for_tx)
         self.tx.stt_resume_requested.connect(self._resume_stt_after_tx)
         self._monitor = AudioMonitor()
-        # Rolling-spectrometer state. Settings are read from config so the
-        # operator's last choice (enabled, colormap, range, window) persists
-        # across launches. The widget + FFT worker are created lazily in
-        # init_ui / start_spectrometer so the spectrometer never costs CPU
-        # until the operator actually turns it on.
-        self.spectro_settings = SpectroSettings.from_config(self.config)
-        self.spectro_widget = None
-        self.spectro_worker = None
-        self._spectro_capture_event_hooked = False
+        self.spectro_manager = SpectrometerManager(self, parent=self)
         # Attendance grid: feature flag persists at ``attendance.enabled``
         # (default off) so the panel + RX-side recording are both opt-in.
         # The dock itself is always *built* — we just hide it and skip the
@@ -151,9 +126,7 @@ class MainWindow(QMainWindow):
         # (FRS-mode, layout reset, restore-from-saved) for a user click on
         # the title-bar X.
         self._suppress_attendance_visibility = False
-        # In-flight journal generation worker; held on self so it isn't
-        # garbage-collected before the background thread finishes.
-        self._journal_worker: JournalWorker | None = None
+        self.journal_controller = JournalController(self, parent=self)
 
         self._ui_ready = False
 
@@ -178,8 +151,8 @@ class MainWindow(QMainWindow):
         # Spectrometer visibility honors its own config key independent of
         # the layout state — re-apply after restore so a saved-state
         # "waterfall hidden" doesn't override a user who just enabled it.
-        self.spectro_widget.setVisible(self.spectro_settings.enabled)
-        self.waterfall_dock.setVisible(self.spectro_settings.enabled)
+        self.spectro_manager.widget.setVisible(self.spectro_manager.settings.enabled)
+        self.spectro_manager.dock.setVisible(self.spectro_manager.settings.enabled)
         # Attendance dock follows ``attendance.enabled`` for the same
         # reason: a saved layout from before the feature was enabled
         # shouldn't override the operator's later opt-in.
@@ -209,41 +182,19 @@ class MainWindow(QMainWindow):
             )
 
     def closeEvent(self, event):
-        # stop_stt already runs _stop_spectro_worker, but call it directly
+        # stop_stt already runs spectro_manager.stop(), but call it directly
         # too so a window close that races with start_stt mid-flight can't
         # leave the FFT thread orphaned.
         self.stop_stt()
-        self._stop_spectro_worker()
+        self.spectro_manager.stop()
         self._monitor.stop()
         for attr in ('tts_thread', 'audio_thread'):
             thread = getattr(self, attr, None)
             if thread is not None and thread.isRunning():
                 thread.quit()
                 thread.wait()
-        # FCC auto-add lookups sit on a 5s HTTP timeout; disconnect their
-        # signals so a late result can't touch a torn-down window, then give
-        # each thread a brief window to exit cleanly before the process tears
-        # down. They emit nothing further once disconnected so leaking the
-        # native thread is harmless.
-        for cs, worker in list(self._callsign_lookups.items()):
-            try:
-                worker.result_ready.disconnect()
-            except (TypeError, RuntimeError):
-                pass
-            if worker.isRunning():
-                worker.wait(100)
-        self._callsign_lookups.clear()
-        # Journal worker makes a 30s HTTP request that can't be interrupted.
-        # Disconnect its signals so a late result can't touch a torn-down
-        # window, then give it a brief window to exit before the process does.
-        if self._journal_worker is not None and self._journal_worker.isRunning():
-            try:
-                self._journal_worker.finished.disconnect()
-                self._journal_worker.error.disconnect()
-            except (TypeError, RuntimeError):
-                pass
-            self._journal_worker.wait(300)
-        self._journal_worker = None
+        self.pending_manager.disconnect_workers()
+        self.journal_controller.cleanup()
         self.tx.close_ptt()
         # Persist dock placements + window geometry so the next launch
         # lands the operator back in the layout they were using. Saves
@@ -270,9 +221,9 @@ class MainWindow(QMainWindow):
         self._build_service_toolbar()
         self._build_central_widget()
         self._build_station_dock()
-        self._build_waterfall_dock()
+        self.spectro_manager.build_dock()
         self._build_attendance_dock()
-        self._build_pending_dock()
+        self.pending_manager.build_dock()
         self._build_quick_messages_dock()
         self._build_transmit_dock()
         self._build_status_bar()
@@ -419,7 +370,7 @@ class MainWindow(QMainWindow):
             "Tools → View Session Journals (Ctrl+Shift+J)."
         )
         self.journal_icon_btn.setToolTip("Session Journals (Ctrl+Shift+J)")
-        self.journal_icon_btn.clicked.connect(self.open_journal_dialog)
+        self.journal_icon_btn.clicked.connect(self.journal_controller.open_dialog)
         tb.addWidget(self.journal_icon_btn)
 
         # Configuration cog. Rightmost — "settings last" convention. Stays
@@ -556,7 +507,7 @@ class MainWindow(QMainWindow):
         self.generate_journal_btn.setAccessibleDescription(
             "Use the Gemini API to summarise the conversation log into a saved journal entry."
         )
-        self.generate_journal_btn.clicked.connect(self._generate_journal)
+        self.generate_journal_btn.clicked.connect(self.journal_controller.generate)
         self.generate_journal_btn.setVisible(bool(self.config.gemini_api_key))
         listen_strip.addWidget(self.generate_journal_btn)
 
@@ -658,59 +609,6 @@ class MainWindow(QMainWindow):
         # recording into a hidden grid.
         dock.visibilityChanged.connect(self._on_attendance_dock_visibility_changed)
         self.attendance_dock = dock
-
-    def _build_pending_dock(self):
-        """Pending-stations dock: scrollable wrap of detection pills + a
-        ``Dismiss all`` button. Empty by default — the dock itself stays
-        visible so the operator can see "no pending stations" rather than
-        wondering where the panel went."""
-        content = QWidget(self)
-        bar = QHBoxLayout(content)
-        bar.setContentsMargins(theme.SPACING_S, theme.SPACING_XS, theme.SPACING_S, theme.SPACING_XS)
-        bar.setSpacing(theme.SPACING_S)
-
-        self.pending_pills_widget = QWidget(content)
-        self.pending_flow = FlowLayout(self.pending_pills_widget, margin=0, spacing=theme.SPACING_S)
-
-        self.pending_scroll = QScrollArea(content)
-        self.pending_scroll.setWidgetResizable(True)
-        self.pending_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.pending_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self.pending_scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
-        self.pending_scroll.setWidget(self.pending_pills_widget)
-        self.pending_scroll.hide()
-        bar.addWidget(self.pending_scroll, 1)
-
-        self.clear_pending_btn = QPushButton("&Dismiss all", content)
-        self.clear_pending_btn.setToolTip(
-            "Dismiss every pending station pill without adding any callsigns."
-        )
-        self.clear_pending_btn.setAccessibleName("Dismiss all pending stations")
-        self.clear_pending_btn.setAccessibleDescription(
-            "Remove every pending station pill without adding any of the detected callsigns to contacts."
-        )
-        self.clear_pending_btn.clicked.connect(self._clear_all_pending_pills)
-        self.clear_pending_btn.hide()
-        bar.addWidget(self.clear_pending_btn, 0, Qt.AlignmentFlag.AlignTop)
-        # pending_bar is preserved as an attribute (some legacy paths
-        # walked the layout); now it's owned by the dock content widget.
-        self.pending_bar = bar
-
-        dock = QDockWidget("Pending Stations", self)
-        dock.setObjectName(dock_layout.DOCK_PENDING)
-        dock.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetMovable
-            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
-            | QDockWidget.DockWidgetFeature.DockWidgetClosable
-        )
-        dock.setWidget(content)
-        dock.setTitleBarWidget(CompactTitleBar(dock))
-        dock_layout.install_dock_context_menu(self, dock)
-        self.pending_dock = dock
 
     def _build_quick_messages_dock(self):
         """Quick-message preset strip. Presets ride the same TX pipeline
@@ -866,7 +764,7 @@ class MainWindow(QMainWindow):
         )
         QShortcut(
             QKeySequence("Ctrl+Shift+P"), self,
-            activated=lambda: self._toggle_dock(self.pending_dock),
+            activated=lambda: self._toggle_dock(self.pending_manager.dock),
         )
         QShortcut(
             QKeySequence("Ctrl+Shift+Q"), self,
@@ -908,24 +806,12 @@ class MainWindow(QMainWindow):
         visibility so the operator's last per-feature choice survives the
         reset."""
         dock_layout.build_default_layout(self)
-        self.waterfall_dock.setVisible(self.spectro_settings.enabled)
-        self.spectro_widget.setVisible(self.spectro_settings.enabled)
+        sm = self.spectro_manager
+        sm.dock.setVisible(sm.settings.enabled)
+        sm.widget.setVisible(sm.settings.enabled)
         self._set_attendance_dock_visible(
             self.attendance_enabled and self._service_mode() != SERVICE_FRS
         )
-
-    def _on_waterfall_dock_visibility_changed(self, visible):
-        """A close-button click on the waterfall dock has to also stop
-        the FFT worker — invisible widgets don't get paint events but the
-        worker would keep producing rows. Mirrors the View-menu toggle."""
-        if not self._ui_ready:
-            return
-        if visible == self.spectro_settings.enabled:
-            return
-        # Route through _on_spectro_toggle so persistence + worker
-        # lifecycle paths stay in one place.
-        self._spectro_toggle_action.setChecked(visible)
-        self._on_spectro_toggle(visible)
 
     def create_menus(self):
         menubar = self.menuBar()
@@ -978,43 +864,10 @@ class MainWindow(QMainWindow):
         # the next launch comes up the same way the operator left it.
         view_menu = menubar.addMenu("&View")
 
-        self._spectro_toggle_action = QAction("Show &waterfall", self)
-        self._spectro_toggle_action.setCheckable(True)
-        self._spectro_toggle_action.setChecked(self.spectro_settings.enabled)
-        self._spectro_toggle_action.setShortcut(QKeySequence("Ctrl+Shift+W"))
-        self._spectro_toggle_action.setStatusTip(
-            "Toggle the rolling RX spectrometer (waterfall) below the chat."
-        )
-        self._spectro_toggle_action.triggered.connect(self._on_spectro_toggle)
-        view_menu.addAction(self._spectro_toggle_action)
-
-        # Color map / frequency range / time window — three structurally
-        # identical checkable-action submenus built by the shared helper.
-        # Grouped directly under "Show waterfall" so all waterfall controls
-        # sit together before unrelated panel toggles.
-        freq_labels = {FREQ_RANGE_VOICE: "&Voice band (300–3400 Hz)",
-                       FREQ_RANGE_FULL:  "&Full band (0–Nyquist)"}
-        self._build_spectro_option_menu(
-            view_menu, "&Color map", AVAILABLE_COLORMAPS,
-            label_fn=str.capitalize,
-            checked_fn=lambda n: self.spectro_settings.colormap == n,
-            setter_fn=self._set_spectro_colormap,
-            actions_attr="_spectro_cmap_actions",
-        )
-        self._build_spectro_option_menu(
-            view_menu, "&Frequency range", AVAILABLE_FREQ_RANGES,
-            label_fn=freq_labels.__getitem__,
-            checked_fn=lambda k: self.spectro_settings.freq_range == k,
-            setter_fn=self._set_spectro_freq_range,
-            actions_attr="_spectro_freq_actions",
-        )
-        self._build_spectro_option_menu(
-            view_menu, "&Time window", TIME_WINDOWS_S,
-            label_fn=lambda s: f"{s} seconds",
-            checked_fn=lambda s: self.spectro_settings.time_window_s == s,
-            setter_fn=self._set_spectro_time_window,
-            actions_attr="_spectro_window_actions",
-        )
+        # Waterfall toggle + color/freq/window submenus are owned by the
+        # SpectrometerManager so the FFT worker lifecycle stays co-located
+        # with the widget and settings.
+        self._spectro_toggle_action = self.spectro_manager.install_menu_actions(view_menu)
 
         view_menu.addSeparator()
 
@@ -1043,15 +896,15 @@ class MainWindow(QMainWindow):
         # shortcut so the menu surfaces the binding next to the label.
         dock_shortcuts = {
             self.station_dock: "Ctrl+Shift+S",
-            self.waterfall_dock: "",  # Already on Ctrl+Shift+W via the action above
-            self.pending_dock: "Ctrl+Shift+P",
+            self.spectro_manager.dock: "",  # Already on Ctrl+Shift+W via the action above
+            self.pending_manager.dock: "Ctrl+Shift+P",
             self.quick_dock: "Ctrl+Shift+Q",
             self.transmit_dock: "Ctrl+Shift+T",
         }
         for dock, sequence in dock_shortcuts.items():
-            if dock is self.waterfall_dock:
-                # Waterfall toggling is owned by _spectro_toggle_action so
-                # the FFT worker lifecycle stays bound to the action. Use
+            if dock is self.spectro_manager.dock:
+                # Waterfall toggling is owned by the SpectrometerManager action
+                # so the FFT worker lifecycle stays bound to the action. Use
                 # that action here too rather than the dock's toggleView.
                 continue
             action = dock.toggleViewAction()
@@ -1078,7 +931,7 @@ class MainWindow(QMainWindow):
             "Send the current transcript and callsigns to Gemini to generate "
             "a session journal entry. Requires a Gemini API key in Settings → Configuration."
         )
-        generate_journal_action.triggered.connect(self._generate_journal)
+        generate_journal_action.triggered.connect(self.journal_controller.generate)
         tools_menu.addAction(generate_journal_action)
         self._generate_journal_action = generate_journal_action
 
@@ -1089,7 +942,7 @@ class MainWindow(QMainWindow):
         view_journals_action.setStatusTip(
             "Browse all saved session journal entries."
         )
-        view_journals_action.triggered.connect(self.open_journal_dialog)
+        view_journals_action.triggered.connect(self.journal_controller.open_dialog)
         tools_menu.addAction(view_journals_action)
 
     def update_header(self):
@@ -1183,13 +1036,7 @@ class MainWindow(QMainWindow):
             self.theme_toggle_btn.setToolTip("Switch to dark mode")
 
     def _restyle_pending_pills(self):
-        """Re-apply the current palette's pill stylesheet to every live
-        pending-station pill so an in-flight pill list survives a theme
-        flip. The stylesheet builder is the single source of truth so the
-        toggle path and add_pending_station can't drift apart."""
-        sheet = theme.pill_stylesheet()
-        for btn in self.pending_buttons.values():
-            btn.setStyleSheet(sheet)
+        self.pending_manager.restyle_pills()
 
     def _apply_service_mode(self):
         """Enable / disable every callsign-dependent UI surface based on the
@@ -1232,16 +1079,8 @@ class MainWindow(QMainWindow):
         # (callsign verification) doesn't apply.
         self.online_indicator.setVisible(not is_frs)
 
-        # Pending bar: hide and clear in FRS so old pills don't linger.
-        # Also hide the dock chrome itself so the operator doesn't see an
-        # empty "Pending Stations" frame whose only mode is invisible.
-        if is_frs:
-            self._clear_all_pending_pills()
-        self.pending_scroll.setVisible(not is_frs and bool(self.pending_buttons))
-        self.clear_pending_btn.setVisible(not is_frs and bool(self.pending_buttons))
-        # GMRS with zero pills also collapses the dock to keep an empty
-        # titled panel from sitting on screen at startup.
-        self.pending_dock.setVisible(not is_frs and bool(self.pending_buttons))
+        # Pending bar: PendingStationManager owns its own visibility logic.
+        self.pending_manager.apply_service_mode(is_frs)
 
         # Contacts menu action — disable with explanatory tooltip so users
         # discover the feature exists and know how to re-enable it.
@@ -1370,103 +1209,6 @@ class MainWindow(QMainWindow):
             save_json(CONTACTS_FILE, self.contacts)
             self.populate_target_dropdown()
             self._refresh_callsign_index()
-
-    def open_journal_dialog(self):
-        dlg = JournalDialog(parent=self)
-        dlg.show()
-        dlg.raise_()
-
-    def _generate_journal(self):
-        api_key = self.config.gemini_api_key
-        if not api_key:
-            QMessageBox.information(
-                self,
-                "Gemini API Key Required",
-                "No Gemini API key is configured.\n\n"
-                "Add your key under Settings → Configuration → Gemini API Key.",
-            )
-            return
-
-        transcript = self.chat_display.toPlainText().strip()
-        if not transcript:
-            QMessageBox.information(
-                self,
-                "No Transcript",
-                "The conversation log is empty. Start a listening session before "
-                "generating a journal entry.",
-            )
-            return
-
-        if self._journal_worker is not None and self._journal_worker.isRunning():
-            QMessageBox.information(
-                self,
-                "Already Generating",
-                "A journal entry is already being generated. Please wait.",
-            )
-            return
-
-        callsigns = self.attendance_panel.callsigns() if self.attendance_panel else []
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        if self.config.input_device == "youtube" and self.config.youtube_url:
-            yt_date = fetch_youtube_upload_date(
-                self.config.youtube_url,
-                cookies_from_browser=self.config.youtube_cookies_from_browser,
-                cookies_file=self.config.youtube_cookies_file,
-            )
-            if yt_date:
-                timestamp = yt_date
-
-        self._generate_journal_action.setEnabled(False)
-        self.journal_icon_btn.setEnabled(False)
-        self.generate_journal_btn.setEnabled(False)
-        self.statusBar().showMessage("Generating journal entry via Gemini…")
-
-        self._journal_worker = JournalWorker(
-            api_key, transcript, callsigns, timestamp, parent=self
-        )
-        self._journal_worker.finished.connect(self._on_journal_finished)
-        self._journal_worker.error.connect(self._on_journal_error)
-        self._journal_worker.start()
-
-    def _on_journal_finished(self, result: dict):
-        transcript = self.chat_display.toPlainText().strip()
-        title = result.get("title", "Untitled Session")
-        summary = result.get("summary", "")
-        ai_locs = result.get("callsigns_locations")
-        if not isinstance(ai_locs, list):
-            ai_locs = []
-
-        # Merge: AI result has locations; attendance panel is the ground truth for
-        # which callsigns were actually heard. Add any panel-tracked callsign the
-        # AI missed so they are never silently dropped from the journal.
-        panel_callsigns = set(self.attendance_panel.callsigns() if self.attendance_panel else [])
-        ai_known = {c.get("callsign", "") for c in ai_locs}
-        merged = list(ai_locs) + [
-            {"callsign": cs, "location": "Not stated"}
-            for cs in panel_callsigns if cs and cs not in ai_known
-        ]
-        try:
-            path = save_journal(title, summary, merged, transcript)
-            self.statusBar().showMessage(f"Journal saved: {path}", 5000)
-        except OSError as exc:
-            self.statusBar().clearMessage()
-            QMessageBox.warning(self, "Journal Save Error", f"Could not save journal:\n{exc}")
-        self._reset_journal_ui()
-
-    def _on_journal_error(self, message: str):
-        self.statusBar().clearMessage()
-        QMessageBox.warning(
-            self,
-            "Journal Generation Failed",
-            f"Gemini returned an error:\n\n{message}",
-        )
-        self._reset_journal_ui()
-
-    def _reset_journal_ui(self) -> None:
-        self._generate_journal_action.setEnabled(True)
-        self.journal_icon_btn.setEnabled(True)
-        self.generate_journal_btn.setEnabled(True)
-        self._journal_worker = None
 
     def open_quick_messages_dialog(self):
         dlg = QuickMessagesDialog(self._quick_messages(), parent=self)
@@ -1747,13 +1489,6 @@ class MainWindow(QMainWindow):
             output_device=self.config.output_device,
         )
 
-    # ----- Spectrometer wiring ----------------------------------------
-    def _persist_spectro_settings(self):
-        """Round-trip ``self.spectro_settings`` to config.json. Called by every
-        View-menu setter so the operator's preference survives the next launch."""
-        self.config["spectrometer"] = self.spectro_settings.to_config()
-        save_json(CONFIG_FILE, self.config)
-
     def _on_attendance_toggle(self, checked):
         """Apply the new attendance enabled state. Persists to config so the
         next launch comes up the same way, flips dock visibility, and resets
@@ -1804,119 +1539,6 @@ class MainWindow(QMainWindow):
             self.attendance_dock.setVisible(bool(visible))
         finally:
             self._suppress_attendance_visibility = False
-
-    def _on_spectro_toggle(self, checked):
-        self.spectro_settings.enabled = bool(checked)
-        if self.spectro_widget is not None:
-            self.spectro_widget.setVisible(self.spectro_settings.enabled)
-        # The dock holds the widget; toggling the inner widget alone
-        # leaves an empty dock chrome on screen. Hide the dock too so
-        # the View → Show waterfall action surfaces a coherent state.
-        self.waterfall_dock.setVisible(self.spectro_settings.enabled)
-        if self.spectro_settings.enabled:
-            # Mirror the STT lifecycle: if listening is active when the
-            # operator turns the waterfall on, start the FFT worker too so
-            # rows appear immediately rather than waiting for a Listen
-            # toggle cycle.
-            if self.stt_worker is not None and self.stt_worker.isRunning():
-                self._start_spectro_worker()
-        else:
-            self._stop_spectro_worker()
-        self._persist_spectro_settings()
-
-    def _build_spectro_option_menu(self, parent_menu, title, options,
-                                   label_fn, checked_fn, setter_fn, actions_attr):
-        """Build a checkable-action submenu for one spectrometer parameter."""
-        menu = parent_menu.addMenu(title)
-        actions = {}
-        for opt in options:
-            act = QAction(label_fn(opt), self)
-            act.setCheckable(True)
-            act.setChecked(checked_fn(opt))
-            act.triggered.connect(lambda _checked=False, v=opt: setter_fn(v))
-            menu.addAction(act)
-            actions[opt] = act
-        setattr(self, actions_attr, actions)
-        return menu
-
-    def _apply_spectro_option(self, valid_set, attr, actions_attr, value):
-        if value not in valid_set:
-            return
-        setattr(self.spectro_settings, attr, value)
-        for k, act in getattr(self, actions_attr).items():
-            act.setChecked(k == value)
-        if self.spectro_widget is not None:
-            self.spectro_widget.apply_settings(self.spectro_settings)
-        self._persist_spectro_settings()
-
-    def _set_spectro_colormap(self, name):
-        self._apply_spectro_option(AVAILABLE_COLORMAPS, "colormap", "_spectro_cmap_actions", name)
-
-    def _set_spectro_freq_range(self, key):
-        self._apply_spectro_option(AVAILABLE_FREQ_RANGES, "freq_range", "_spectro_freq_actions", key)
-
-    def _set_spectro_time_window(self, seconds):
-        self._apply_spectro_option(TIME_WINDOWS_S, "time_window_s", "_spectro_window_actions", int(seconds))
-
-    def _start_spectro_worker(self):
-        """Spin up the FFT worker and wire it to the STT audio tap. Idempotent.
-
-        We connect via Qt's default (auto) connection so the cross-thread
-        slot delivery uses a queued connection — the STT capture loop never
-        blocks waiting for the spectrogram worker, and the worker's ring
-        buffer drops oldest samples first if it falls behind. That keeps
-        the "never starve VAD/STT" promise from the implementation plan.
-        """
-        if not self.spectro_settings.enabled:
-            return
-        if self.spectro_worker is not None and self.spectro_worker.isRunning():
-            return
-        self.spectro_worker = SpectrogramWorker(
-            sample_rate=STTWorker.SAMPLE_RATE,
-            frame_size=1024,
-            hop_size=512,
-            parent=self,
-        )
-        self.spectro_worker.row_ready.connect(self.spectro_widget.push_row)
-        if self.stt_worker is not None:
-            self.stt_worker.audio_chunk.connect(self.spectro_worker.push_chunk)
-            self.stt_worker.capture_event.connect(self.spectro_widget.mark_event)
-            self._spectro_capture_event_hooked = True
-        self.spectro_worker.start()
-
-    def _stop_spectro_worker(self):
-        """Tear down the FFT worker, disconnecting the STT tap first so a
-        late-arriving chunk can't touch a halted ring."""
-        if self.stt_worker is not None:
-            try:
-                self.stt_worker.audio_chunk.disconnect(
-                    self.spectro_worker.push_chunk
-                )
-            except (TypeError, RuntimeError, AttributeError):
-                pass
-            if self._spectro_capture_event_hooked:
-                try:
-                    self.stt_worker.capture_event.disconnect(
-                        self.spectro_widget.mark_event
-                    )
-                except (TypeError, RuntimeError):
-                    pass
-                self._spectro_capture_event_hooked = False
-        worker = self.spectro_worker
-        self.spectro_worker = None
-        if worker is not None:
-            worker.stop()
-            if worker.isRunning():
-                worker.wait(2000)
-            worker.deleteLater()
-
-    def _on_spectro_activity(self, text):
-        """Surface the spectrometer's per-row activity description in the
-        status bar so the same cue a screen reader hears is also visible to
-        sighted operators (and gives the widget a no-op-equivalent text
-        sink for unit tests)."""
-        if self.spectro_settings.enabled:
-            self.statusBar().showMessage(f"Waterfall: {text}", 2500)
 
     def _pause_stt_for_tx(self):
         if self.stt_worker and self.stt_worker.isRunning():
@@ -2010,9 +1632,9 @@ class MainWindow(QMainWindow):
         self.stt_worker.start()
         # Bring the waterfall online too if the operator has it enabled.
         # Done after stt_worker.start() so the audio_chunk signal already
-        # exists by the time we connect it through _start_spectro_worker.
-        if self.spectro_settings.enabled:
-            self._start_spectro_worker()
+        # exists by the time we connect it through spectro_manager.start().
+        if self.spectro_manager.settings.enabled:
+            self.spectro_manager.start(self.stt_worker)
         # Monitor is only available in listen-only mode (no TX path active).
         if self.listen_only:
             self.monitor_btn.setEnabled(True)
@@ -2050,9 +1672,9 @@ class MainWindow(QMainWindow):
         self.monitor_btn.blockSignals(False)
         self.monitor_btn.setEnabled(False)
         # Tear the spectrometer down first so its STT-signal disconnects
-        # run while the worker is still alive — _stop_spectro_worker
+        # run while the worker is still alive — spectro_manager.stop()
         # reaches through self.stt_worker to undo the audio_chunk hookup.
-        self._stop_spectro_worker()
+        self.spectro_manager.stop()
         worker = self.stt_worker
         self.stt_worker = None
         if worker is not None:
@@ -2093,235 +1715,13 @@ class MainWindow(QMainWindow):
     def _make_rx_session(self) -> RXSession:
         return RXSession(
             chat=self.chat_display,
-            on_utterance_complete=self.scan_for_unknown_stations,
+            on_utterance_complete=self.pending_manager.scan_for_unknown_stations,
             format_timestamp=self._format_timestamp,
             filter_fn=lambda t: mask_profanity(t) if self.config.filter_profanity else t,
         )
 
     def on_transcription_segment(self, uid, text, is_final):
         self._rx_session.receive(uid, text, is_final, color=theme.palette().rx)
-
-    def scan_for_unknown_stations(self, text):
-        # `known` spans every callsign field on every contact (primary + GMRS
-        # + HAM cross-references) so a detected HAM call doesn't show a
-        # redundant '+ Add' pill when that operator's GMRS call is already
-        # in the contact list (and vice versa).
-        if self._service_mode() == SERVICE_FRS:
-            # FRS users don't carry callsigns — detection would only generate
-            # noise pills for anyone speaking a callsign on a shared FRS/GMRS
-            # frequency, which the operator can't act on usefully.
-            return
-        my_call = self.config.callsign
-        known = known_callsigns(self.contacts)
-        detected = detect_callsigns(text)
-        # Online state is cached for ~60s so this is cheap; capture once per
-        # scan so a single utterance picks a consistent verdict for every
-        # callsign it surfaces.
-        online = is_online()
-        fuzzy_on = self.config.fuzzy_callsign
-        for cs in detected:
-            # Attendance recording runs *before* the unknown/known split so
-            # the grid logs every detected station regardless of whether
-            # the operator already has them saved. Fuzzy-rewrite the
-            # callsign to its canonical form so the grid row joins cleanly
-            # against contacts. Skip own-call and the FRS-already-returned
-            # case (early return above).
-            canonical = cs
-            if fuzzy_on:
-                match = fuzzy_match_callsign(cs, known)
-                if match:
-                    canonical = match
-            if self.attendance_enabled and self.attendance_panel is not None and canonical != my_call:
-                self.attendance_panel.record(canonical)
-
-            if cs == my_call or cs in known or cs in self.pending_buttons:
-                continue
-            # With fuzzy logic on, an off-by-one detection is treated as a
-            # hit on the neighbor — the chat already rewrites the token, so
-            # surfacing a pending-station pill would invite the operator to
-            # save a duplicate contact for what's really a transcription
-            # mishear.
-            if fuzzy_on and fuzzy_match_callsign(cs, known):
-                continue
-            name, location = extract_name_location(text, cs)
-            self.add_pending_station(cs, name, location)
-            # Only attempt auto-add when we have a transcript-derived first
-            # name to verify against — without one, the FCC name comparison
-            # in `verify_callsign` will short-circuit to a callsign_only
-            # status that we'd never auto-add anyway.
-            if online and name and cs not in self._callsign_lookups:
-                self._start_callsign_lookup(cs, name, location)
-
-    def _start_callsign_lookup(self, callsign, name, location):
-        """Kick off a background FCC lookup that can auto-add the station if
-        the licensee name matches the transcript-derived name. Imported here
-        (rather than at module load) so MainWindow's import-time graph stays
-        free of the FCC stack for users who never enable Listen."""
-        from gmrs_tty.fcc.auto_add import CallsignLookupWorker
-        worker = CallsignLookupWorker(callsign, name, location, parent=self)
-        worker.result_ready.connect(self._on_callsign_lookup_result)
-        worker.finished.connect(lambda cs=callsign: self._cleanup_callsign_lookup(cs))
-        self._callsign_lookups[callsign] = worker
-        worker.start()
-
-    def _cleanup_callsign_lookup(self, callsign):
-        worker = self._callsign_lookups.pop(callsign, None)
-        if worker is not None:
-            worker.deleteLater()
-
-    def _on_callsign_lookup_result(self, callsign, name, location, result):
-        """Handle the FCC lookup result on the UI thread.
-
-        ``verified`` means the FCC licensee name matched the transcript name,
-        so we auto-add the contact with full GMRS / HAM cross-references and
-        retire the pending pill. Any other status leaves the pill in place
-        for manual review — a name mismatch is the family-member case where
-        the operator still deserves a contact entry but not the licensee's
-        cross-references.
-        """
-        if result.status != "verified":
-            return
-        if callsign in known_callsigns(self.contacts):
-            # Lookup raced with a manual add; honor the user's edit.
-            self._remove_pending_pill(callsign)
-            return
-        if callsign not in self.pending_buttons:
-            # User dismissed the pill while the lookup was in flight — respect
-            # the dismissal rather than silently adding the contact anyway.
-            return
-        from gmrs_tty.fcc.crossref import apply_verification
-        contact = {"callsign": callsign, "name": name, "location": location}
-        now_iso = utc_now_iso()
-        contact = apply_verification(contact, result, now_iso=now_iso)
-        self.contacts.append(contact)
-        self.contacts = sort_contacts(deduplicate_ham_cross_references(self.contacts))
-        save_json(CONTACTS_FILE, self.contacts)
-        self.populate_target_dropdown()
-        self._refresh_callsign_index()
-        self._remove_pending_pill(callsign)
-        op_name = (contact.get("name") or "").strip() or "(no name)"
-        self.append_to_chat(
-            f"<i>Auto-added contact: {callsign} ({op_name})</i>",
-            color=theme.palette().rx,
-        )
-
-    def add_pending_station(self, callsign, name, location):
-        btn = QPushButton(f"+ Add {callsign}", self)
-        # Pill colors come from the active palette so a later theme toggle
-        # can re-style every live pill via `_restyle_pending_pills` without
-        # divergence between this builder and the toggle path.
-        btn.setStyleSheet(theme.pill_stylesheet())
-        tooltip_parts = [f"Detected new station: {callsign}"]
-        if name:
-            tooltip_parts.append(f"Name: {name}")
-        if location:
-            tooltip_parts.append(f"Location: {location}")
-        tooltip_parts.append("Right-click to dismiss without adding.")
-        btn.setToolTip("\n".join(tooltip_parts))
-        btn.setAccessibleName(f"Add station {callsign}")
-        descr = f"Open the Add Station dialog prefilled for callsign {callsign}"
-        if name:
-            descr += f", operator {name}"
-        if location:
-            descr += f", location {location}"
-        descr += ". Right-click or long-press to dismiss without adding."
-        btn.setAccessibleDescription(descr)
-        btn.clicked.connect(
-            lambda _checked=False, cs=callsign, n=name, loc=location:
-                self.open_add_contact_dialog(cs, n, loc)
-        )
-        btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        btn.customContextMenuRequested.connect(
-            lambda pos, cs=callsign, b=btn: self._show_pending_pill_menu(b, pos, cs)
-        )
-        self.pending_buttons[callsign] = btn
-        self.pending_flow.addWidget(btn)
-        self._cap_pending_scroll_height(btn)
-        self._update_pending_bar_visibility()
-
-    def _show_pending_pill_menu(self, btn, pos, callsign):
-        """Right-click / long-press menu for a pending-station pill.
-
-        Long-press on touch platforms is synthesized into a context-menu event
-        by Qt, so this single handler covers both interactions."""
-        menu = QMenu(self)
-        dismiss_action = menu.addAction(f"Dismiss {callsign}")
-        dismiss_action.setStatusTip(
-            f"Remove the pending pill for {callsign} without adding it to contacts."
-        )
-        if menu.exec(btn.mapToGlobal(pos)) is dismiss_action:
-            self._remove_pending_pill(callsign)
-
-    def _remove_pending_pill(self, callsign):
-        btn = self.pending_buttons.pop(callsign, None)
-        if btn is not None:
-            btn.setParent(None)
-            btn.deleteLater()
-        self._update_pending_bar_visibility()
-
-    def _clear_all_pending_pills(self):
-        for callsign in list(self.pending_buttons.keys()):
-            self._remove_pending_pill(callsign)
-
-    def _update_pending_bar_visibility(self):
-        has_pills = bool(self.pending_buttons)
-        self.clear_pending_btn.setVisible(has_pills)
-        self.pending_scroll.setVisible(has_pills)
-        # Hide the dock chrome too when empty so the operator doesn't
-        # see a titled-but-empty "Pending Stations" panel. _apply_service_mode
-        # owns the FRS-hide path, so only flip visibility from GMRS here.
-        if self._service_mode() != SERVICE_FRS:
-            self.pending_dock.setVisible(has_pills)
-
-    def _cap_pending_scroll_height(self, sample_btn):
-        """Lock the pending-pill scroll area to PENDING_PILL_MAX_ROWS rows.
-
-        The pill row height is the same for every pill (shared styling), so we
-        measure once on the first pill and reuse it. Beyond the cap, the
-        scroll area's vertical scrollbar takes over."""
-        if self._pending_row_height is not None:
-            return
-        row_h = sample_btn.sizeHint().height()
-        if row_h <= 0:
-            return
-        spacing = max(self.pending_flow.spacing(), 0)
-        rows = PENDING_PILL_MAX_ROWS
-        max_h = rows * row_h + (rows - 1) * spacing
-        self.pending_scroll.setMaximumHeight(max_h)
-        self._pending_row_height = row_h
-
-    def open_add_contact_dialog(self, callsign, name, location):
-        dlg = AddContactDialog(callsign, name, location, self)
-        if dlg.exec():
-            contact = dlg.get_contact()
-            if not contact["callsign"]:
-                return
-            contact = self._verify_contact_if_online(contact)
-            for c in self.contacts:
-                if c.get("callsign", "").upper() == contact["callsign"]:
-                    c.update(contact)
-                    break
-            else:
-                self.contacts.append(contact)
-            self.contacts = sort_contacts(deduplicate_ham_cross_references(self.contacts))
-            save_json(CONTACTS_FILE, self.contacts)
-            self.populate_target_dropdown()
-            self._refresh_callsign_index()
-        self._remove_pending_pill(callsign)
-
-    def _verify_contact_if_online(self, contact):
-        """Run FCC verification against `contact` when online, returning a new
-        dict with verification fields populated. Offline / failed lookups pass
-        through unchanged so the user can still add the contact — they just
-        won't get a green check until connectivity is restored. Imported here
-        to keep the FCC dependency out of MainWindow's import-time graph for
-        users who never open the add-contact flow."""
-        from gmrs_tty.fcc.crossref import apply_verification, verify_callsign
-        if not is_online():
-            return contact
-        result = verify_callsign(contact["callsign"], contact.get("name", ""))
-        now_iso = utc_now_iso()
-        return apply_verification(contact, result, now_iso=now_iso)
 
     def on_stt_error(self, msg):
         self.append_to_chat(f"<i>STT Error: {msg}</i>", color=theme.palette().error)

@@ -262,8 +262,8 @@ class TestThemeAppliedToWidgets:
 
         window = _make_window(qapp, dark_mode=False)
         try:
-            window.add_pending_station("WSLZ999", "Test", "Nowhere")
-            btn = window.pending_buttons["WSLZ999"]
+            window.pending_manager.add_pending_station("WSLZ999", "Test", "Nowhere")
+            btn = window.pending_manager.buttons["WSLZ999"]
             assert theme.LIGHT.pill_bg.lower() in btn.styleSheet().lower()
             with patch.object(mw_mod, "save_json"):
                 window.theme_toggle_btn.click()

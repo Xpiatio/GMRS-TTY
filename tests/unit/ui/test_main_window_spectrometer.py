@@ -77,8 +77,8 @@ class TestDefaultsHidden:
     def test_widget_hidden_by_default(self, qapp):
         win = _make_window(qapp)
         try:
-            assert win.spectro_widget is not None
-            assert win.spectro_widget.isVisible() is False
+            assert win.spectro_manager.widget is not None
+            assert win.spectro_manager.widget.isVisible() is False
         finally:
             win.close()
 
@@ -97,22 +97,22 @@ class TestDefaultsHidden:
             # toggle action checked, the visibility flag set) must match
             # the persisted preference.
             assert win._spectro_toggle_action.isChecked() is True
-            assert win.spectro_settings.enabled is True
+            assert win.spectro_manager.settings.enabled is True
         finally:
             win.close()
 
 
 class TestToggleAction:
     def test_toggle_persists_enabled(self, qapp):
-        from gmrs_tty.ui import main_window as mw_mod
+        import gmrs_tty.ui.spectro_manager as sm_mod
         win = _make_window(qapp)
         saves = []
 
         def capture(_path, data):
             saves.append(dict(data) if isinstance(data, dict) else data)
         try:
-            with patch.object(mw_mod, "save_json", side_effect=capture):
-                win._on_spectro_toggle(True)
+            with patch.object(sm_mod, "save_json", side_effect=capture):
+                win.spectro_manager.toggle(True)
             spec_saves = [s for s in saves if isinstance(s, dict) and "spectrometer" in s]
             assert spec_saves, "toggle must persist a spectrometer section"
             assert spec_saves[-1]["spectrometer"]["enabled"] is True
@@ -120,15 +120,15 @@ class TestToggleAction:
             win.close()
 
     def test_toggle_off_persists_disabled(self, qapp):
-        from gmrs_tty.ui import main_window as mw_mod
+        import gmrs_tty.ui.spectro_manager as sm_mod
         win = _make_window(qapp, spectrometer_cfg={"enabled": True})
         saves = []
 
         def capture(_path, data):
             saves.append(dict(data) if isinstance(data, dict) else data)
         try:
-            with patch.object(mw_mod, "save_json", side_effect=capture):
-                win._on_spectro_toggle(False)
+            with patch.object(sm_mod, "save_json", side_effect=capture):
+                win.spectro_manager.toggle(False)
             spec_saves = [s for s in saves if isinstance(s, dict) and "spectrometer" in s]
             assert spec_saves and spec_saves[-1]["spectrometer"]["enabled"] is False
         finally:
@@ -139,39 +139,39 @@ class TestSettersSync:
     def test_set_colormap_updates_menu_and_widget(self, qapp):
         win = _make_window(qapp)
         try:
-            win._set_spectro_colormap("grayscale")
-            assert win.spectro_settings.colormap == "grayscale"
-            assert win._spectro_cmap_actions["grayscale"].isChecked() is True
-            assert win._spectro_cmap_actions["viridis"].isChecked() is False
+            win.spectro_manager.set_colormap("grayscale")
+            assert win.spectro_manager.settings.colormap == "grayscale"
+            assert win.spectro_manager._cmap_actions["grayscale"].isChecked() is True
+            assert win.spectro_manager._cmap_actions["viridis"].isChecked() is False
         finally:
             win.close()
 
     def test_set_freq_range_updates_widget(self, qapp):
         win = _make_window(qapp)
         try:
-            win._set_spectro_freq_range(FREQ_RANGE_FULL)
-            assert win.spectro_settings.freq_range == FREQ_RANGE_FULL
-            assert win._spectro_freq_actions[FREQ_RANGE_FULL].isChecked() is True
-            assert win._spectro_freq_actions[FREQ_RANGE_VOICE].isChecked() is False
+            win.spectro_manager.set_freq_range(FREQ_RANGE_FULL)
+            assert win.spectro_manager.settings.freq_range == FREQ_RANGE_FULL
+            assert win.spectro_manager._freq_actions[FREQ_RANGE_FULL].isChecked() is True
+            assert win.spectro_manager._freq_actions[FREQ_RANGE_VOICE].isChecked() is False
         finally:
             win.close()
 
     def test_set_time_window_updates_widget(self, qapp):
         win = _make_window(qapp)
         try:
-            win._set_spectro_time_window(60)
-            assert win.spectro_settings.time_window_s == 60
-            assert win._spectro_window_actions[60].isChecked() is True
-            assert win._spectro_window_actions[30].isChecked() is False
+            win.spectro_manager.set_time_window(60)
+            assert win.spectro_manager.settings.time_window_s == 60
+            assert win.spectro_manager._window_actions[60].isChecked() is True
+            assert win.spectro_manager._window_actions[30].isChecked() is False
         finally:
             win.close()
 
     def test_unknown_colormap_is_no_op(self, qapp):
         win = _make_window(qapp)
         try:
-            before = win.spectro_settings.colormap
-            win._set_spectro_colormap("ultraviolet")
-            assert win.spectro_settings.colormap == before
+            before = win.spectro_manager.settings.colormap
+            win.spectro_manager.set_colormap("ultraviolet")
+            assert win.spectro_manager.settings.colormap == before
         finally:
             win.close()
 
@@ -183,7 +183,7 @@ class TestActivityTextToStatusBar:
             # Spectrometer disabled — activity text shouldn't burn the
             # status bar with waterfall chatter.
             win.statusBar().clearMessage()
-            win._on_spectro_activity("Strong signal at 1.2 kHz")
+            win.spectro_manager._on_activity("Strong signal at 1.2 kHz")
             assert "Waterfall" not in win.statusBar().currentMessage()
         finally:
             win.close()
@@ -191,7 +191,7 @@ class TestActivityTextToStatusBar:
     def test_status_bar_set_when_enabled(self, qapp):
         win = _make_window(qapp, spectrometer_cfg={"enabled": True})
         try:
-            win._on_spectro_activity("Strong signal at 1.2 kHz")
+            win.spectro_manager._on_activity("Strong signal at 1.2 kHz")
             assert "Waterfall" in win.statusBar().currentMessage()
         finally:
             win.close()

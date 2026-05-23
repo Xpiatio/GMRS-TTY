@@ -60,9 +60,10 @@ def _make_window(qapp, contacts, online=True):
     return window
 
 
-def _patch_save(mw_mod):
+def _patch_save():
     """Stop the test from touching ``contacts.json`` on disk."""
-    return patch.object(mw_mod, "save_json", return_value=None)
+    import gmrs_tty.ui.pending_station_manager as psm_mod
+    return patch.object(psm_mod, "save_json", return_value=None)
 
 
 class _SyncWorker:
@@ -152,15 +153,14 @@ def _verified_result(license_name="Zomberg, Benjamin J", city="JENISON",
 
 class TestAutoAddVerified:
     def test_verified_lookup_appends_contact_and_removes_pill(self, qapp):
-        from gmrs_tty.ui import main_window as mw_mod
         w = _make_window(qapp, [{"callsign": "All", "name": "Everyone"}])
         try:
             ctx, factory = _install_sync_worker(_verified_result())
-            with ctx, _patch_save(mw_mod):
-                w.scan_for_unknown_stations("This is WSLZ233 Benjamin from Jenison")
+            with ctx, _patch_save():
+                w.pending_manager.scan_for_unknown_stations("This is WSLZ233 Benjamin from Jenison")
             # The synchronous worker fired the verified result inline, so the
             # pending pill should have been replaced by a real contact row.
-            assert "WSLZ233" not in w.pending_buttons
+            assert "WSLZ233" not in w.pending_manager.buttons
             added = [c for c in w.contacts if c.get("callsign") == "WSLZ233"]
             assert len(added) == 1, "Verified lookup must add exactly one row"
             row = added[0]
@@ -178,14 +178,13 @@ class TestAutoAddVerified:
         """When the transcript didn't include a 'from <city>' clause, the
         FCC city should win the location field — same backfill rule as the
         manual-add path."""
-        from gmrs_tty.ui import main_window as mw_mod
         w = _make_window(qapp, [{"callsign": "All", "name": "Everyone"}])
         try:
             ctx, _factory = _install_sync_worker(_verified_result())
-            with ctx, _patch_save(mw_mod):
+            with ctx, _patch_save():
                 # No 'from <city>' clause — extract_name_location returns ''
                 # for location, so the FCC city is the only source.
-                w.scan_for_unknown_stations("This is WSLZ233 Benjamin here")
+                w.pending_manager.scan_for_unknown_stations("This is WSLZ233 Benjamin here")
             row = [c for c in w.contacts if c.get("callsign") == "WSLZ233"][0]
             assert row["location"] == "Jenison"
         finally:
@@ -194,14 +193,14 @@ class TestAutoAddVerified:
 
 class TestAutoAddNoOp:
     def test_offline_does_not_trigger_lookup(self, qapp):
-        from gmrs_tty.ui import main_window as mw_mod
+        import gmrs_tty.ui.pending_station_manager as psm_mod
         w = _make_window(qapp, [{"callsign": "All", "name": "Everyone"}])
         try:
             ctx, factory = _install_sync_worker(_verified_result())
-            with patch.object(mw_mod, "is_online", return_value=False), ctx:
-                w.scan_for_unknown_stations("This is WSLZ233 Benjamin here")
+            with patch.object(psm_mod, "is_online", return_value=False), ctx:
+                w.pending_manager.scan_for_unknown_stations("This is WSLZ233 Benjamin here")
             # Pending pill exists (legacy flow), lookup was NOT issued.
-            assert "WSLZ233" in w.pending_buttons
+            assert "WSLZ233" in w.pending_manager.buttons
             assert factory.factory_calls == []
             assert not any(c.get("callsign") == "WSLZ233" for c in w.contacts)
         finally:
@@ -210,14 +209,13 @@ class TestAutoAddNoOp:
     def test_no_extracted_name_does_not_trigger_lookup(self, qapp):
         """A transcript with a bare callsign and no operator name should
         not waste an API call — the FCC name match would never succeed."""
-        from gmrs_tty.ui import main_window as mw_mod
         w = _make_window(qapp, [{"callsign": "All", "name": "Everyone"}])
         try:
             ctx, factory = _install_sync_worker(_verified_result())
-            with ctx, _patch_save(mw_mod):
+            with ctx, _patch_save():
                 # Just the callsign, no capitalized word after it.
-                w.scan_for_unknown_stations("WSLZ233 ten four")
-            assert "WSLZ233" in w.pending_buttons
+                w.pending_manager.scan_for_unknown_stations("WSLZ233 ten four")
+            assert "WSLZ233" in w.pending_manager.buttons
             assert factory.factory_calls == []
         finally:
             w.close()
@@ -226,7 +224,6 @@ class TestAutoAddNoOp:
         """status=callsign_only means the FCC licensee name didn't match.
         We must not auto-add — but the pending pill should remain so the
         operator can decide manually (family-member-on-shared-call case)."""
-        from gmrs_tty.ui import main_window as mw_mod
         w = _make_window(qapp, [{"callsign": "All", "name": "Everyone"}])
         try:
             mismatch = VerificationResult(
@@ -235,22 +232,21 @@ class TestAutoAddNoOp:
                 license_active=True,
             )
             ctx, _factory = _install_sync_worker(mismatch)
-            with ctx, _patch_save(mw_mod):
-                w.scan_for_unknown_stations("This is WSLZ233 Eliza here")
-            assert "WSLZ233" in w.pending_buttons
+            with ctx, _patch_save():
+                w.pending_manager.scan_for_unknown_stations("This is WSLZ233 Eliza here")
+            assert "WSLZ233" in w.pending_manager.buttons
             assert not any(c.get("callsign") == "WSLZ233" for c in w.contacts)
         finally:
             w.close()
 
     def test_known_callsign_does_not_trigger_lookup(self, qapp):
-        from gmrs_tty.ui import main_window as mw_mod
         w = _make_window(qapp, [
             {"callsign": "WSLZ233", "name": "Benjamin"},
         ])
         try:
             ctx, factory = _install_sync_worker(_verified_result())
-            with ctx, _patch_save(mw_mod):
-                w.scan_for_unknown_stations("This is WSLZ233 Benjamin here")
+            with ctx, _patch_save():
+                w.pending_manager.scan_for_unknown_stations("This is WSLZ233 Benjamin here")
             assert factory.factory_calls == []
         finally:
             w.close()
@@ -261,7 +257,6 @@ class TestAutoAddNoOp:
         pill, so the duplicate-suppression in scan_for_unknown_stations
         (``cs in self.pending_buttons``) handles the common case; this guards
         the regression."""
-        from gmrs_tty.ui import main_window as mw_mod
         w = _make_window(qapp, [{"callsign": "All", "name": "Everyone"}])
         try:
             # Use a callsign-only result so the pill stays up between scans.
@@ -271,9 +266,9 @@ class TestAutoAddNoOp:
                 license_active=True,
             )
             ctx, factory = _install_sync_worker(mismatch)
-            with ctx, _patch_save(mw_mod):
-                w.scan_for_unknown_stations("This is WSLZ233 Benjamin here")
-                w.scan_for_unknown_stations("WSLZ233 Benjamin again")
+            with ctx, _patch_save():
+                w.pending_manager.scan_for_unknown_stations("This is WSLZ233 Benjamin here")
+                w.pending_manager.scan_for_unknown_stations("WSLZ233 Benjamin again")
             assert len(factory.factory_calls) == 1
         finally:
             w.close()
