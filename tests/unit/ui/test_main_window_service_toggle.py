@@ -56,7 +56,7 @@ def _make_window(qapp, *, service=None, contacts=None, save_capture=None):
             save_capture.append((path, dict(data) if isinstance(data, dict) else data))
 
     with patch.object(mw_mod, "load_json", side_effect=fake_load_json), \
-         patch.object(mw_mod, "save_json", side_effect=fake_save_json), \
+         patch("gmrs_tty.config.save_json", side_effect=fake_save_json), \
          patch.object(mw_mod, "make_ptt", return_value=_FakePTT()), \
          patch.object(mw_mod, "is_online", return_value=True):
         window = mw_mod.MainWindow()
@@ -238,7 +238,7 @@ class TestTogglePersistsToConfig:
             # only kept it patched during construction.
             def fake_save_json(path, data):
                 save_capture.append((path, dict(data) if isinstance(data, dict) else data))
-            with patch.object(mw_mod, "save_json", side_effect=fake_save_json):
+            with patch("gmrs_tty.config.save_json", side_effect=fake_save_json):
                 w.frs_radio.setChecked(True)
             assert any(
                 isinstance(data, dict) and data.get("radio_service") == SERVICE_FRS

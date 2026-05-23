@@ -92,6 +92,7 @@ def _build_window(qapp, initial_listen_only=False, presets=None):
     patches = [
         patch.object(mw_mod, "load_json", side_effect=fake_load_json),
         patch.object(mw_mod, "save_json", side_effect=fake_save_json),
+        patch("gmrs_tty.config.save_json", side_effect=fake_save_json),
         patch.object(mw_mod, "make_ptt", return_value=_FakePTT()),
         patch.object(mw_mod, "is_online", return_value=True),
     ]
