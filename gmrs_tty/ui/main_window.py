@@ -1038,6 +1038,17 @@ class MainWindow(QMainWindow):
     def _restyle_pending_pills(self):
         self.pending_manager.restyle_pills()
 
+    @staticmethod
+    def _set_frs_gate(widget, is_frs, frs_tip, gmrs_tip, *, use_status_tip=False):
+        """Disable `widget` and set an explanatory tip when FRS is active.
+
+        Centralises the repeated setEnabled + tip-swap pattern so
+        _apply_service_mode stays flat and each GMRS-only control needs
+        only one call site."""
+        widget.setEnabled(not is_frs)
+        setter = widget.setStatusTip if use_status_tip else widget.setToolTip
+        setter(frs_tip if is_frs else gmrs_tip)
+
     def _apply_service_mode(self):
         """Enable / disable every callsign-dependent UI surface based on the
         active service. Idempotent — safe to call from toggle handlers and
@@ -1063,17 +1074,17 @@ class MainWindow(QMainWindow):
 
         # Standalone ID button — disable rather than hide so its row layout
         # stays stable and keyboard tab-order doesn't reshuffle silently.
-        self.id_btn.setEnabled(not is_frs)
-        if is_frs:
-            self.id_btn.setToolTip(
+        self._set_frs_gate(
+            self.id_btn, is_frs,
+            frs_tip=(
                 "Station ID is GMRS-only — FRS has no Part 95 ID requirement. "
                 "Switch to GMRS to re-enable."
-            )
-        else:
-            self.id_btn.setToolTip(
+            ),
+            gmrs_tip=(
                 "Transmit station ID: This is [callsign]. [name] from [location] "
                 "(Alt+I, Ctrl+I)"
-            )
+            ),
+        )
 
         # Online indicator: hide in FRS, since the only online feature
         # (callsign verification) doesn't apply.
@@ -1084,36 +1095,30 @@ class MainWindow(QMainWindow):
 
         # Contacts menu action — disable with explanatory tooltip so users
         # discover the feature exists and know how to re-enable it.
-        self._contacts_action.setEnabled(not is_frs)
-        if is_frs:
-            self._contacts_action.setStatusTip(
-                "Contacts apply to GMRS only — switch to GMRS to manage them."
-            )
-        else:
-            self._contacts_action.setStatusTip("Add, edit, or remove known callsigns.")
+        self._set_frs_gate(
+            self._contacts_action, is_frs,
+            frs_tip="Contacts apply to GMRS only — switch to GMRS to manage them.",
+            gmrs_tip="Add, edit, or remove known callsigns.",
+            use_status_tip=True,
+        )
 
         # Quick-access contacts icon button mirrors the menu action — same
         # destination, same disable rule, same explanatory tooltip.
-        self.contacts_icon_btn.setEnabled(not is_frs)
-        if is_frs:
-            self.contacts_icon_btn.setToolTip(
-                "Contacts apply to GMRS only — switch to GMRS to manage them."
-            )
-        else:
-            self.contacts_icon_btn.setToolTip("Contacts (Ctrl+B)")
+        self._set_frs_gate(
+            self.contacts_icon_btn, is_frs,
+            frs_tip="Contacts apply to GMRS only — switch to GMRS to manage them.",
+            gmrs_tip="Contacts (Ctrl+B)",
+        )
 
         # Attendance grid is GMRS-only (FRS has no callsigns to attend).
         # Disable the View toggle and hide the dock in FRS; restore them
         # to the operator's config-flagged choice when GMRS is active.
-        self._attendance_toggle_action.setEnabled(not is_frs)
-        if is_frs:
-            self._attendance_toggle_action.setStatusTip(
-                "Callsigns Detected is GMRS-only — switch to GMRS to enable."
-            )
-        else:
-            self._attendance_toggle_action.setStatusTip(
-                "Toggle the callsigns-detected panel."
-            )
+        self._set_frs_gate(
+            self._attendance_toggle_action, is_frs,
+            frs_tip="Callsigns Detected is GMRS-only — switch to GMRS to enable.",
+            gmrs_tip="Toggle the callsigns-detected panel.",
+            use_status_tip=True,
+        )
         if is_frs:
             self._set_attendance_dock_visible(False)
             if self.attendance_panel is not None:
