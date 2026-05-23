@@ -1488,9 +1488,15 @@ def build_rx(b: Builder):
     b.bullets([
         ("300–3000 Hz bandpass", "Matches the narrowband-FM voice "
                                        "band. Strips hum and out-of-band "
-                                       "hiss before denoising."),
+                                       "hiss. Applied both to the live "
+                                       "monitor stream and per utterance "
+                                       "before denoising."),
         ("Noise reduction", "Spectral gating applied per utterance "
                             "after bandpass and before transcription."),
+        ("RMS normalization", "After denoising, each utterance is "
+                              "normalized to &minus;20 dBFS so weak "
+                              "or distant stations reach Whisper at a "
+                              "consistent input level."),
         ("Hallucination filter", "Drops utterances shorter than ~400 ms "
                                   "and common Whisper hallucinations on "
                                   "silence (“Thank you”, "
@@ -1553,6 +1559,15 @@ def build_rx(b: Builder):
                            "button is greyed out whenever Listen only is "
                            "off. Turning Listen only off automatically "
                            "stops the monitor stream."),
+        ("Audio processing", "Before reaching the output device, audio "
+                             "passes through a 300&ndash;3000 Hz bandpass "
+                             "filter (matching the narrowband-FM voice "
+                             "band) and is upsampled from 16 kHz to 48 kHz "
+                             "via a polyphase sinc resampler so the device "
+                             "receives its native rate rather than relying "
+                             "on driver-level interpolation. TX mute and "
+                             "unmute transitions apply a 5 ms linear fade "
+                             "to eliminate clicks at keying boundaries."),
         ("Ring buffer", "A thread-safe bounded deque (~1 s) absorbs "
                         "burst-capture spikes. When the buffer would "
                         "exceed capacity, the oldest samples are dropped "
