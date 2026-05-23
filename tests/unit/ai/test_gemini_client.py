@@ -119,3 +119,17 @@ class TestGenerateJournal:
         prompt = captured["body"]["contents"][0]["parts"][0]["text"]
         assert "WSLZ233" in prompt
         assert "KA1ABC" in prompt
+
+    def test_api_key_in_header_not_url(self):
+        captured = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["req"] = req
+            return _make_response(_VALID_RESPONSE)
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            generate_journal("supersecret", "t", [], "ts")
+
+        req = captured["req"]
+        assert "supersecret" not in req.full_url
+        assert req.get_header("X-goog-api-key") == "supersecret"
