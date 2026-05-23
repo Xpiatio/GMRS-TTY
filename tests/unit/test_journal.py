@@ -127,3 +127,13 @@ class TestDeleteJournal:
     def test_raises_on_missing_file(self):
         with pytest.raises(OSError):
             delete_journal(os.path.join(journal_mod.JOURNALS_DIR, "nonexistent.json"))
+
+    def test_rejects_path_traversal(self):
+        with pytest.raises(ValueError, match="outside journals directory"):
+            delete_journal(os.path.join(journal_mod.JOURNALS_DIR, "..", "sensitive.json"))
+
+    def test_rejects_absolute_path_outside_dir(self, tmp_path):
+        outside = tmp_path / "outside.json"
+        outside.write_text("{}")
+        with pytest.raises(ValueError, match="outside journals directory"):
+            delete_journal(str(outside))
