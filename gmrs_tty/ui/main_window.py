@@ -533,6 +533,20 @@ class MainWindow(QMainWindow):
         )
         self.clear_chat_btn.clicked.connect(self.clear_chat)
         listen_strip.addWidget(self.clear_chat_btn)
+
+        self.generate_journal_btn = QPushButton("Generate &log entry", wrapper)
+        self.generate_journal_btn.setToolTip(
+            "Generate an AI-powered journal entry from the conversation log (Ctrl+J). "
+            "Requires a Gemini API key in Settings → Configuration."
+        )
+        self.generate_journal_btn.setAccessibleName("Generate session journal")
+        self.generate_journal_btn.setAccessibleDescription(
+            "Use the Gemini API to summarise the conversation log into a saved journal entry."
+        )
+        self.generate_journal_btn.clicked.connect(self._generate_journal)
+        self.generate_journal_btn.setVisible(bool(self.config.gemini_api_key))
+        listen_strip.addWidget(self.generate_journal_btn)
+
         layout.addLayout(listen_strip)
 
         # Main chat-display surface. No hardcoded font-size so OS font-scale
@@ -961,24 +975,10 @@ class MainWindow(QMainWindow):
         self._spectro_toggle_action.triggered.connect(self._on_spectro_toggle)
         view_menu.addAction(self._spectro_toggle_action)
 
-        # Attendance toggle. Same on/off semantic as the Configuration
-        # dialog's "Track listening-session attendance" checkbox — both
-        # write ``attendance.enabled`` in config.json, so the menu state,
-        # the Config dialog, and the dock visibility never diverge.
-        self._attendance_toggle_action = QAction("Show callsigns &detected", self)
-        self._attendance_toggle_action.setCheckable(True)
-        self._attendance_toggle_action.setChecked(self.attendance_enabled)
-        self._attendance_toggle_action.setShortcut(QKeySequence("Ctrl+Shift+A"))
-        self._attendance_toggle_action.setStatusTip(
-            "Toggle the callsigns-detected panel. Disabled in FRS mode."
-        )
-        self._attendance_toggle_action.triggered.connect(self._on_attendance_toggle)
-        view_menu.addAction(self._attendance_toggle_action)
-
-        view_menu.addSeparator()
-
         # Color map / frequency range / time window — three structurally
         # identical checkable-action submenus built by the shared helper.
+        # Grouped directly under "Show waterfall" so all waterfall controls
+        # sit together before unrelated panel toggles.
         freq_labels = {FREQ_RANGE_VOICE: "&Voice band (300–3400 Hz)",
                        FREQ_RANGE_FULL:  "&Full band (0–Nyquist)"}
         self._build_spectro_option_menu(
@@ -1002,6 +1002,22 @@ class MainWindow(QMainWindow):
             setter_fn=self._set_spectro_time_window,
             actions_attr="_spectro_window_actions",
         )
+
+        view_menu.addSeparator()
+
+        # Attendance toggle. Same on/off semantic as the Configuration
+        # dialog's "Track listening-session attendance" checkbox — both
+        # write ``attendance.enabled`` in config.json, so the menu state,
+        # the Config dialog, and the dock visibility never diverge.
+        self._attendance_toggle_action = QAction("Show callsigns &detected", self)
+        self._attendance_toggle_action.setCheckable(True)
+        self._attendance_toggle_action.setChecked(self.attendance_enabled)
+        self._attendance_toggle_action.setShortcut(QKeySequence("Ctrl+Shift+A"))
+        self._attendance_toggle_action.setStatusTip(
+            "Toggle the callsigns-detected panel. Disabled in FRS mode."
+        )
+        self._attendance_toggle_action.triggered.connect(self._on_attendance_toggle)
+        view_menu.addAction(self._attendance_toggle_action)
 
         # Panels submenu — every user-hideable dock gets a toggle action,
         # plus a "Reset layout" entry that snaps everything back to the
@@ -1332,6 +1348,7 @@ class MainWindow(QMainWindow):
                 self.tx.ptt = make_ptt(self.config)
             if old_output_device != self.config.output_device and self.monitor_btn.isChecked():
                 self._monitor.start(self.config.output_device)
+            self.generate_journal_btn.setVisible(bool(self.config.gemini_api_key))
 
     def open_contacts_dialog(self):
         dlg = ContactsDialog(self.contacts, parent=self)
@@ -1380,6 +1397,7 @@ class MainWindow(QMainWindow):
 
         self._generate_journal_action.setEnabled(False)
         self.journal_icon_btn.setEnabled(False)
+        self.generate_journal_btn.setEnabled(False)
         self.statusBar().showMessage("Generating journal entry via Gemini…")
 
         self._journal_worker = JournalWorker(
@@ -1391,17 +1409,30 @@ class MainWindow(QMainWindow):
 
     def _on_journal_finished(self, result: dict):
         transcript = self.chat_display.toPlainText().strip()
-        callsigns = self.attendance_panel.callsigns() if self.attendance_panel else []
         title = result.get("title", "Untitled Session")
         summary = result.get("summary", "")
+        ai_locs = result.get("callsigns_locations")
+        if not isinstance(ai_locs, list):
+            ai_locs = []
+
+        # Merge: AI result has locations; attendance panel is the ground truth for
+        # which callsigns were actually heard. Add any panel-tracked callsign the
+        # AI missed so they are never silently dropped from the journal.
+        panel_callsigns = set(self.attendance_panel.callsigns() if self.attendance_panel else [])
+        ai_known = {c.get("callsign", "") for c in ai_locs}
+        merged = list(ai_locs) + [
+            {"callsign": cs, "location": "Not stated"}
+            for cs in panel_callsigns if cs and cs not in ai_known
+        ]
         try:
-            path = save_journal(title, summary, callsigns, transcript)
+            path = save_journal(title, summary, merged, transcript)
             self.statusBar().showMessage(f"Journal saved: {path}", 5000)
         except OSError as exc:
             self.statusBar().clearMessage()
             QMessageBox.warning(self, "Journal Save Error", f"Could not save journal:\n{exc}")
         self._generate_journal_action.setEnabled(True)
         self.journal_icon_btn.setEnabled(True)
+        self.generate_journal_btn.setEnabled(True)
         self._journal_worker = None
 
     def _on_journal_error(self, message: str):
@@ -1413,6 +1444,7 @@ class MainWindow(QMainWindow):
         )
         self._generate_journal_action.setEnabled(True)
         self.journal_icon_btn.setEnabled(True)
+        self.generate_journal_btn.setEnabled(True)
         self._journal_worker = None
 
     def open_quick_messages_dialog(self):
