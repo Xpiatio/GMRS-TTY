@@ -735,6 +735,21 @@ def build_main_window(b: Builder):
                           "</font>. A power-on default is also configurable "
                           "from <b>Settings &rarr; Configuration &rarr; "
                           "Monitor audio</b>."),
+        ("Passthrough toggle", "Sits immediately to the right of Monitor. "
+                          "Checkable; enabled only while Monitor is on. "
+                          "When checked, incoming audio bypasses the "
+                          "300&ndash;3000 Hz bandpass filter and plays "
+                          "directly to the output device — only the "
+                          "16&nbsp;kHz&nbsp;&rarr;&nbsp;48&nbsp;kHz "
+                          "upsample is applied. Transcription (VAD + "
+                          "Whisper) is not affected; the filter is only "
+                          "removed from the speaker path. Useful when "
+                          "the operator wants to hear the raw channel "
+                          "audio without any frequency shaping. "
+                          "Persists to <font face=\"Courier\">config.json"
+                          "</font> under <font face=\"Courier\">"
+                          "monitor_passthrough</font> and is restored "
+                          "automatically when Monitor is activated."),
         ("Live input-level meter", "Thin horizontal bar stretching across "
                                    "the middle of the strip — real-time "
                                    "peak amplitude of the captured audio. "
@@ -1091,6 +1106,13 @@ def build_config_dialog(b: Builder):
              "is enabled, routing incoming radio audio to the output "
              "device in real-time. The Monitor toggle is the live "
              "control; this checkbox sets the power-on default only."],
+            ["Monitor passthrough", "Checkbox",
+             "Default off. When checked, the Passthrough toggle on the "
+             "Listen strip is pre-enabled whenever Monitor turns on — "
+             "audio will reach the speaker without the bandpass filter. "
+             "Persisted as "
+             "<font face=\"Courier\">monitor_passthrough</font> in "
+             "config.json. Does not affect transcription."],
             ["Filter profanity (Alt+Y)", "Checkbox",
              "Mask strong language with asterisks. Default on. Applies "
              "to both RX transcripts and TX messages before TTS speaks "
@@ -1189,6 +1211,24 @@ def build_contacts_dialog(b: Builder):
                                 "skipped. Disabled when the app is "
                                 "offline; hover the disabled button for "
                                 "the reason."),
+        ("Import… (Alt+I)", "Open a file-picker to import contacts from "
+                            "a <b>JSON</b> or <b>CSV</b> file. Incoming "
+                            "contacts are <i>merged</i> into the current "
+                            "list: rows matched by callsign + name are "
+                            "updated with any non-blank fields from the "
+                            "file while their FCC verification metadata "
+                            "is preserved; entirely new callsigns are "
+                            "appended. Works offline; FCC verification "
+                            "is not re-run on import."),
+        ("Export… (Alt+X)", "Save the current contact list to a file. "
+                             "Choosing <b>JSON</b> exports all fields "
+                             "(including verification metadata) for a "
+                             "lossless round-trip between GMRS-TTY "
+                             "instances. Choosing <b>CSV</b> exports the "
+                             "five user-editable columns (Callsign, Name, "
+                             "Location, GMRS, HAM) for editing in a "
+                             "spreadsheet. The exported file can be "
+                             "imported back with Import…."),
         ("OK / Cancel", "Standard. OK runs the same verification gate "
                         "as Verify all (newly added rows, edits, and "
                         "previously-failed lookups all get a fresh "
@@ -1973,6 +2013,7 @@ def build_files(b: Builder):
         '    "fuzzy_callsign": false,\n'
         '    "listen_only": false,\n'
         '    "monitor_enabled": false,\n'
+        '    "monitor_passthrough": false,\n'
         '    "attendance": { "enabled": false },\n'
         '    "gemini_api_key": "",\n'
         '    "ptt_mode": "manual",\n'
@@ -2019,6 +2060,12 @@ def build_files(b: Builder):
                             "each time Listen-only mode is turned on. "
                             "Has no effect when Listen only is off (the "
                             "button is disabled in that state)."),
+        ("monitor_passthrough", "Boolean. Default false. When true the "
+                                "Passthrough toggle is pre-enabled when "
+                                "Monitor turns on, sending audio to the "
+                                "speaker without the bandpass filter. "
+                                "Does not affect VAD or Whisper "
+                                "transcription."),
         ("fuzzy_callsign", "Boolean. Off by default. When true a "
                             "detected callsign that differs from a "
                             "saved contact by exactly one same-class "
