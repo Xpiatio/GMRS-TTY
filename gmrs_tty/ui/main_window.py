@@ -961,24 +961,10 @@ class MainWindow(QMainWindow):
         self._spectro_toggle_action.triggered.connect(self._on_spectro_toggle)
         view_menu.addAction(self._spectro_toggle_action)
 
-        # Attendance toggle. Same on/off semantic as the Configuration
-        # dialog's "Track listening-session attendance" checkbox — both
-        # write ``attendance.enabled`` in config.json, so the menu state,
-        # the Config dialog, and the dock visibility never diverge.
-        self._attendance_toggle_action = QAction("Show callsigns &detected", self)
-        self._attendance_toggle_action.setCheckable(True)
-        self._attendance_toggle_action.setChecked(self.attendance_enabled)
-        self._attendance_toggle_action.setShortcut(QKeySequence("Ctrl+Shift+A"))
-        self._attendance_toggle_action.setStatusTip(
-            "Toggle the callsigns-detected panel. Disabled in FRS mode."
-        )
-        self._attendance_toggle_action.triggered.connect(self._on_attendance_toggle)
-        view_menu.addAction(self._attendance_toggle_action)
-
-        view_menu.addSeparator()
-
         # Color map / frequency range / time window — three structurally
         # identical checkable-action submenus built by the shared helper.
+        # Grouped directly under "Show waterfall" so all waterfall controls
+        # sit together before unrelated panel toggles.
         freq_labels = {FREQ_RANGE_VOICE: "&Voice band (300–3400 Hz)",
                        FREQ_RANGE_FULL:  "&Full band (0–Nyquist)"}
         self._build_spectro_option_menu(
@@ -1002,6 +988,22 @@ class MainWindow(QMainWindow):
             setter_fn=self._set_spectro_time_window,
             actions_attr="_spectro_window_actions",
         )
+
+        view_menu.addSeparator()
+
+        # Attendance toggle. Same on/off semantic as the Configuration
+        # dialog's "Track listening-session attendance" checkbox — both
+        # write ``attendance.enabled`` in config.json, so the menu state,
+        # the Config dialog, and the dock visibility never diverge.
+        self._attendance_toggle_action = QAction("Show callsigns &detected", self)
+        self._attendance_toggle_action.setCheckable(True)
+        self._attendance_toggle_action.setChecked(self.attendance_enabled)
+        self._attendance_toggle_action.setShortcut(QKeySequence("Ctrl+Shift+A"))
+        self._attendance_toggle_action.setStatusTip(
+            "Toggle the callsigns-detected panel. Disabled in FRS mode."
+        )
+        self._attendance_toggle_action.triggered.connect(self._on_attendance_toggle)
+        view_menu.addAction(self._attendance_toggle_action)
 
         # Panels submenu — every user-hideable dock gets a toggle action,
         # plus a "Reset layout" entry that snaps everything back to the
