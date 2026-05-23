@@ -9,14 +9,13 @@ class TestLoadJson:
         result = load_json(str(tmp_path / "missing.json"), default)
         assert result == default
 
-    def test_corrupted_file_returns_default(self, tmp_path, capsys):
+    def test_corrupted_file_returns_default(self, tmp_path, caplog):
         path = tmp_path / "bad.json"
         path.write_text("{ not valid json")
         default = {"fallback": True}
         result = load_json(str(path), default)
         assert result == default
-        # The helper prints a diagnostic so the operator can see it failed.
-        assert "Error decoding" in capsys.readouterr().out
+        assert "Error decoding" in caplog.text
 
     def test_valid_file_returns_parsed(self, tmp_path):
         path = tmp_path / "ok.json"

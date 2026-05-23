@@ -17,25 +17,25 @@ class TestMakePttModeSelection:
 
 
 class TestUsbFtdiFallback:
-    def test_missing_port_falls_back_to_manual(self, capsys):
+    def test_missing_port_falls_back_to_manual(self, caplog):
         result = make_ptt({"ptt_mode": "usb_ftdi", "ptt_serial_port": ""})
         assert isinstance(result, ManualPTT)
         # Operators need to see *why* their configured PTT mode didn't engage.
-        assert "no serial port configured" in capsys.readouterr().out
+        assert "no serial port configured" in caplog.text
 
-    def test_whitespace_only_port_falls_back_to_manual(self, capsys):
+    def test_whitespace_only_port_falls_back_to_manual(self, caplog):
         result = make_ptt({"ptt_mode": "usb_ftdi", "ptt_serial_port": "   "})
         assert isinstance(result, ManualPTT)
-        assert "no serial port configured" in capsys.readouterr().out
+        assert "no serial port configured" in caplog.text
 
-    def test_unopenable_port_falls_back_to_manual(self, capsys):
+    def test_unopenable_port_falls_back_to_manual(self, caplog):
         # A path that definitely won't exist as a serial device. The Serial
         # constructor will raise; make_ptt catches and degrades to Manual.
         result = make_ptt(
             {"ptt_mode": "usb_ftdi", "ptt_serial_port": "/dev/this_serial_port_does_not_exist_12345"}
         )
         assert isinstance(result, ManualPTT)
-        assert "failed to open serial port" in capsys.readouterr().out
+        assert "failed to open serial port" in caplog.text
 
 
 class TestVoxTailSilence:

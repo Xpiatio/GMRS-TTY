@@ -1,6 +1,10 @@
+import logging
+
 from gmrs_tty.ptt.manual import ManualPTT
 from gmrs_tty.ptt.serial_ptt import SerialPTT
 from gmrs_tty.ptt.vox import VoxPTT
+
+_log = logging.getLogger(__name__)
 
 # Modes whose constructors take no arguments. New simple modes register here
 # without touching make_ptt's logic.
@@ -16,11 +20,11 @@ def make_ptt(config):
         port = (config.get("ptt_serial_port") or "").strip()
         line = config.get("ptt_serial_line", "RTS")
         if not port:
-            print("PTT: USB FTDI selected but no serial port configured; falling back to manual.")
+            _log.warning("PTT: USB FTDI selected but no serial port configured; falling back to manual.")
             return ManualPTT()
         try:
             return SerialPTT(port, line)
         except Exception as e:
-            print(f"PTT: failed to open serial port {port}: {e}; falling back to manual.")
+            _log.error("PTT: failed to open serial port %s: %s; falling back to manual.", port, e)
             return ManualPTT()
     return _SIMPLE_MODES.get(mode, ManualPTT)()
