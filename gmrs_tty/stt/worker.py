@@ -1,6 +1,7 @@
 import os
 import queue
 import threading
+from dataclasses import dataclass
 
 import numpy as np
 from PySide6.QtCore import QThread, Signal
@@ -11,6 +12,19 @@ from gmrs_tty.audio.squelch import SquelchDetector
 from gmrs_tty.audio.vad import load_vad_model, make_vad_iterator
 from gmrs_tty.stt.segmenter import SpeechSegmenter
 from gmrs_tty.stt.transcriber import WhisperTranscriber
+
+
+@dataclass
+class ModelCache:
+    """Loaded Whisper and VAD objects hoisted out of a stopped STTWorker.
+
+    Passed back into the next STTWorker so the multi-second model load is
+    skipped on every Listen toggle.  None means the models have not been
+    loaded yet or the model name changed.
+    """
+    whisper: object
+    vad_model: object
+    model_name: str
 
 
 class STTWorker(QThread):
@@ -74,7 +88,7 @@ class STTWorker(QThread):
     MODELS_STT_DIR = os.path.join("Models", "STT")
 
     def __init__(self, input_device=None, whisper_model="small.en", vad_threshold=0.5,
-                 whisper=None, vad_model=None, youtube_url=None,
+                 model_cache: "ModelCache | None" = None, youtube_url=None,
                  youtube_cookies_from_browser="", youtube_cookies_file="",
                  parent=None):
         super().__init__(parent)
@@ -87,11 +101,11 @@ class STTWorker(QThread):
         self.vad_threshold = float(vad_threshold)
         self._running = True
         self._paused = False
-        # Public so MainWindow can hoist them out after the worker stops and
-        # hand them back to the next worker — avoids re-loading on every
-        # Listen toggle. Either both are None (need to load) or both are set.
-        self.whisper = whisper
-        self.vad_model = vad_model
+        self._model_cache: ModelCache | None = model_cache
+
+    @property
+    def model_cache(self) -> "ModelCache | None":
+        return self._model_cache
 
     def stop(self):
         self._running = False
@@ -118,13 +132,18 @@ class STTWorker(QThread):
             return
 
         try:
-            if self.whisper is None or self.vad_model is None:
+            if self._model_cache is None:
                 self.status.emit(f"Loading Whisper model from {self.whisper_model_path}...")
-                self.whisper = WhisperTranscriber.load(self.whisper_model_path)
-                self.vad_model = load_vad_model()
-            transcriber = self.whisper
+                whisper = WhisperTranscriber.load(self.whisper_model_path)
+                vad_model = load_vad_model()
+                self._model_cache = ModelCache(
+                    whisper=whisper,
+                    vad_model=vad_model,
+                    model_name=self.whisper_model_name,
+                )
+            transcriber = self._model_cache.whisper
             vad_iter = make_vad_iterator(
-                self.vad_model,
+                self._model_cache.vad_model,
                 sample_rate=self.SAMPLE_RATE,
                 threshold=self.vad_threshold,
             )
