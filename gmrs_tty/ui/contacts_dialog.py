@@ -1,5 +1,3 @@
-import datetime
-
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
@@ -7,7 +5,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout,
 )
 
-from gmrs_tty.constants import VERIFIED_COLOR, VERIFIED_GLYPH
+from gmrs_tty.constants import VERIFIED_COLOR, VERIFIED_GLYPH, utc_now_iso
 from gmrs_tty.fcc.crossref import apply_verification, verify_callsign
 from gmrs_tty.net.online import is_online
 from gmrs_tty.persistence.contacts import normalize_callsign, sort_contacts_by_suffix
@@ -22,10 +20,6 @@ GMRS_COL = 3
 HAM_COL = 4
 VERIFIED_COL = 5
 COLUMN_COUNT = 6
-
-
-def _now_iso():
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _verified_cell(contact):
@@ -244,7 +238,7 @@ class ContactsDialog(QDialog):
             self._apply_online_state()
             return
         rows = self._read_rows_from_table()
-        now = _now_iso()
+        now = utc_now_iso()
         for idx, contact in enumerate(rows):
             cs = normalize_callsign(contact.get("callsign", ""))
             if not cs or cs == "ALL":
@@ -274,7 +268,7 @@ class ContactsDialog(QDialog):
             self._online = False
             self._apply_online_state()
 
-        now = _now_iso()
+        now = utc_now_iso()
         out = []
         for idx, current in enumerate(rows):
             callsign = normalize_callsign(current.get("callsign", ""))
