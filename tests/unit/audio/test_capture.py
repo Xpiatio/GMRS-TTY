@@ -1,9 +1,9 @@
-"""Unit tests for YouTubeSource._resolve_audio_url."""
+"""Unit tests for YouTubeSource._resolve_audio_url and _yt_dlp_auth_flags."""
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gmrs_tty.audio.capture import YouTubeSource
+from gmrs_tty.audio.capture import YouTubeSource, _yt_dlp_auth_flags
 
 
 def _make_run_result(stdout="", stderr="", returncode=0):
@@ -24,13 +24,33 @@ def _no_start(monkeypatch):
     monkeypatch.setattr(YouTubeSource, "_start", lambda self: None)
 
 
+class TestYtDlpAuthFlags:
+    def test_no_auth_returns_empty(self):
+        assert _yt_dlp_auth_flags() == []
+
+    def test_browser_flag(self):
+        assert _yt_dlp_auth_flags(cookies_from_browser="chrome") == [
+            "--cookies-from-browser", "chrome"
+        ]
+
+    def test_file_flag(self):
+        assert _yt_dlp_auth_flags(cookies_file="/tmp/cookies.txt") == [
+            "--cookies", "/tmp/cookies.txt"
+        ]
+
+    def test_browser_takes_precedence_over_file(self):
+        flags = _yt_dlp_auth_flags(cookies_from_browser="firefox", cookies_file="/tmp/c.txt")
+        assert flags == ["--cookies-from-browser", "firefox"]
+
+
 class TestResolveAudioUrl:
-    def _make_source(self):
+    def _make_source(self, cookies_from_browser="", cookies_file=""):
         src = YouTubeSource.__new__(YouTubeSource)
         src._url = "https://www.youtube.com/watch?v=TEST"
         src._sample_rate = 16000
         src._chunk_samples = 512
         src._bytes_per_chunk = 512 * 4
+        src._auth = _yt_dlp_auth_flags(cookies_from_browser, cookies_file)
         src._proc = None
         return src
 
@@ -85,3 +105,12 @@ class TestResolveAudioUrl:
         msg = str(exc_info.value)
         assert src._url in msg
         assert "no audio URL" in msg
+
+    def test_auth_flags_included_in_subprocess_call(self):
+        src = self._make_source(cookies_from_browser="firefox")
+        ok = _make_run_result(stdout="https://cdn.example.com/audio.webm\n")
+        with patch("subprocess.run", return_value=ok) as mock_run:
+            src._resolve_audio_url()
+        args = mock_run.call_args[0][0]
+        assert "--cookies-from-browser" in args
+        assert args[args.index("--cookies-from-browser") + 1] == "firefox"

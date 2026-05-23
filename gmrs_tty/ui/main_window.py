@@ -1408,7 +1408,11 @@ class MainWindow(QMainWindow):
         callsigns = self.attendance_panel.callsigns() if self.attendance_panel else []
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if self.config.input_device == "youtube" and self.config.youtube_url:
-            yt_date = fetch_youtube_upload_date(self.config.youtube_url)
+            yt_date = fetch_youtube_upload_date(
+                self.config.youtube_url,
+                cookies_from_browser=self.config.youtube_cookies_from_browser,
+                cookies_file=self.config.youtube_cookies_file,
+            )
             if yt_date:
                 timestamp = yt_date
 
@@ -1995,6 +1999,8 @@ class MainWindow(QMainWindow):
             whisper=self._stt_whisper,
             vad_model=self._stt_vad_model,
             youtube_url=self.config.youtube_url,
+            youtube_cookies_from_browser=self.config.youtube_cookies_from_browser,
+            youtube_cookies_file=self.config.youtube_cookies_file,
             parent=self,
         )
         self.stt_worker.transcribed_segment.connect(self.on_transcription_segment)
