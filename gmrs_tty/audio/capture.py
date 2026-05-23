@@ -6,13 +6,27 @@ import numpy as np
 import sounddevice as sd
 
 
-def fetch_youtube_upload_date(url: str) -> str | None:
+def _yt_dlp_auth_flags(cookies_from_browser: str = "", cookies_file: str = "") -> list:
+    """Return yt-dlp auth flags for the given cookie source (at most one)."""
+    if cookies_from_browser:
+        return ["--cookies-from-browser", cookies_from_browser]
+    if cookies_file:
+        return ["--cookies", cookies_file]
+    return []
+
+
+def fetch_youtube_upload_date(
+    url: str,
+    cookies_from_browser: str = "",
+    cookies_file: str = "",
+) -> str | None:
     """Return the YouTube upload date as 'YYYY-MM-DD', or None on failure."""
     if not shutil.which("yt-dlp"):
         return None
     try:
+        auth = _yt_dlp_auth_flags(cookies_from_browser, cookies_file)
         result = subprocess.run(
-            ["yt-dlp", "--print", "%(upload_date)s", "--no-playlist", url],
+            ["yt-dlp", "--print", "%(upload_date)s", "--no-playlist", *auth, url],
             capture_output=True, text=True, timeout=30,
         )
         raw = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
@@ -35,7 +49,14 @@ class YouTubeSource:
     time-limited and would expire on long loops.
     """
 
-    def __init__(self, url: str, sample_rate: int, chunk_samples: int):
+    def __init__(
+        self,
+        url: str,
+        sample_rate: int,
+        chunk_samples: int,
+        cookies_from_browser: str = "",
+        cookies_file: str = "",
+    ):
         if not shutil.which("yt-dlp"):
             raise FileNotFoundError("yt-dlp binary not on PATH")
         if not shutil.which("ffmpeg"):
@@ -44,6 +65,7 @@ class YouTubeSource:
         self._sample_rate = sample_rate
         self._chunk_samples = chunk_samples
         self._bytes_per_chunk = chunk_samples * 4  # float32 = 4 bytes/sample
+        self._auth = _yt_dlp_auth_flags(cookies_from_browser, cookies_file)
         self._proc = None
         self._start()
 
@@ -51,7 +73,7 @@ class YouTubeSource:
         result = None
         for fmt in ("bestaudio", "bestaudio/best"):
             result = subprocess.run(
-                ["yt-dlp", "-f", fmt, "--get-url", self._url],
+                ["yt-dlp", "-f", fmt, "--get-url", *self._auth, self._url],
                 capture_output=True, text=True, timeout=30,
             )
             line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
@@ -182,7 +204,14 @@ class PortAudioSource:
             pass
 
 
-def open_input_source(sample_rate, chunk_samples, input_device=None, youtube_url=None):
+def open_input_source(
+    sample_rate,
+    chunk_samples,
+    input_device=None,
+    youtube_url=None,
+    youtube_cookies_from_browser="",
+    youtube_cookies_file="",
+):
     """Open an InputSource for the active capture path.
 
     Prefers `parec` over PortAudio when the operator has not selected a
@@ -197,7 +226,13 @@ def open_input_source(sample_rate, chunk_samples, input_device=None, youtube_url
     if input_device == "youtube":
         if not youtube_url:
             raise ValueError("input_device='youtube' requires a youtube_url")
-        return YouTubeSource(youtube_url, sample_rate, chunk_samples)
+        return YouTubeSource(
+            youtube_url,
+            sample_rate,
+            chunk_samples,
+            cookies_from_browser=youtube_cookies_from_browser,
+            cookies_file=youtube_cookies_file,
+        )
     if input_device is None:
         try:
             return ParecSource(sample_rate, chunk_samples)
