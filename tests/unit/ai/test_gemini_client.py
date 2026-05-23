@@ -23,7 +23,11 @@ _VALID_RESPONSE = {
         {
             "content": {
                 "parts": [
-                    {"text": json.dumps({"title": "Morning Check-in", "summary": "Operators exchanged radio checks."})}
+                    {"text": json.dumps({
+                        "title": "Morning Check-in",
+                        "callsigns_locations": [{"callsign": "WSLZ233", "location": "Denver, CO"}],
+                        "summary": "Operators exchanged radio checks.",
+                    })}
                 ]
             }
         }
@@ -37,6 +41,7 @@ class TestGenerateJournal:
             result = generate_journal("key", "transcript text", ["WSLZ233"], "2026-01-01 12:00:00")
         assert result["title"] == "Morning Check-in"
         assert "radio checks" in result["summary"]
+        assert result["callsigns_locations"] == [{"callsign": "WSLZ233", "location": "Denver, CO"}]
 
     def test_raises_on_http_error(self):
         err = urllib.error.HTTPError(
@@ -59,6 +64,18 @@ class TestGenerateJournal:
         }
         with patch("urllib.request.urlopen", return_value=_make_response(bad_response)):
             with pytest.raises(GeminiError, match="missing required keys"):
+                generate_journal("key", "t", [], "ts")
+
+    def test_raises_when_callsigns_locations_not_a_list(self):
+        bad_response = {
+            "candidates": [{"content": {"parts": [{"text": json.dumps({
+                "title": "x",
+                "summary": "y",
+                "callsigns_locations": None,
+            })}]}}]
+        }
+        with patch("urllib.request.urlopen", return_value=_make_response(bad_response)):
+            with pytest.raises(GeminiError, match="callsigns_locations must be an array"):
                 generate_journal("key", "t", [], "ts")
 
     def test_raises_when_response_text_not_json(self):

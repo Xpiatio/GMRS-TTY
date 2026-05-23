@@ -1,6 +1,8 @@
 """Pop-up dialog for browsing saved session journal entries."""
 from __future__ import annotations
 
+import html
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QListWidget,
@@ -101,17 +103,39 @@ class JournalDialog(QDialog):
         entry = self._entries[row]
         self._title_label.setText(entry.get("title") or "Untitled")
 
-        exported = entry.get("exported_at") or ""
-        callsigns = ", ".join(entry.get("callsigns") or []) or "None"
-        summary = (entry.get("summary") or "").replace("\n", "<br>")
+        exported = html.escape(entry.get("exported_at") or "")
 
-        html = (
+        callsigns_locations = entry.get("callsigns_locations")
+        if callsigns_locations:
+            cs_rows = "".join(
+                f"<tr><td style='padding:2px 12px 2px 0'><b>{html.escape(c.get('callsign', ''))}</b></td>"
+                f"<td style='padding:2px 0'>{html.escape(c.get('location', 'Not stated'))}</td></tr>"
+                for c in callsigns_locations
+            )
+            cs_section = (
+                "<p><b>Callsigns &amp; Locations</b></p>"
+                "<table border='0' cellpadding='0' cellspacing='0'>"
+                f"{cs_rows}"
+                "</table>"
+            )
+        else:
+            flat = html.escape(", ".join(entry.get("callsigns") or []) or "None")
+            cs_section = f"<p><b>Callsigns Detected:</b> {flat}</p>"
+
+        summary = html.escape(entry.get("summary") or "").replace("\n", "<br>")
+        transcript_raw = html.escape(entry.get("transcript") or "").replace("\n", "<br>")
+
+        body = (
             f"<p><b>Exported:</b> {exported}</p>"
-            f"<p><b>Callsigns Detected:</b> {callsigns}</p>"
+            f"{cs_section}"
             f"<hr>"
+            f"<p><b>Summary</b></p>"
             f"<p>{summary}</p>"
+            f"<hr>"
+            f"<p><b>Transcript</b></p>"
+            f"<p style='font-family:monospace;font-size:11px'>{transcript_raw}</p>"
         )
-        self._detail.setHtml(html)
+        self._detail.setHtml(body)
 
     def _delete_selected(self) -> None:
         row = self._list.currentRow()

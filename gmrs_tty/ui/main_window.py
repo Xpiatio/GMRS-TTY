@@ -1409,11 +1409,23 @@ class MainWindow(QMainWindow):
 
     def _on_journal_finished(self, result: dict):
         transcript = self.chat_display.toPlainText().strip()
-        callsigns = self.attendance_panel.callsigns() if self.attendance_panel else []
         title = result.get("title", "Untitled Session")
         summary = result.get("summary", "")
+        ai_locs = result.get("callsigns_locations")
+        if not isinstance(ai_locs, list):
+            ai_locs = []
+
+        # Merge: AI result has locations; attendance panel is the ground truth for
+        # which callsigns were actually heard. Add any panel-tracked callsign the
+        # AI missed so they are never silently dropped from the journal.
+        panel_callsigns = set(self.attendance_panel.callsigns() if self.attendance_panel else [])
+        ai_known = {c.get("callsign", "") for c in ai_locs}
+        merged = list(ai_locs) + [
+            {"callsign": cs, "location": "Not stated"}
+            for cs in panel_callsigns if cs and cs not in ai_known
+        ]
         try:
-            path = save_journal(title, summary, callsigns, transcript)
+            path = save_journal(title, summary, merged, transcript)
             self.statusBar().showMessage(f"Journal saved: {path}", 5000)
         except OSError as exc:
             self.statusBar().clearMessage()

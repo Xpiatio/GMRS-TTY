@@ -20,12 +20,14 @@ class TestSaveJournal:
         assert os.path.isdir(journal_mod.JOURNALS_DIR)
 
     def test_file_is_valid_json(self):
-        path = journal_mod.save_journal("T", "S", ["WSLZ233"], "text")
+        cs = [{"callsign": "WSLZ233", "location": "Denver, CO"}]
+        path = journal_mod.save_journal("T", "S", cs, "text")
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
         assert data["title"] == "T"
         assert data["summary"] == "S"
         assert data["callsigns"] == ["WSLZ233"]
+        assert data["callsigns_locations"] == cs
         assert data["transcript"] == "text"
         assert "exported_at" in data
 

@@ -20,7 +20,10 @@ Session Transcript:
 
 Respond ONLY with a JSON object (no markdown fences) containing:
 - "title": a concise session title, 10 words or fewer
-- "summary": a narrative summary of the conversations and activities, 2-4 paragraphs
+- "callsigns_locations": an array of objects, one per detected callsign, each with \
+"callsign" (the identifier) and "location" (the location the operator stated in the \
+transcript, or "Not stated" if no location was mentioned)
+- "summary": a detailed narrative summary of the conversations and activities, 3-5 paragraphs
 """
 
 
@@ -34,7 +37,7 @@ def generate_journal(
     callsigns: list[str],
     timestamp: str,
 ) -> dict:
-    """Call Gemini and return a dict with keys ``title`` and ``summary``."""
+    """Call Gemini and return a dict with keys ``title``, ``summary``, and ``callsigns_locations``."""
     callsign_str = ", ".join(callsigns) if callsigns else "None detected"
     prompt = _PROMPT_TEMPLATE.format(
         timestamp=timestamp,
@@ -64,8 +67,10 @@ def generate_journal(
     try:
         text = data["candidates"][0]["content"]["parts"][0]["text"]
         result = json.loads(text)
-        if "title" not in result or "summary" not in result:
+        if "title" not in result or "summary" not in result or "callsigns_locations" not in result:
             raise ValueError("missing required keys")
+        if not isinstance(result["callsigns_locations"], list):
+            raise ValueError("callsigns_locations must be an array")
         return result
     except (KeyError, IndexError, json.JSONDecodeError, ValueError) as exc:
         raise GeminiError(f"Unexpected Gemini response format: {exc}") from exc

@@ -15,7 +15,7 @@ def _ensure_dir() -> None:
 def save_journal(
     title: str,
     summary: str,
-    callsigns: list[str],
+    callsigns_with_locations: list[dict],
     transcript: str,
 ) -> str:
     """Write a journal entry and return its file path."""
@@ -26,7 +26,8 @@ def save_journal(
     entry = {
         "exported_at": now.isoformat(timespec="seconds"),
         "title": title,
-        "callsigns": list(callsigns),
+        "callsigns": [c.get("callsign", "") for c in callsigns_with_locations],
+        "callsigns_locations": list(callsigns_with_locations),
         "transcript": transcript,
         "summary": summary,
     }
