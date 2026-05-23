@@ -992,7 +992,8 @@ def build_journals(b: Builder):
         "Configuration → Gemini API Key.")
     b.h3("Generating a journal entry")
     b.p("Click <b>Tools → Generate Session Journal…</b> (Ctrl+J) or the "
-        "📓 toolbar button while the conversation log has content. The "
+        "<b>Generate log entry</b> button on the listen strip (visible "
+        "when a Gemini API key is configured) while the conversation log has content. The "
         "app checks for a Gemini API key and a non-empty transcript; if "
         "either is missing an informative dialog explains what to do. "
         "When both are present, generation runs on a background thread — "
