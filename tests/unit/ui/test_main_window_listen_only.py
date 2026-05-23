@@ -10,7 +10,7 @@ These tests pin:
   - persistence round-trip via config["listen_only"].
 """
 import os
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -242,3 +242,125 @@ class TestListenOnlyPersistence:
             assert window.id_btn.isEnabled() is False
         finally:
             handle.close()
+
+
+def _fake_stt_worker():
+    """Minimal MagicMock that satisfies the stt_worker contract used by
+    stop_stt and _on_listen_only_toggled without starting real threads."""
+    worker = MagicMock()
+    worker.isRunning.return_value = False
+    worker.whisper = None
+    worker.vad_model = None
+    return worker
+
+
+class TestMonitorButtonInteractions:
+    """Pin the Listen / Listen Only / Monitor prerequisite chain.
+
+    Rules under test:
+      - Monitor is disabled and unchecked at startup.
+      - Monitor is only enabled when both Listen (stt_worker present) AND
+        Listen Only are active.
+      - Turning off Listen Only forces Monitor off (unchecked + disabled).
+      - Turning off Listen forces Monitor off (unchecked + disabled).
+      - Re-enabling Listen Only after a Listen stop/start cycle correctly
+        resumes the Monitor stream via _on_monitor_toggled, not silently
+        leaving the button checked-but-inert.
+    """
+
+    def test_monitor_btn_starts_disabled_and_unchecked(self, main_window):
+        window, _ = main_window
+        assert window.monitor_btn.isEnabled() is False
+        assert window.monitor_btn.isChecked() is False
+
+    def test_monitor_enabled_only_when_listen_and_listen_only_both_active(
+        self, main_window
+    ):
+        window, _ = main_window
+        # Listen Only ON but Listen OFF → monitor must stay disabled.
+        window.listen_only_btn.setChecked(True)
+        assert window.monitor_btn.isEnabled() is False
+
+    def test_listen_only_off_forces_monitor_unchecked_and_disabled(
+        self, main_window
+    ):
+        window, _ = main_window
+        # Simulate Listen active so _on_listen_only_toggled enters the block.
+        window.stt_worker = _fake_stt_worker()
+        try:
+            window.listen_only_btn.setChecked(True)
+            # Manually put monitor in the checked+enabled state.
+            window.monitor_btn.setEnabled(True)
+            window.monitor_btn.setChecked(True)
+
+            window.listen_only_btn.setChecked(False)
+
+            assert window.monitor_btn.isChecked() is False
+            assert window.monitor_btn.isEnabled() is False
+        finally:
+            window.stt_worker = None
+
+    def test_listen_off_forces_monitor_unchecked_and_disabled(
+        self, main_window
+    ):
+        window, _ = main_window
+        # Put the window into Listen ON + Listen Only ON + Monitor ON state.
+        window.stt_worker = _fake_stt_worker()
+        window.listen_only_btn.setChecked(True)
+        window.monitor_btn.setEnabled(True)
+        window.monitor_btn.setChecked(True)
+
+        # Turning off Listen must leave monitor unchecked AND disabled — not
+        # just disabled — so re-enabling Listen Only later fires the monitor
+        # toggle correctly.
+        window.stop_stt()
+
+        assert window.monitor_btn.isChecked() is False
+        assert window.monitor_btn.isEnabled() is False
+
+    def test_monitor_restarts_correctly_after_listen_stop_and_restart(
+        self, main_window
+    ):
+        """Regression: monitor_btn checked+disabled after stop_stt caused
+        _on_listen_only_toggled to skip setChecked(True) on re-enable,
+        leaving the button visually on but the stream never started."""
+        window, _ = main_window
+        toggled_on_calls = []
+        original = window._on_monitor_toggled
+
+        def spy(checked):
+            toggled_on_calls.append(checked)
+            original(checked)
+
+        window._on_monitor_toggled = spy
+        window.monitor_btn.toggled.connect(spy)
+
+        try:
+            # Phase 1: Listen ON → Listen Only ON → Monitor ON.
+            window.stt_worker = _fake_stt_worker()
+            window.listen_only_btn.setChecked(True)
+            window.monitor_btn.setEnabled(True)
+            window.monitor_btn.setChecked(True)
+            toggled_on_calls.clear()
+
+            # Phase 2: Listen OFF.
+            window.stop_stt()
+            assert window.monitor_btn.isChecked() is False  # fix guarantee
+
+            # Phase 3: Listen Only OFF (stt_worker already None after stop).
+            window.listen_only_btn.setChecked(False)
+
+            # Phase 4: Listen ON again → Listen Only ON again.
+            window.stt_worker = _fake_stt_worker()
+            window.listen_only_btn.setChecked(True)
+
+            # Monitor button should be enabled and the toggled(True) signal
+            # should have fired so the stream would be rewired.
+            assert window.monitor_btn.isEnabled() is True
+            assert True in toggled_on_calls, (
+                "monitor_btn.toggled(True) never fired — "
+                "stream would silently not start"
+            )
+        finally:
+            window.stt_worker = None
+            window.monitor_btn.toggled.disconnect(spy)

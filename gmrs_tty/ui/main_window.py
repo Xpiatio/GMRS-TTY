@@ -2031,6 +2031,12 @@ class MainWindow(QMainWindow):
             except (TypeError, RuntimeError):
                 pass
         self._monitor.stop()
+        # Uncheck before disabling so the button never lingers in a
+        # checked+disabled state; blockSignals prevents a redundant
+        # _on_monitor_toggled callback since the stream is already stopped.
+        self.monitor_btn.blockSignals(True)
+        self.monitor_btn.setChecked(False)
+        self.monitor_btn.blockSignals(False)
         self.monitor_btn.setEnabled(False)
         # Tear the spectrometer down first so its STT-signal disconnects
         # run while the worker is still alive — _stop_spectro_worker
