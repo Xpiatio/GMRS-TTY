@@ -94,6 +94,12 @@ class AttendancePanel(QWidget):
         button_row.addWidget(self.clear_button)
         outer.addLayout(button_row)
 
+    def set_touch_mode(self, enabled: bool) -> None:
+        """Resize action buttons for touch-screen use when ``enabled``."""
+        min_h = 44 if enabled else 0
+        self.remove_button.setMinimumHeight(min_h)
+        self.clear_button.setMinimumHeight(min_h)
+
     def record(self, callsign: str) -> None:
         """Add `callsign` to the session. No-op when it has already been
         recorded — repeated transmissions from the same operator don't

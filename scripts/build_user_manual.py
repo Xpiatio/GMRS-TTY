@@ -935,6 +935,11 @@ def build_main_window(b: Builder):
                                             "Empties the entire grid "
                                             "immediately; future detections "
                                             "still log normally."),
+        ("Touch-screen mode", "When the app is in touch mode both the "
+                              "<b>Remove selected</b> and <b>Clear "
+                              "callsigns detected</b> buttons scale to "
+                              "44 px minimum height for reliable touch "
+                              "targets. The table itself is not affected."),
     ])
 
     b.h3("5.9 Status bar")
@@ -1084,14 +1089,24 @@ def build_touch_mode(b: Builder):
         ("Pending-stations pill row", "The same pill buttons that appear "
                                       "on the Pending Stations dock are "
                                       "mirrored here at the top of the "
-                                      "touch view. Tap a pill to open the "
-                                      "Add Station dialog exactly as in "
-                                      "the normal view."),
+                                      "touch view. In touch mode the pills "
+                                      "are larger — bolder text, extra "
+                                      "padding, and 44 px minimum height — "
+                                      "for reliable tap targets. Tap a pill "
+                                      "to open the Add Station dialog; "
+                                      "right-click or long-press to dismiss "
+                                      "without adding."),
         ("Conversation log", "Full-height chat display — all RX "
                              "transcripts, TX echoes, and callsign "
                              "highlights stream in real time. The log "
                              "stays in sync with the normal view; "
-                             "switching modes never drops a message."),
+                             "switching modes never drops a message. "
+                             "A round <b>▼</b> button (56 × 56 px) "
+                             "overlays the bottom-right corner whenever "
+                             "the log is scrolled up; tapping it jumps "
+                             "immediately to the latest message. The "
+                             "button disappears automatically when the "
+                             "log is already at the bottom."),
         ("Row 1 — primary radio controls (80 px tall)",
          "<b>Listen</b> (checkable, green) | "
          "<b>Listen Only</b> (checkable, amber). "
@@ -1103,7 +1118,9 @@ def build_touch_mode(b: Builder):
          "is active, matching the desktop rule) | "
          "<b>🌙/☀️ Theme</b> (toggles dark/light mode) | "
          "<b>Callsigns</b> (floats the Callsigns Detected dock as an "
-         "overlay without leaving touch mode) | "
+         "overlay without leaving touch mode — the Remove selected and "
+         "Clear callsigns detected buttons inside that panel also scale "
+         "to 44 px for touch use) | "
          "<b>Generate Log</b> (visible only when a Gemini API key is "
          "configured — generates an AI session journal entry) | "
          "<b>View Logs</b> (opens the Session Journals browser)."),

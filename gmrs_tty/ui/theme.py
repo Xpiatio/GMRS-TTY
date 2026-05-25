@@ -271,6 +271,55 @@ def pill_stylesheet() -> str:
     )
 
 
+def touch_pill_stylesheet() -> str:
+    """Touch-mode variant of pill_stylesheet with larger tap targets."""
+    p = palette()
+    base_pt = _base_font().pointSize()
+    return (
+        "QPushButton {"
+        f" background-color: {p.pill_bg};"
+        f" color: {p.pill_text};"
+        f" border: 2px solid {p.pill_border};"
+        f" padding: {SPACING_S}px {SPACING_M}px;"
+        " border-radius: 6px;"
+        f" font-size: {base_pt + 2}pt;"
+        " font-weight: bold;"
+        " min-height: 44px;"
+        "}"
+        "QPushButton:hover {"
+        f" background-color: {p.pill_hover_bg};"
+        "}"
+        "QPushButton:focus {"
+        f" border-color: {p.focus_ring};"
+        "}"
+    )
+
+
+def scroll_to_bottom_btn_stylesheet() -> str:
+    """Round overlay button for the touch-view scroll-to-bottom affordance."""
+    p = palette()
+    base_pt = _base_font().pointSize()
+    return (
+        "QPushButton {"
+        f" background-color: {p.header_bg};"
+        f" color: {p.window_text};"
+        f" border: 2px solid {p.header_border};"
+        " border-radius: 28px;"
+        f" font-size: {base_pt + 6}pt;"
+        " font-weight: bold;"
+        "}"
+        "QPushButton:hover {"
+        f" background-color: {p.focus_ring};"
+        f" color: {p.window_bg};"
+        f" border-color: {p.focus_ring};"
+        "}"
+        "QPushButton:pressed {"
+        f" background-color: {p.tx};"
+        f" color: {p.window_bg};"
+        "}"
+    )
+
+
 def dock_title_stylesheet() -> str:
     """Stylesheet for the CompactTitleBar used by every QDockWidget. Keeps
     the bar visually quiet but distinct from the dock content; the focus

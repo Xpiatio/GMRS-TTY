@@ -52,6 +52,7 @@ class PendingStationManager(QObject):
         self._touch_pills_widget: QWidget | None = None
         self._touch_flow: FlowLayout | None = None
         self._touch_scroll: QScrollArea | None = None
+        self._touch_mode: bool = False
 
     def build_dock(self) -> QDockWidget:
         window = self._window
@@ -159,7 +160,7 @@ class PendingStationManager(QObject):
 
     def add_pending_station(self, callsign: str, name: str, location: str) -> None:
         btn = QPushButton(f"+ Add {callsign}", self._window)
-        btn.setStyleSheet(theme.pill_stylesheet())
+        btn.setStyleSheet(theme.touch_pill_stylesheet() if self._touch_mode else theme.pill_stylesheet())
         tooltip_parts = [f"Detected new station: {callsign}"]
         if name:
             tooltip_parts.append(f"Name: {name}")
@@ -215,12 +216,18 @@ class PendingStationManager(QObject):
         if self._touch_scroll is not None:
             self._touch_scroll.setVisible(not is_frs and bool(self.touch_buttons))
 
+    def set_touch_mode(self, enabled: bool) -> None:
+        """Switch pill size for touch-screen use."""
+        self._touch_mode = enabled
+        self.restyle_pills()
+
     def restyle_pills(self) -> None:
         """Repaint all live pills with the current theme stylesheet."""
+        style = theme.touch_pill_stylesheet() if self._touch_mode else theme.pill_stylesheet()
         for btn in self.buttons.values():
-            btn.setStyleSheet(theme.pill_stylesheet())
+            btn.setStyleSheet(style)
         for btn in self.touch_buttons.values():
-            btn.setStyleSheet(theme.pill_stylesheet())
+            btn.setStyleSheet(style)
 
     def open_add_contact_dialog(self, callsign: str, name: str, location: str) -> None:
         window = self._window
@@ -326,7 +333,7 @@ class PendingStationManager(QObject):
         if callsign in self.touch_buttons:
             return
         btn = QPushButton(f"+ Add {callsign}", self._window)
-        btn.setStyleSheet(theme.pill_stylesheet())
+        btn.setStyleSheet(theme.touch_pill_stylesheet() if self._touch_mode else theme.pill_stylesheet())
         btn.setToolTip(tooltip)
         btn.setAccessibleName(f"Add station {callsign} (touch)")
         btn.clicked.connect(
