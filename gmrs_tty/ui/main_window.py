@@ -1915,6 +1915,9 @@ class MainWindow(QMainWindow):
                     dock.setVisible(was_visible)
             finally:
                 self._suppress_attendance_visibility = False
+        if self.attendance_panel is not None:
+            self.attendance_panel.set_touch_mode(touch)
+        self.pending_manager.set_touch_mode(touch)
         self._refresh_touch_toggle_glyph()
 
     def _refresh_touch_toggle_glyph(self) -> None:

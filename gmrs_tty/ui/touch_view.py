@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QToolButton, QVBoxLayout, QWidget
 
 from gmrs_tty.ui import theme
@@ -34,8 +35,13 @@ class TouchView(QWidget):
 
         p = theme.palette()
 
-        # ── Chat display ──────────────────────────────────────────────────
-        self.chat_display = ChatDisplay(self)
+        # ── Chat display + scroll-to-bottom overlay ───────────────────────
+        self._chat_container = QWidget(self)
+        _chat_container_layout = QVBoxLayout(self._chat_container)
+        _chat_container_layout.setContentsMargins(0, 0, 0, 0)
+        _chat_container_layout.setSpacing(0)
+
+        self.chat_display = ChatDisplay(self._chat_container)
         self.chat_display.setFont(theme.font_chat())
         self.chat_display.setStyleSheet(theme.chat_display_stylesheet())
         self.chat_display.setAccessibleName("Conversation log (touch view)")
@@ -43,7 +49,27 @@ class TouchView(QWidget):
             "Touchscreen copy of the main conversation log. "
             "Shows the same messages as the desktop view."
         )
-        self._main_layout.addWidget(self.chat_display, 1)
+        _chat_container_layout.addWidget(self.chat_display)
+
+        self.scroll_to_bottom_btn = QPushButton("▼", self._chat_container)
+        self.scroll_to_bottom_btn.setFixedSize(56, 56)
+        self.scroll_to_bottom_btn.setToolTip("Scroll to bottom")
+        self.scroll_to_bottom_btn.setAccessibleName("Scroll chat to bottom")
+        self.scroll_to_bottom_btn.setAccessibleDescription(
+            "Jump the conversation log to the most recent message."
+        )
+        self.scroll_to_bottom_btn.setStyleSheet(theme.scroll_to_bottom_btn_stylesheet())
+        self.scroll_to_bottom_btn.clicked.connect(self._scroll_to_bottom)
+        self.scroll_to_bottom_btn.hide()
+        self.scroll_to_bottom_btn.raise_()
+
+        self._chat_container.installEventFilter(self)
+        self.chat_display.verticalScrollBar().valueChanged.connect(self._update_scroll_btn)
+        self.chat_display.verticalScrollBar().rangeChanged.connect(
+            lambda _min, _max: self._update_scroll_btn()
+        )
+
+        self._main_layout.addWidget(self._chat_container, 1)
 
         # ── Row 1: primary radio controls (tall) ─────────────────────────
         row1 = QHBoxLayout()
@@ -166,6 +192,34 @@ class TouchView(QWidget):
     def set_generate_visible(self, visible: bool) -> None:
         self.generate_btn.setVisible(visible)
 
+    # ── Scroll-to-bottom overlay ──────────────────────────────────────────
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self._chat_container and event.type() == QEvent.Type.Resize:
+            self._reposition_scroll_btn()
+        return super().eventFilter(obj, event)
+
+    def _reposition_scroll_btn(self) -> None:
+        margin = theme.SPACING_S
+        btn = self.scroll_to_bottom_btn
+        container = self._chat_container
+        btn.move(
+            container.width() - btn.width() - margin,
+            container.height() - btn.height() - margin,
+        )
+
+    def _update_scroll_btn(self) -> None:
+        sb = self.chat_display.verticalScrollBar()
+        at_bottom = sb.value() >= sb.maximum() - 2
+        self._reposition_scroll_btn()
+        self.scroll_to_bottom_btn.setVisible(not at_bottom)
+        if self.scroll_to_bottom_btn.isVisible():
+            self.scroll_to_bottom_btn.raise_()
+
+    def _scroll_to_bottom(self) -> None:
+        sb = self.chat_display.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
     # ── Theme restyle ─────────────────────────────────────────────────────
 
     def restyle(self) -> None:
@@ -179,4 +233,5 @@ class TouchView(QWidget):
         self.attendance_btn.setStyleSheet(theme.checkable_btn_stylesheet(p.rx))
         self.generate_btn.setStyleSheet(theme.checkable_btn_stylesheet(p.rx))
         self.journals_btn.setStyleSheet(theme.checkable_btn_stylesheet(p.rx))
+        self.scroll_to_bottom_btn.setStyleSheet(theme.scroll_to_bottom_btn_stylesheet())
         self.sync_theme_glyph()

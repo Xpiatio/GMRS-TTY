@@ -53,7 +53,9 @@ Cross-platform desktop app built with **Python + PySide6**, fully offline, with 
 ### Touch-screen mode
 - **⊞ Touch toggle** on the service toolbar switches the app to a large-button, touch-optimised full-panel view. Click ⊞ to enter; click ⊟ to return to the standard desktop layout.
 - The touch view shows a compact pending-stations pill row at the top, the full chat log in the centre, and two rows of large, thumb-friendly buttons at the bottom. **Row 1** (80 px tall): **Listen** (checkable) | **Listen Only** (checkable). **Row 2** (56 px tall): **Monitor** | 🌙/☀️ Theme | **Callsigns** | **Generate Log** (visible only when a Gemini API key is configured) | **View Logs**.
-- Tapping **Callsigns** in touch mode floats the Callsigns Detected dock as an overlay without leaving touch mode.
+- A **▼ scroll-to-bottom button** (56×56 px, round) overlays the bottom-right corner of the chat area whenever you've scrolled up from the latest message. Tapping it jumps back to the bottom. It disappears automatically when the log is already at the newest line.
+- Pending-station **`+ Add` pills** are larger in touch mode — bolder text, extra padding, and 44 px minimum height — so they're easy to tap accurately.
+- Tapping **Callsigns** in touch mode floats the Callsigns Detected dock as an overlay without leaving touch mode. The **Remove selected** and **Clear callsigns detected** buttons inside that panel also scale to 44 px minimum height for reliable touch targets.
 - All dock panels (Station, Waterfall, Pending Stations, Quick Messages, Transmit) are automatically hidden when entering touch mode and restored to their previous positions and visibility on exit — the desktop layout is preserved.
 - The chat log, incoming transcriptions, TX messages, and callsign highlighting stay in sync between the touch and normal views; switching modes never drops a message.
 - The preference persists to `config.json` as `touch_mode` so operators who leave the app in touch mode come back to the touch view on the next launch. Works in both GMRS and FRS modes.
