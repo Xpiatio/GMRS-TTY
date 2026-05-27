@@ -88,14 +88,11 @@ class STTWorker(QThread):
     MODELS_STT_DIR = os.path.join("Models", "STT")
 
     def __init__(self, input_device=None, whisper_model="small.en", vad_threshold=0.5,
-                 model_cache: "ModelCache | None" = None, youtube_url=None,
-                 youtube_cookies_from_browser="", youtube_cookies_file="",
+                 model_cache: "ModelCache | None" = None, system_monitor_sink="",
                  parent=None):
         super().__init__(parent)
         self.input_device = input_device if input_device not in (None, -1) else None
-        self.youtube_url = youtube_url or ""
-        self.youtube_cookies_from_browser = youtube_cookies_from_browser or ""
-        self.youtube_cookies_file = youtube_cookies_file or ""
+        self.system_monitor_sink = system_monitor_sink or ""
         self.whisper_model_name = whisper_model
         self.whisper_model_path = os.path.join(self.MODELS_STT_DIR, whisper_model)
         self.vad_threshold = float(vad_threshold)
@@ -164,9 +161,7 @@ class STTWorker(QThread):
                 sample_rate=self.SAMPLE_RATE,
                 chunk_samples=self.CHUNK_SAMPLES,
                 input_device=self.input_device,
-                youtube_url=self.youtube_url,
-                youtube_cookies_from_browser=self.youtube_cookies_from_browser,
-                youtube_cookies_file=self.youtube_cookies_file,
+                system_monitor_sink=self.system_monitor_sink,
             )
         except Exception as e:
             self.error.emit(f"Failed to open input device: {e}")

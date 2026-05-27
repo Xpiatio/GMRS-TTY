@@ -7,4 +7,3 @@ silero-vad>=5.0
 noisereduce
 numpy
 pyserial
-yt-dlp

@@ -4,7 +4,7 @@ import os
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-    QDoubleSpinBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
+    QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPushButton, QSlider, QToolButton, QWidget,
 )
 
@@ -120,53 +120,17 @@ class ConfigDialog(QDialog):
         self.input_device_input.addItem("Loading devices…", -1)
         self.input_device_input.setEnabled(False)
 
-        self.youtube_url_input = QLineEdit(self.config.get("youtube_url", ""))
-        self.youtube_url_input.setPlaceholderText("https://www.youtube.com/watch?v=...")
-        self.youtube_url_input.setToolTip(
-            "YouTube video URL to stream as the audio input source. "
-            "Audio is decoded in-process via yt-dlp + ffmpeg — "
-            "nothing plays through speakers. The stream loops automatically."
+        self.monitor_sink_input = QComboBox()
+        self.monitor_sink_input.addItem("Loading…", "")
+        self.monitor_sink_input.setToolTip(
+            "Which audio output to capture. Play audio in your browser, media "
+            "player, or any app — the app will listen to that output. "
+            "\"System Default\" follows whatever is set as your default playback device."
         )
-
-        self.youtube_auth_input = QComboBox()
-        self.youtube_auth_input.addItem("None (public videos only)", "")
-        for _label, _val in [
-            ("Chrome cookies", "chrome"),
-            ("Firefox cookies", "firefox"),
-            ("Edge cookies", "edge"),
-            ("Chromium cookies", "chromium"),
-            ("Brave cookies", "brave"),
-            ("Opera cookies", "opera"),
-            ("Safari cookies", "safari"),
-            ("Cookies file…", "file"),
-        ]:
-            self.youtube_auth_input.addItem(_label, _val)
-        self.youtube_auth_input.setToolTip(
-            "Authentication source for yt-dlp. Use browser cookies for "
-            "age-restricted or members-only content. Requires the selected "
-            "browser to be installed and signed in to YouTube."
+        self.monitor_sink_input.setAccessibleName("Monitor sink")
+        self.monitor_sink_input.setAccessibleDescription(
+            "Select the audio output device whose playback will be captured as input."
         )
-        saved_browser = self.config.get("youtube_cookies_from_browser", "")
-        saved_file = self.config.get("youtube_cookies_file", "")
-        auth_val = "file" if saved_file else saved_browser
-        idx = self.youtube_auth_input.findData(auth_val)
-        if idx >= 0:
-            self.youtube_auth_input.setCurrentIndex(idx)
-        self.youtube_auth_input.currentIndexChanged.connect(self._update_input_device_fields)
-
-        self.youtube_cookies_file_input = QLineEdit(saved_file)
-        self.youtube_cookies_file_input.setPlaceholderText("/path/to/cookies.txt")
-        self.youtube_cookies_file_input.setToolTip(
-            "Path to a Netscape-format cookies.txt file exported from your browser. "
-            "Use a browser extension such as 'Get cookies.txt LOCALLY' to export it."
-        )
-        self._browse_cookies_btn = QPushButton("Browse…")
-        self._browse_cookies_btn.clicked.connect(self._browse_cookies_file)
-        cookies_file_row = QHBoxLayout()
-        cookies_file_row.addWidget(self.youtube_cookies_file_input)
-        cookies_file_row.addWidget(self._browse_cookies_btn)
-        self._cookies_file_widget = QWidget()
-        self._cookies_file_widget.setLayout(cookies_file_row)
 
         self.output_device_input = QComboBox()
         self.output_device_input.addItem("Loading devices…", -1)
@@ -203,15 +167,12 @@ class ConfigDialog(QDialog):
         # configuration.
         self._device_thread = DeviceQueryThread(self)
         self._device_thread.devices_ready.connect(self._on_devices_ready)
+        self._device_thread.monitor_sources_ready.connect(self._on_monitor_sources_ready)
         self._device_thread.start()
 
         layout.addRow("&Input Device:", self.input_device_input)
-        layout.addRow("YouTube &URL:", self.youtube_url_input)
-        layout.setRowVisible(self.youtube_url_input, False)
-        layout.addRow("YouTube &Auth:", self.youtube_auth_input)
-        layout.setRowVisible(self.youtube_auth_input, False)
-        layout.addRow("Cookies &File:", self._cookies_file_widget)
-        layout.setRowVisible(self._cookies_file_widget, False)
+        layout.addRow("&Monitor Sink:", self.monitor_sink_input)
+        layout.setRowVisible(self.monitor_sink_input, False)
         self.input_device_input.currentIndexChanged.connect(self._update_input_device_fields)
         layout.addRow("&Output Device:", self.output_device_input)
         layout.addRow("&Monitor audio:", self.monitor_enabled_input)
@@ -353,7 +314,7 @@ class ConfigDialog(QDialog):
                 self.input_device_input.addItem(f"{i}: {dev['name']}", i)
             if dev.get('max_output_channels', 0) > 0:
                 self.output_device_input.addItem(f"{i}: {dev['name']}", i)
-        self.input_device_input.addItem("YouTube Stream (no speakers)", "youtube")
+        self.input_device_input.addItem("System Audio Output (loopback)", "system_monitor")
         current_dev = self.config.get("input_device", -1)
         idx = self.input_device_input.findData(current_dev)
         if idx >= 0:
@@ -367,6 +328,15 @@ class ConfigDialog(QDialog):
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)
         self._update_input_device_fields()
 
+    def _on_monitor_sources_ready(self, sources):
+        saved_sink = self.config.get("system_monitor_sink", "")
+        self.monitor_sink_input.clear()
+        for display_name, sink_id in sources:
+            self.monitor_sink_input.addItem(display_name, sink_id)
+        idx = self.monitor_sink_input.findData(saved_sink)
+        if idx >= 0:
+            self.monitor_sink_input.setCurrentIndex(idx)
+
     def get_config(self):
         return {
             "callsign": self.callsign_input.text().strip().upper(),
@@ -375,17 +345,7 @@ class ConfigDialog(QDialog):
             "voice": self.voice_input.currentData(),
             "tts_length_scale": round(self.length_scale_slider.value() / 100.0, 2),
             "input_device": self.input_device_input.currentData(),
-            "youtube_url": self.youtube_url_input.text().strip(),
-            "youtube_cookies_from_browser": (
-                self.youtube_auth_input.currentData()
-                if self.youtube_auth_input.currentData() not in ("", "file")
-                else ""
-            ),
-            "youtube_cookies_file": (
-                self.youtube_cookies_file_input.text().strip()
-                if self.youtube_auth_input.currentData() == "file"
-                else ""
-            ),
+            "system_monitor_sink": self.monitor_sink_input.currentData() or "",
             "output_device": self.output_device_input.currentData(),
             "monitor_enabled": self.monitor_enabled_input.isChecked(),
             "vad_threshold": round(self.vad_threshold_input.value(), 2),
@@ -415,19 +375,8 @@ class ConfigDialog(QDialog):
         self.length_scale_value_label.setText(f"{scale:.2f}×{suffix}")
 
     def _update_input_device_fields(self, _index=None):
-        is_youtube = self.input_device_input.currentData() == "youtube"
-        is_file = self.youtube_auth_input.currentData() == "file"
-        form = self.layout()
-        form.setRowVisible(self.youtube_url_input, is_youtube)
-        form.setRowVisible(self.youtube_auth_input, is_youtube)
-        form.setRowVisible(self._cookies_file_widget, is_youtube and is_file)
-
-    def _browse_cookies_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select cookies.txt", "", "Cookie files (*.txt);;All files (*)"
-        )
-        if path:
-            self.youtube_cookies_file_input.setText(path)
+        is_monitor = self.input_device_input.currentData() == "system_monitor"
+        self.layout().setRowVisible(self.monitor_sink_input, is_monitor)
 
     def _toggle_api_key_visibility(self, visible: bool) -> None:
         mode = QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password

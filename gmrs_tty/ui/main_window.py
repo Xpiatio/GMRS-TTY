@@ -529,7 +529,9 @@ class MainWindow(QMainWindow):
         self.monitor_btn.setEnabled(False)
         self.monitor_btn.setToolTip(
             "Play incoming radio audio through the speakers unfiltered (Alt+M). "
-            "Available when Listen-only mode is active."
+            "Available when Listen-only mode is active. Not available when "
+            "System Audio Output (loopback) is the input device — routing "
+            "loopback audio back to the speakers would create a feedback loop."
         )
         self.monitor_btn.setAccessibleName("Monitor audio toggle")
         self.monitor_btn.setAccessibleDescription(
@@ -1574,8 +1576,10 @@ class MainWindow(QMainWindow):
         # Monitor is only meaningful when transmitting is blocked — enable it
         # when listen-only turns on (if Listen is active) and disable it when
         # listen-only turns off (stopping any in-progress monitor stream).
+        # Never enable when input is system_monitor: routing loopback audio
+        # back to the speakers would create a feedback cascade.
         if self.stt_worker is not None:
-            if self.listen_only:
+            if self.listen_only and not self._input_is_loopback():
                 self.monitor_btn.setEnabled(True)
                 if self.config.monitor_enabled and not self.monitor_btn.isChecked():
                     self.monitor_btn.setChecked(True)
@@ -1650,6 +1654,14 @@ class MainWindow(QMainWindow):
             self.attendance_dock.setVisible(bool(visible))
         finally:
             self._suppress_attendance_visibility = False
+
+    def _input_is_loopback(self) -> bool:
+        """True when the active input is system audio loopback (not a mic).
+
+        Used to block the Monitor toggle in this mode — routing loopback audio
+        back through the output speakers would create an infinite feedback loop.
+        """
+        return self.config.input_device == "system_monitor"
 
     def _pause_stt_for_tx(self):
         if self.stt_worker and self.stt_worker.isRunning():
@@ -1733,9 +1745,7 @@ class MainWindow(QMainWindow):
             whisper_model=desired_model,
             vad_threshold=self.config.vad_threshold,
             model_cache=self._stt_model_cache,
-            youtube_url=self.config.youtube_url,
-            youtube_cookies_from_browser=self.config.youtube_cookies_from_browser,
-            youtube_cookies_file=self.config.youtube_cookies_file,
+            system_monitor_sink=self.config.system_monitor_sink,
             parent=self,
         )
         self.stt_worker.transcribed_segment.connect(self.on_transcription_segment)
@@ -1748,8 +1758,10 @@ class MainWindow(QMainWindow):
         # exists by the time we connect it through spectro_manager.start().
         if self.spectro_manager.settings.enabled:
             self.spectro_manager.start(self.stt_worker)
-        # Monitor is only available in listen-only mode (no TX path active).
-        if self.listen_only:
+        # Monitor is only available in listen-only mode (no TX path active)
+        # and only when the input is not a loopback source — routing loopback
+        # audio back to the speakers would create a feedback cascade.
+        if self.listen_only and not self._input_is_loopback():
             self.monitor_btn.setEnabled(True)
             if self.config.monitor_enabled and not self.monitor_btn.isChecked():
                 self.monitor_btn.setChecked(True)
