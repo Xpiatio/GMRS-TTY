@@ -54,16 +54,8 @@ class AppConfig(dict):
         return float(self.get("vad_threshold", 0.5))
 
     @property
-    def youtube_url(self) -> str:
-        return self.get("youtube_url", "")
-
-    @property
-    def youtube_cookies_from_browser(self) -> str:
-        return (self.get("youtube_cookies_from_browser") or "").strip()
-
-    @property
-    def youtube_cookies_file(self) -> str:
-        return (self.get("youtube_cookies_file") or "").strip()
+    def system_monitor_sink(self) -> str:
+        return (self.get("system_monitor_sink") or "").strip()
 
     # ---- TTS -------------------------------------------------------------
 

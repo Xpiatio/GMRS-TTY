@@ -365,12 +365,18 @@ def build_requirements(b: Builder):
         ("Linux", "Debian 12+, Ubuntu 22.04+, Raspberry Pi OS (Bookworm). "
                   "PortAudio dev libs required: "
                   "<font face=\"Courier\">sudo apt install libportaudio2 "
-                  "portaudio19-dev</font>. On PipeWire systems also install "
-                  "<font face=\"Courier\">pulseaudio-utils</font> so the "
-                  "<font face=\"Courier\">parec</font> capture path is "
-                  "available — the app prefers it because PortAudio's "
-                  "PipeWire-via-ALSA bridge can silently deliver flat-zero "
-                  "audio on PipeWire 1.4."),
+                  "portaudio19-dev</font>. On PipeWire/PulseAudio systems "
+                  "also install "
+                  "<font face=\"Courier\">pulseaudio-utils</font> "
+                  "(<font face=\"Courier\">sudo apt install "
+                  "pulseaudio-utils</font>) — provides "
+                  "<font face=\"Courier\">parec</font> and "
+                  "<font face=\"Courier\">pactl</font>, used for both "
+                  "microphone capture (preferred over PortAudio's "
+                  "PipeWire-via-ALSA bridge, which can silently deliver "
+                  "flat-zero audio on PipeWire 1.4) and System Audio Output "
+                  "(loopback) mode. Without it the app falls back to "
+                  "PortAudio for mic capture; loopback mode requires it."),
         ("Windows", "Windows 10 or 11. PortAudio ships in the wheel; no "
                     "extra system libraries needed."),
         ("macOS", "Not formally targeted, but Python 3.11+ with PortAudio "
@@ -584,10 +590,15 @@ def build_first_run(b: Builder):
                         "(slower); 1.00× is the voice's native pace."),
         ("Input Device", "Microphone the Listen button captures from. "
                          "<i>System Default</i> works for most setups. "
-                         "Select <i>YouTube Stream (no speakers)</i> to "
-                         "stream a YouTube video directly into the STT "
-                         "pipeline without any speaker output — useful "
-                         "for testing. Requires yt-dlp and ffmpeg on PATH."),
+                         "Select <i>System Audio Output (loopback)</i> to "
+                         "capture whatever is playing through the computer's "
+                         "speakers — open YouTube in a browser, play a "
+                         "podcast, or use any media player and the app will "
+                         "transcribe that audio. When this mode is selected "
+                         "a <b>Monitor Sink</b> dropdown appears so you can "
+                         "target a specific output device; "
+                         "<i>System Default</i> follows your OS default "
+                         "playback device. No extra tools required."),
         ("Output Device", "Where TTS audio is played — choose a USB "
                           "sound card / Signalink / Digirig channel here "
                           "to feed your radio directly."),
@@ -1182,12 +1193,21 @@ def build_config_dialog(b: Builder):
              "tts_length_scale."],
             ["Input Device (Alt+I)", "Dropdown",
              "Microphone for capture. System Default plus every device "
-             "PortAudio reports, plus <i>YouTube Stream (no speakers)</i> "
-             "at the bottom of the list. Selecting YouTube reveals a URL "
-             "field — audio is decoded via yt-dlp + ffmpeg directly into "
-             "the STT/VAD pipeline; nothing plays through speakers. "
-             "Loops automatically. Requires yt-dlp ≥ 2026.03.17 and "
-             "ffmpeg on PATH. Changing this restarts the listener."],
+             "PortAudio reports, plus <i>System Audio Output (loopback)</i> "
+             "at the bottom of the list. Selecting loopback reveals a "
+             "<b>Monitor Sink</b> sub-dropdown — pick which output device "
+             "to capture (System Default follows the OS default playback "
+             "device). Play audio in any browser or media player and the "
+             "app transcribes it. On Linux uses parec --device=<sink>.monitor "
+             "via PipeWire/PulseAudio; on Windows uses WASAPI loopback. "
+             "The Monitor toggle is blocked when loopback is the input to "
+             "prevent a feedback loop. Changing this restarts the listener."],
+            ["Monitor Sink (Alt+M, loopback only)", "Dropdown",
+             "Visible only when System Audio Output (loopback) is selected "
+             "as the Input Device. Lists the available audio output devices "
+             "(PulseAudio/PipeWire sinks on Linux; WASAPI output devices "
+             "on Windows). System Default captures whatever is set as the "
+             "OS default playback device. Stored as system_monitor_sink."],
             ["Output Device (Alt+O)", "Dropdown",
              "Where TTS audio plays. Pick a USB sound card to feed your "
              "radio directly. System Default uses the OS default sink."],
@@ -2098,6 +2118,7 @@ def build_files(b: Builder):
         '    "input_device": -1,\n'
         '    "output_device": -1,\n'
         '    "whisper_model": "small.en",\n'
+        '    "system_monitor_sink": "",\n'
         '    "vad_threshold": 0.5,\n'
         '    "time_format": "24h",\n'
         '    "filter_profanity": true,\n'
@@ -2130,17 +2151,28 @@ def build_files(b: Builder):
         ("input_device / output_device", "-1 means system default. Any "
                                           "other integer is the PortAudio "
                                           "device index. The string "
-                                          "<font face=\"Courier\">\"youtube\""
-                                          "</font> selects the YouTube Stream "
-                                          "source; pair with "
-                                          "<font face=\"Courier\">youtube_url"
-                                          "</font>."),
-        ("youtube_url", "YouTube video URL used when "
-                        "<font face=\"Courier\">input_device</font> is "
-                        "<font face=\"Courier\">\"youtube\"</font>. "
-                        "Decoded in-process via yt-dlp + ffmpeg; no "
-                        "audio device is opened and nothing plays "
-                        "through speakers. Loops automatically."),
+                                          "<font face=\"Courier\">"
+                                          "\"system_monitor\"</font> selects "
+                                          "System Audio Output (loopback) — "
+                                          "pair with "
+                                          "<font face=\"Courier\">"
+                                          "system_monitor_sink</font> to "
+                                          "target a specific output device."),
+        ("system_monitor_sink", "Which audio output to capture when "
+                                "<font face=\"Courier\">input_device</font> "
+                                "is "
+                                "<font face=\"Courier\">\"system_monitor\""
+                                "</font>. Empty string (default) uses the OS "
+                                "default playback device. On Linux, the "
+                                "PulseAudio/PipeWire sink name "
+                                "(e.g. "
+                                "<font face=\"Courier\">"
+                                "alsa_output.pci-0000.analog-stereo"
+                                "</font>). On Windows, the output device "
+                                "index as a string (e.g. "
+                                "<font face=\"Courier\">\"3\"</font>). "
+                                "Set via the Monitor Sink dropdown in "
+                                "Configuration."),
         ("tts_length_scale", "0.70–1.50. Higher is slower."),
         ("vad_threshold", "0.10–0.95. Higher is stricter."),
         ("listen_only", "Boolean. When true the app blocks every TX "

@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QMessageBox
 
-from gmrs_tty.audio.capture import fetch_youtube_upload_date
 from gmrs_tty.ai.journal_worker import JournalWorker
 from gmrs_tty.persistence.journal import save_journal
 from gmrs_tty.ui.journal_dialog import JournalDialog
@@ -60,14 +59,6 @@ class JournalController(QObject):
 
         callsigns = window.attendance_panel.callsigns() if window.attendance_panel else []
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        if window.config.input_device == "youtube" and window.config.youtube_url:
-            yt_date = fetch_youtube_upload_date(
-                window.config.youtube_url,
-                cookies_from_browser=window.config.youtube_cookies_from_browser,
-                cookies_file=window.config.youtube_cookies_file,
-            )
-            if yt_date:
-                timestamp = yt_date
 
         self._set_ui_enabled(False)
         window.statusBar().showMessage("Generating journal entry via Gemini…")
