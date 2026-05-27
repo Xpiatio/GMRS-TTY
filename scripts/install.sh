@@ -223,7 +223,7 @@ install_dependencies() {
 
     info "Installing system libraries ..."
     apt-get install -y --no-install-recommends \
-        libportaudio2 libxcb-cursor0 libegl1 libgl1 espeak-ng
+        libportaudio2 libxcb-cursor0 libegl1 libgl1 espeak-ng pulseaudio-utils
 
     case "$PYTHON_METHOD" in
         deadsnakes)

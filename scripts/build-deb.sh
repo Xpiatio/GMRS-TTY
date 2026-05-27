@@ -180,7 +180,7 @@ Section: hamradio
 Priority: optional
 Architecture: $ARCH
 Depends: python3.13, python3.13-venv, libportaudio2, libxcb-cursor0, libegl1, libgl1
-Recommends: espeak-ng
+Recommends: espeak-ng, pulseaudio-utils
 Installed-Size: $SIZE_KB
 Maintainer: Xpiatio <xpiatio@users.noreply.github.com>
 Homepage: https://github.com/Xpiatio/GMRS-TTY
