@@ -353,22 +353,9 @@ not yet automated — verify them by running the app after changes.
 
 ## Roadmap
 
-Tracked in [implementation_plan.md](implementation_plan.md):
-
-1. ✅ PySide6 skeleton + config/contacts JSON
-2. ✅ Piper TTS + speaker output + GMRS message formatting
-3. ✅ Silero VAD + faster-whisper STT + noise reduction
-4. ✅ Refinement (auto-scroll, input/output device pickers, timer reset)
-5. ✅ Hardware hooks (`pyserial` PTT keying around TTS — Manual / VOX / USB FTDI modes)
-6. ✅ Off-grid model bundling (Whisper via `bootstrap_models.py`; Silero VAD ONNX ships in the wheel)
-7. ✅ Cross-platform packaging (Debian `.deb` via `scripts/build-deb.sh`)
-8. ⏳ Multi-arch Docker image (`linux/amd64` + `linux/arm64`)
-9. ⏳ Future hardware (Bluetooth HT/mobile audio, hamlib CAT/CI-V rig control)
-10. ✅ TTY-to-radio-vernacular translation at TTS time (expand `GA`/`SK`/`73`/Q-signals to spoken form on TX)
-11. ✅ AI-summarized session journal (Gemini 3.5 Flash generates a title, per-callsign location table extracted from stated locations in the transcript, and a detailed 3–5 paragraph summary; entries saved to `journals/` with a non-modal history viewer showing Callsigns & Locations, Summary, and Transcript sections; per-entry delete; attendance-panel callsigns merged as fallback so no heard station is dropped)
-12. ✅ Quick / common messages (one-click preset phrases like "Radio check", "Standing by", "QSY to channel {N}", editable per-user)
-13. ⏳ Parallel LoRa-mesh transmit (Meshtastic / Meshcore / other LoRa/Halo devices over USB or Bluetooth, fanned out alongside the GMRS voice TX)
-14. ✅ Rolling audio spectrometer (live RX waterfall — visual cue for signal activity, formants, squelch breaks, and band interference for the deaf/HoH operator)
+- Multi-arch Docker image (`linux/amd64` + `linux/arm64`)
+- Parallel LoRa-mesh transmit (Meshtastic / Meshcore / other LoRa/Halo devices over USB or Bluetooth, fanned out alongside the GMRS voice TX)
+- Future hardware (Bluetooth HT/mobile audio, hamlib CAT/CI-V rig control)
 
 ## Contributing
 

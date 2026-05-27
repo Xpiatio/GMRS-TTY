@@ -30,3 +30,6 @@ build/
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# AI-generated session journals (application output, not source)
+journals/
