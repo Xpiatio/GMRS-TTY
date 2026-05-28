@@ -573,43 +573,53 @@ def build_first_run(b: Builder):
         "directory. If your callsign is still "
         "<font face=\"Courier\">YOUR_CALL</font> the header will display "
         "that literal string — open Settings → Configuration "
-        "(or click the gear icon on the right side of the service toolbar) "
-        "and fill in:")
+        "(or click the gear icon on the right side of the service toolbar). "
+        "The dialog has five tabs; the minimum fields for a working session are:")
     b.bullets([
-        ("Callsign", "Your FCC GMRS callsign (e.g. "
-                     "<font face=\"Courier\">WSLZ233</font>). Saved "
-                     "uppercased."),
-        ("Name", "Your operator name. Appears in the callsign preface and "
-                 "the station-ID button output."),
-        ("Location", "Free-form city / state. Used by the standalone "
-                     "<b>This is</b> ID announcement."),
-        ("Voice Model", "Pick the Piper voice you dropped into "
-                        "<font face=\"Courier\">Voices/</font>. Click "
-                        "<b>Test</b> to hear a sample before committing."),
-        ("Speech Rate", "Slider from 0.70× (faster) to 1.50× "
-                        "(slower); 1.00× is the voice's native pace."),
-        ("Input Device", "Microphone the Listen button captures from. "
-                         "<i>System Default</i> works for most setups. "
-                         "Select <i>System Audio Output (loopback)</i> to "
-                         "capture whatever is playing through the computer's "
-                         "speakers — open YouTube in a browser, play a "
-                         "podcast, or use any media player and the app will "
-                         "transcribe that audio. When this mode is selected "
-                         "a <b>Monitor Sink</b> dropdown appears so you can "
-                         "target a specific output device; "
-                         "<i>System Default</i> follows your OS default "
-                         "playback device. No extra tools required."),
-        ("Output Device", "Where TTS audio is played — choose a USB "
-                          "sound card / Signalink / Digirig channel here "
-                          "to feed your radio directly."),
-        ("VAD Threshold", "Silero VAD sensitivity (0.10–0.95). Lower "
-                          "is more sensitive (catches quiet signals but "
-                          "more false starts); higher is stricter."),
-        ("Time Format", "24-hour or 12-hour AM/PM timestamps on RX lines."),
-        ("Filter profanity", "On by default. Masks the f/s-words and "
-                             "similar with asterisks in both RX transcripts "
-                             "and outgoing TX before TTS speaks them."),
-        ("PTT Mode", "Manual, VOX, or USB FTDI / Serial. See section 12."),
+        ("<b>Identity tab</b> — Callsign",
+         "Your FCC GMRS callsign (e.g. "
+         "<font face=\"Courier\">WSLZ233</font>). Saved uppercased."),
+        ("Identity — Name",
+         "Your operator name. Appears in the callsign preface and "
+         "the station-ID button output."),
+        ("Identity — Location",
+         "Free-form city / state. Used by the standalone "
+         "<b>This is</b> ID announcement."),
+        ("<b>Audio tab</b> — Input Device",
+         "Microphone the Listen button captures from. "
+         "<i>System Default</i> works for most setups. "
+         "Select <i>System Audio Output (loopback)</i> to "
+         "capture whatever is playing through the computer's "
+         "speakers — open YouTube in a browser, play a "
+         "podcast, or use any media player and the app will "
+         "transcribe that audio. When this mode is selected "
+         "a <b>Monitor Sink</b> dropdown appears so you can "
+         "target a specific output device; "
+         "<i>System Default</i> follows your OS default "
+         "playback device. No extra tools required."),
+        ("Audio — Output Device",
+         "Where TTS audio is played — choose a USB "
+         "sound card / Signalink / Digirig channel here "
+         "to feed your radio directly."),
+        ("Audio — VAD Threshold",
+         "Silero VAD sensitivity (0.10–0.95). Lower "
+         "is more sensitive (catches quiet signals but "
+         "more false starts); higher is stricter."),
+        ("<b>Voice tab</b> — Voice Model",
+         "Pick the Piper voice you dropped into "
+         "<font face=\"Courier\">Voices/</font>. Click "
+         "<b>Test</b> to hear a sample before committing."),
+        ("Voice — Speech Rate",
+         "Slider from 0.70× (faster) to 1.50× "
+         "(slower); 1.00× is the voice's native pace."),
+        ("<b>PTT tab</b> — PTT Mode",
+         "Manual, VOX, or USB FTDI / Serial. See section 12."),
+        ("<b>Behavior tab</b> — Time Format",
+         "24-hour or 12-hour AM/PM timestamps on RX lines."),
+        ("Behavior — Filter profanity",
+         "On by default. Masks the f/s-words and "
+         "similar with asterisks in both RX transcripts "
+         "and outgoing TX before TTS speaks them."),
     ])
     b.p("Click <b>OK</b>. The header updates, the dropdown lists the new "
         "voice, and the listener restarts automatically if you changed "
@@ -1169,11 +1179,12 @@ def build_touch_mode(b: Builder):
 def build_config_dialog(b: Builder):
     b.h1("6. Configuration dialog")
     b.p("Opened from Settings → Configuration, the gear icon, or "
-        "Ctrl+,. Minimum width 420 px. All fields are mnemonic-linked "
-        "(Alt+letter focuses the underlined field). The OK button is "
-        "disabled until the background device-enumeration thread "
-        "finishes; while loading you'll see <i>Loading devices&hellip;"
-        "</i> in the device dropdowns.")
+        "Ctrl+,. Minimum width 420 px. Settings are organized into five "
+        "tabs. All fields are mnemonic-linked (Alt+letter focuses the "
+        "underlined field). The OK button is disabled until the background "
+        "device-enumeration thread finishes; while loading you'll see "
+        "<i>Loading devices&hellip;</i> in the device dropdowns.")
+    b.h3("Identity tab")
     b.table(
         ["Field", "Type", "Behavior"],
         [
@@ -1183,14 +1194,13 @@ def build_config_dialog(b: Builder):
              "Operator name. Used in callsign preface and ID."],
             ["Location (Alt+L)", "Text",
              "City, state. Used by the standalone This is announcement."],
-            ["Voice Model (Alt+V)", "Dropdown + Test",
-             "Lists every .onnx file in Voices/. Test button (Alt+T) "
-             "synthesizes a short sample at the current speech rate, "
-             "played on the currently selected output device."],
-            ["Speech Rate (Alt+R)", "Slider 0.70×–1.50×",
-             "Maps to Piper length_scale. 1.00× normal, lower = "
-             "faster, higher = slower. Step 0.05. Stored as "
-             "tts_length_scale."],
+        ],
+        col_widths=[1.5 * inch, 1.4 * inch, 3.85 * inch],
+    )
+    b.h3("Audio tab")
+    b.table(
+        ["Field", "Type", "Behavior"],
+        [
             ["Input Device (Alt+I)", "Dropdown",
              "Microphone for capture. System Default plus every device "
              "PortAudio reports, plus <i>System Audio Output (loopback)</i> "
@@ -1211,19 +1221,54 @@ def build_config_dialog(b: Builder):
             ["Output Device (Alt+O)", "Dropdown",
              "Where TTS audio plays. Pick a USB sound card to feed your "
              "radio directly. System Default uses the OS default sink."],
-            ["VAD Threshold (Alt+D)", "Spin 0.10–0.95 step 0.05",
-             "Silero VAD speech probability cutoff. Lower = more "
-             "sensitive, higher = stricter. Default 0.50. Changing this "
-             "restarts the listener."],
-            ["Time Format (Alt+F)", "Dropdown",
-             "24-hour (14:32:15) or 12-hour (2:32:15 PM) for RX "
-             "timestamps."],
             ["Monitor audio (Alt+M)", "Checkbox",
              "Default off. When checked, the Monitor toggle on the main "
              "window activates automatically each time Listen-only mode "
              "is enabled, routing incoming radio audio unfiltered to the "
              "output device in real-time. The Monitor toggle is the live "
              "control; this checkbox sets the power-on default only."],
+            ["VAD Threshold (Alt+D)", "Spin 0.10–0.95 step 0.05",
+             "Silero VAD speech probability cutoff. Lower = more "
+             "sensitive, higher = stricter. Default 0.50. Changing this "
+             "restarts the listener."],
+        ],
+        col_widths=[1.5 * inch, 1.4 * inch, 3.85 * inch],
+    )
+    b.h3("Voice tab")
+    b.table(
+        ["Field", "Type", "Behavior"],
+        [
+            ["Voice Model (Alt+V)", "Dropdown + Test",
+             "Lists every .onnx file in Voices/. Test button (Alt+T) "
+             "synthesizes a short sample at the current speech rate, "
+             "played on the currently selected output device."],
+            ["Speech Rate (Alt+R)", "Slider 0.70×–1.50×",
+             "Maps to Piper length_scale. 1.00× normal, lower = "
+             "faster, higher = slower. Step 0.05. Stored as "
+             "tts_length_scale."],
+        ],
+        col_widths=[1.5 * inch, 1.4 * inch, 3.85 * inch],
+    )
+    b.h3("PTT tab")
+    b.table(
+        ["Field", "Type", "Behavior"],
+        [
+            ["PTT Mode (Alt+P)", "Dropdown",
+             "Manual / VOX / USB FTDI / Serial. See section 12."],
+            ["Serial Port (Alt+S)", "Text",
+             "Only enabled in USB FTDI mode. e.g. /dev/ttyUSB0 or COM3."],
+            ["Control Line (Alt+E)", "Dropdown",
+             "Only enabled in USB FTDI mode. RTS or DTR."],
+        ],
+        col_widths=[1.5 * inch, 1.4 * inch, 3.85 * inch],
+    )
+    b.h3("Behavior tab")
+    b.table(
+        ["Field", "Type", "Behavior"],
+        [
+            ["Time Format (Alt+F)", "Dropdown",
+             "24-hour (14:32:15) or 12-hour (2:32:15 PM) for RX "
+             "timestamps."],
             ["Filter profanity (Alt+Y)", "Checkbox",
              "Mask strong language with asterisks. Default on. Applies "
              "to both RX transcripts and TX messages before TTS speaks "
@@ -1251,12 +1296,6 @@ def build_config_dialog(b: Builder):
              "https://aistudio.google.com/app/apikey. "
              "Stored in config.json as "
              "<font face=\"Courier\">gemini_api_key</font>."],
-            ["PTT Mode (Alt+P)", "Dropdown",
-             "Manual / VOX / USB FTDI / Serial. See section 12."],
-            ["Serial Port (Alt+S)", "Text",
-             "Only enabled in USB FTDI mode. e.g. /dev/ttyUSB0 or COM3."],
-            ["Control Line (Alt+E)", "Dropdown",
-             "Only enabled in USB FTDI mode. RTS or DTR."],
         ],
         col_widths=[1.5 * inch, 1.4 * inch, 3.85 * inch],
     )
@@ -1398,14 +1437,44 @@ def build_quick_messages_dialog(b: Builder):
 def build_add_station_dialog(b: Builder):
     b.h1("9. Add Station dialog")
     b.p("Opens when you click a yellow pill on the Pending Stations panel. "
-        "Compact three-field form with three QLineEdit inputs:")
+        "Three-field form with an inline FCC lookup:")
     b.bullets([
         ("Callsign (Alt+C)", "Pre-filled with the detected callsign in "
-                              "canonical (compact, uppercase) form."),
+                              "canonical (compact, uppercase) form. "
+                              "A <b>Look Up</b> (Alt+U) button sits to the "
+                              "right of this field — see below."),
         ("Name (Alt+N)", "Pre-filled if the heuristic detected a name in "
-                          "the surrounding transcription."),
-        ("Location (Alt+L)", "Pre-filled if a location was detected."),
+                          "the surrounding transcription. Left blank if no "
+                          "name was found; Look Up fills it from the FCC "
+                          "record if the field is still empty when you click."),
+        ("Location (Alt+L)", "Pre-filled if a location was detected. "
+                              "Look Up fills it from the FCC city when empty."),
     ])
+    b.h3("Look Up button (Alt+U)")
+    b.p("Queries the FCC crossref database for the entered callsign on a "
+        "background thread so the UI stays live during the lookup (up to "
+        "5-second HTTP timeout). Behavior varies with what is already in "
+        "the form:")
+    b.bullets([
+        ("Callsign only", "Name and Location are both empty. The lookup "
+                           "fetches the license record and pre-fills both "
+                           "fields from the FCC data. Status shows "
+                           "<i>Found: &lt;name&gt; — &lt;city&gt; (name didn't match)</i> "
+                           "because there was no contact name to verify against."),
+        ("Callsign + Name", "The name-match gate runs (see section 16). "
+                             "A match earns a <i>✓ Verified</i> status line; "
+                             "a mismatch shows <i>Found … (name didn't match)</i>. "
+                             "Location is filled from FCC if still empty."),
+        ("Callsign + Location", "Name field is blank; Location is already "
+                                 "set. The lookup fills Name from FCC. "
+                                 "The FCC location is shown in the status line "
+                                 "so you can compare against what you typed."),
+    ])
+    b.p("The status line beneath the form uses color to communicate the "
+        "outcome: green for verified, amber for found-but-not-verified, "
+        "red for not found or error, gray for offline or in-progress. "
+        "The button disables when the app is offline and while a lookup "
+        "is running.")
     b.p("Click <b>OK</b> to append the new contact to "
         "<font face=\"Courier\">contacts.json</font>; the target "
         "dropdown is rebuilt and any historical RX lines mentioning that "

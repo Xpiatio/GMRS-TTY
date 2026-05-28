@@ -2,8 +2,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout,
-    QHeaderView, QLineEdit, QMessageBox, QPushButton, QTableWidget,
-    QTableWidgetItem, QVBoxLayout,
+    QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from gmrs_tty.constants import VERIFIED_COLOR, VERIFIED_GLYPH, utc_now_iso
@@ -392,14 +392,47 @@ class AddContactDialog(QDialog):
     def __init__(self, callsign, name, location, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Add Station: {callsign}")
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(440)
+        self._lookup_worker = None
+
         layout = QFormLayout(self)
+
         self.callsign_input = QLineEdit(callsign)
+
+        self._lookup_btn = QPushButton("Look &Up")
+        self._lookup_btn.setToolTip(
+            "Look up this callsign in the FCC database. "
+            "Fills Name and Location from the license record when those fields are empty."
+        )
+        self._lookup_btn.setAccessibleName("Look up callsign in FCC database")
+        self._lookup_btn.setAccessibleDescription(
+            "Fetch the FCC license record for the entered callsign and pre-fill "
+            "any empty Name or Location fields from the result."
+        )
+        self._lookup_btn.clicked.connect(self._start_lookup)
+        self._lookup_btn.setEnabled(is_online())
+        if not is_online():
+            self._lookup_btn.setToolTip("Offline — FCC lookup unavailable.")
+
+        callsign_row = QWidget()
+        cs_row_layout = QHBoxLayout(callsign_row)
+        cs_row_layout.setContentsMargins(0, 0, 0, 0)
+        cs_row_layout.addWidget(self.callsign_input, 1)
+        cs_row_layout.addWidget(self._lookup_btn)
+
         self.name_input = QLineEdit(name)
         self.location_input = QLineEdit(location)
-        layout.addRow("&Callsign:", self.callsign_input)
+
+        layout.addRow("&Callsign:", callsign_row)
         layout.addRow("&Name:", self.name_input)
         layout.addRow("&Location:", self.location_input)
+
+        self._status_label = QLabel()
+        self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._status_label.setWordWrap(True)
+        self._status_label.hide()
+        layout.addRow(self._status_label)
+
         self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
             self,
@@ -407,6 +440,68 @@ class AddContactDialog(QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
+
+    def _start_lookup(self):
+        cs = self.callsign_input.text().strip().upper()
+        if not cs:
+            return
+        if self._lookup_worker is not None and self._lookup_worker.isRunning():
+            self._lookup_worker.result_ready.disconnect()
+            self._lookup_worker = None
+
+        self._lookup_btn.setEnabled(False)
+        self._lookup_btn.setText("Looking…")
+        self._set_status("Looking up…", "#6b7280")
+
+        from gmrs_tty.fcc.auto_add import CallsignLookupWorker
+        name = self.name_input.text().strip()
+        location = self.location_input.text().strip()
+        self._lookup_worker = CallsignLookupWorker(cs, name, location, parent=self)
+        self._lookup_worker.result_ready.connect(self._on_lookup_result)
+        self._lookup_worker.finished.connect(self._reset_lookup_btn)
+        self._lookup_worker.start()
+
+    def _reset_lookup_btn(self):
+        self._lookup_btn.setText("Look &Up")
+        self._lookup_btn.setEnabled(is_online())
+
+    def _on_lookup_result(self, _callsign, _name, _location, result):
+        if result.status == "verified":
+            if not self.name_input.text().strip() and result.license_name:
+                self.name_input.setText(result.license_name)
+            if not self.location_input.text().strip() and result.license_city:
+                self.location_input.setText(result.license_city.title())
+            loc_part = f" — {result.license_city.title()}" if result.license_city else ""
+            self._set_status(f"✓ Verified: {result.license_name}{loc_part}", "#15803d")
+        elif result.status == "callsign_only":
+            if not self.name_input.text().strip() and result.license_name:
+                self.name_input.setText(result.license_name)
+            if not self.location_input.text().strip() and result.license_city:
+                self.location_input.setText(result.license_city.title())
+            if not result.license_active:
+                note = " (inactive license)"
+            else:
+                note = " (name didn’t match)"
+            loc_part = f" — {result.license_city.title()}" if result.license_city else ""
+            self._set_status(f"Found: {result.license_name}{loc_part}{note}", "#d97706")
+        elif result.status == "not_found":
+            self._set_status("Not found in FCC database.", "#dc2626")
+        elif result.status == "offline":
+            self._set_status("Offline — FCC lookup unavailable.", "#6b7280")
+        else:
+            self._set_status("Lookup failed. Check your connection.", "#dc2626")
+
+    def _set_status(self, text, color):
+        self._status_label.setText(text)
+        self._status_label.setStyleSheet(f"color: {color}; font-style: italic;")
+        self._status_label.show()
+
+    def closeEvent(self, event):
+        if self._lookup_worker is not None and self._lookup_worker.isRunning():
+            self._lookup_worker.result_ready.disconnect()
+            self._lookup_worker.quit()
+            self._lookup_worker.wait(300)
+        super().closeEvent(event)
 
     def get_contact(self):
         return {

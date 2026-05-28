@@ -5,7 +5,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QSlider, QToolButton, QWidget,
+    QMessageBox, QPushButton, QSlider, QTabWidget, QToolButton,
+    QVBoxLayout, QWidget,
 )
 
 from gmrs_tty.constants import VOICE_TEST_TEXT, validate_voice_path
@@ -25,12 +26,21 @@ class ConfigDialog(QDialog):
         self._voice_test_fn = voice_test_fn
         self._test_player = None
 
-        layout = QFormLayout(self)
-        self._build_identity_rows(layout)
-        self._build_voice_rows(layout)
-        self._build_audio_rows(layout)
-        self._build_behavior_rows(layout)
-        self._build_ptt_rows(layout)
+        outer = QVBoxLayout(self)
+        tabs = QTabWidget()
+        outer.addWidget(tabs)
+
+        for label, builder in [
+            ("Identity", self._build_identity_rows),
+            ("Audio", self._build_audio_rows),
+            ("Voice", self._build_voice_rows),
+            ("PTT", self._build_ptt_rows),
+            ("Behavior", self._build_behavior_rows),
+        ]:
+            page = QWidget()
+            form = QFormLayout(page)
+            builder(form)
+            tabs.addTab(page, label)
 
         self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
@@ -39,7 +49,7 @@ class ConfigDialog(QDialog):
         # OK stays disabled until DeviceQueryThread finishes so the user
         # can't save a config with the "Loading devices…" placeholder.
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
-        layout.addWidget(self.buttons)
+        outer.addWidget(self.buttons)
 
     # ------------------------------------------------------------------
     # Section builders — each adds its own rows to the shared QFormLayout
@@ -116,6 +126,7 @@ class ConfigDialog(QDialog):
         layout.addRow("Speech &Rate:", rate_row)
 
     def _build_audio_rows(self, layout: QFormLayout) -> None:
+        self._audio_layout = layout
         self.input_device_input = QComboBox()
         self.input_device_input.addItem("Loading devices…", -1)
         self.input_device_input.setEnabled(False)
@@ -376,7 +387,7 @@ class ConfigDialog(QDialog):
 
     def _update_input_device_fields(self, _index=None):
         is_monitor = self.input_device_input.currentData() == "system_monitor"
-        self.layout().setRowVisible(self.monitor_sink_input, is_monitor)
+        self._audio_layout.setRowVisible(self.monitor_sink_input, is_monitor)
 
     def _toggle_api_key_visibility(self, visible: bool) -> None:
         mode = QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password
