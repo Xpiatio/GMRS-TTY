@@ -13,6 +13,7 @@ from gmrs_tty.constants import (
     GAIN_MODES, VALID_FINAL_MODELS, VALID_WHISPER_MODELS, VOICE_TEST_TEXT,
     validate_voice_path,
 )
+from gmrs_tty.stt import models as stt_models
 from gmrs_tty.stt.worker import STTWorker
 from gmrs_tty.ui.device_query import DeviceQueryThread
 
@@ -364,9 +365,8 @@ class ConfigDialog(QDialog):
 
     def _build_stt_rows(self, layout: QFormLayout) -> None:
         self.whisper_model_input = QComboBox()
-        staged = sorted(
-            m for m in VALID_WHISPER_MODELS
-            if os.path.isdir(os.path.join(STTWorker.MODELS_STT_DIR, m))
+        staged = stt_models.staged_models(
+            VALID_WHISPER_MODELS, models_dir=STTWorker.MODELS_STT_DIR
         )
         current_model = self.config.get("whisper_model", "small.en")
         if current_model not in staged:
@@ -405,10 +405,12 @@ class ConfigDialog(QDialog):
         self.final_model_input = QComboBox()
         self.final_model_input.addItem("Off (single pass)", "")
         self.final_model_input.addItem("Auto (best staged model)", "auto")
-        final_staged = sorted(
-            m for m in VALID_FINAL_MODELS - {"auto"}
-            if os.path.isdir(os.path.join(STTWorker.MODELS_STT_DIR, m))
-            or os.path.isdir(os.path.join(STTWorker.MODELS_STT_DIR, m + "-hf"))
+        # include_hf: an HF-only staging is still offerable here because the
+        # final pass can run it on the GPU backend.
+        final_staged = stt_models.staged_models(
+            VALID_FINAL_MODELS - {"auto"},
+            include_hf=True,
+            models_dir=STTWorker.MODELS_STT_DIR,
         )
         current_final = self.config.get("whisper_model_final", "")
         if current_final not in ("", "auto") and current_final not in final_staged:

@@ -36,13 +36,16 @@ def assemble_phrases(callsigns: list[str], saved_phrases: list[str], *, max_call
     Order: CURATED -> saved_phrases -> callsigns (callsigns last so they sit in
     the surviving tail of Whisper's initial_prompt). Callsigns over
     ``max_callsigns`` are trimmed from the FRONT (oldest), keeping the newest;
-    the dropped count is logged. Case-insensitive dedup keeps the last
-    (highest-priority) occurrence of any repeated term.
+    the dropped count is logged. A cap of zero (or less) drops every callsign,
+    leaving only the curated terms and saved phrases. Case-insensitive dedup
+    keeps the last (highest-priority) occurrence of any repeated term.
     """
     callsigns = list(callsigns or [])
-    if len(callsigns) > max_callsigns:
-        dropped = len(callsigns) - max_callsigns
-        callsigns = callsigns[-max_callsigns:]
+    dropped = max(0, len(callsigns) - max(0, max_callsigns))
+    if dropped:
+        # Guarded rather than a bare negative slice: callsigns[-0:] is the
+        # whole list, so a cap of 0 would silently keep everything.
+        callsigns = callsigns[dropped:]
         _log.info("STT vocab: callsign list over cap, dropped %d oldest", dropped)
 
     ordered = list(CURATED) + list(saved_phrases or []) + callsigns

@@ -39,3 +39,27 @@ def test_callsign_cap_keeps_newest_and_logs(caplog):
     assert tail == calls[-100:]          # newest (file-order tail) kept
     assert "K0000" not in out            # oldest dropped
     assert any("dropped 5" in r.message for r in caplog.records)
+
+
+def test_callsign_cap_of_zero_drops_all(caplog):
+    # The spinbox range starts at 0, and callsigns[-0:] is the whole list —
+    # so a naive negative slice would silently keep every callsign.
+    calls = ["KE8AAA", "KE8BBB", "KE8CCC"]
+    with caplog.at_level(logging.INFO):
+        out = vocab.assemble_phrases(calls, ["my phrase"], max_callsigns=0)
+    for call in calls:
+        assert call not in out
+    assert "my phrase" in out          # only callsigns are capped
+    assert "Alfa" in out
+    assert any("dropped 3" in r.message for r in caplog.records)
+
+
+def test_callsign_cap_exactly_at_limit_keeps_all():
+    calls = ["KE8AAA", "KE8BBB", "KE8CCC"]
+    out = vocab.assemble_phrases(calls, [], max_callsigns=3)
+    assert out[-3:] == calls
+
+
+def test_negative_cap_treated_as_zero():
+    out = vocab.assemble_phrases(["KE8AAA", "KE8BBB"], [], max_callsigns=-2)
+    assert "KE8AAA" not in out and "KE8BBB" not in out

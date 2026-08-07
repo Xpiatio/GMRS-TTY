@@ -12,6 +12,7 @@ from gmrs_tty.audio.dsp import lowpass, make_bandpass_sos, make_lowpass_sos
 from gmrs_tty.audio.squelch import SquelchDetector
 from gmrs_tty.audio.vad import load_vad_model, make_vad_iterator
 from gmrs_tty.constants import GAIN_MODES
+from gmrs_tty.stt import models as stt_models
 from gmrs_tty.stt.preprocess import preprocess_segment
 from gmrs_tty.stt.segmenter import SpeechSegmenter
 from gmrs_tty.stt.transcriber import WhisperTranscriber
@@ -105,8 +106,14 @@ class STTWorker(QThread):
     # staged under Models/STT (skipping the fast-path model). Turbo first:
     # near large-v3 accuracy at a fraction of the decode cost.
     FINAL_MODEL_PREFERENCE = ("large-v3-turbo", "distil-large-v3", "large-v3")
+    # Cap on utterances awaiting a final pass. A TX pause mid-utterance calls
+    # SpeechSegmenter.reset(), which drops the in-flight utterance *without*
+    # emitting a final segment — so that uid is never popped and its audio
+    # would be held for the rest of the session. debug_capture.py bounds its
+    # unfinalized records the same way.
+    MAX_PENDING_FINAL = 8
 
-    MODELS_STT_DIR = os.path.join("Models", "STT")
+    MODELS_STT_DIR = stt_models.MODELS_STT_DIR
 
     def __init__(self, input_device=None, whisper_model="small.en", vad_threshold=0.5,
                  model_cache: "ModelCache | None" = None, system_monitor_sink="",
@@ -118,7 +125,9 @@ class STTWorker(QThread):
         self.input_device = input_device if input_device not in (None, -1) else None
         self.system_monitor_sink = system_monitor_sink or ""
         self.whisper_model_name = whisper_model
-        self.whisper_model_path = os.path.join(self.MODELS_STT_DIR, whisper_model)
+        self.whisper_model_path = stt_models.ct2_model_path(
+            whisper_model, self.MODELS_STT_DIR
+        )
         self.vad_threshold = float(vad_threshold)
         self.saved_phrases: "list[str]" = list(saved_phrases)
         self.debug_capture = bool(debug_capture)
@@ -438,6 +447,23 @@ class STTWorker(QThread):
             return
         entry.append(audio)
         self._pending_final[uid] = entry
+        self._evict_stale_pending()
+
+    def _evict_stale_pending(self) -> None:
+        """Drop the oldest utterances that never reached a final segment.
+
+        Only the transcription thread touches these dicts, so plain dict
+        insertion order is enough to find the oldest. Logged on eviction so a
+        missing final pass isn't a silent mystery later.
+        """
+        while len(self._pending_final) > self.MAX_PENDING_FINAL:
+            stale_uid = next(iter(self._pending_final))
+            self._pending_final.pop(stale_uid, None)
+            self._pending_noise.pop(stale_uid, None)
+            _log.warning(
+                "STT final pass: utterance %s never finalized (TX pause "
+                "mid-utterance?) — dropped from the pending buffer", stale_uid,
+            )
 
     def _take_final_audio(self, uid):
         """Pop the accumulated utterance audio, or None if abandoned/missing."""
@@ -482,14 +508,11 @@ class STTWorker(QThread):
         for name in self.FINAL_MODEL_PREFERENCE:
             if name == self.whisper_model_name:
                 continue
-            ct2 = os.path.isdir(os.path.join(self.MODELS_STT_DIR, name))
-            if self.stt_final_device == "gpu":
-                usable = ct2 or os.path.isdir(
-                    os.path.join(self.MODELS_STT_DIR, name + "-hf")
-                )
-            else:
-                usable = ct2
-            if usable:
+            if stt_models.is_staged(
+                name,
+                include_hf=self.stt_final_device == "gpu",
+                models_dir=self.MODELS_STT_DIR,
+            ):
                 return name
         _log.info(
             "whisper_model_final='auto': no final-pass model staged under %s — "
@@ -509,8 +532,9 @@ class STTWorker(QThread):
 
     def _final_model_path(self, backend: str) -> str:
         """CT2 dir for CPU, '<name>-hf' dir for the GPU transformers model."""
-        name = self.whisper_model_final + ("-hf" if backend == "gpu" else "")
-        return os.path.join(self.MODELS_STT_DIR, name)
+        return stt_models.model_path(
+            self.whisper_model_final, backend, self.MODELS_STT_DIR
+        )
 
     def _load_one_final(self, backend: str):
         """Load a single backend's final transcriber, or None on missing dir."""

@@ -6,11 +6,10 @@ captured reading, emitting per-combo progress and the ranked results.
 """
 from __future__ import annotations
 
-import os
-
 from PySide6.QtCore import Signal
 
 from gmrs_tty.constants import VALID_WHISPER_MODELS
+from gmrs_tty.stt import models as stt_models
 from gmrs_tty.stt.calibration import run_sweep
 from gmrs_tty.ui.worker_base import WorkerBase
 
@@ -42,10 +41,9 @@ class CalibrationSweepWorker(WorkerBase):
         # Sweep only models staged on disk — faster-whisper treats a missing
         # local path as a Hugging Face repo id and tries to download it, and
         # GMRS-TTY never downloads models at runtime.
-        models = [
-            m for m in sorted(VALID_WHISPER_MODELS)
-            if os.path.isdir(os.path.join(STTWorker.MODELS_STT_DIR, m))
-        ]
+        models = stt_models.staged_models(
+            VALID_WHISPER_MODELS, models_dir=STTWorker.MODELS_STT_DIR
+        )
         if not models:
             raise RuntimeError(
                 "No Whisper models found in Models/STT. Run "
@@ -57,7 +55,7 @@ class CalibrationSweepWorker(WorkerBase):
 
         def transcriber_loader(model: str):
             return WhisperTranscriber.load(
-                os.path.join(STTWorker.MODELS_STT_DIR, model)
+                stt_models.ct2_model_path(model, STTWorker.MODELS_STT_DIR)
             )
 
         def vad_iterator_factory():

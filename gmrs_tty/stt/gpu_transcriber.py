@@ -42,7 +42,7 @@ class GpuWhisperTranscriber:
         self.processor = processor
         self._count_tokens = self._make_token_counter(processor)
         # Selects the initial_prompt rendering: "list" (production default) or
-        # "transcript" (eval-only A/B variant). See backend/stt/_prompt.py.
+        # "transcript" (eval-only A/B variant). See gmrs_tty/stt/_prompt.py.
         self.prompt_style = prompt_style
         self.initial_prompt = build_prompt(
             saved_phrases, count_tokens=self._count_tokens, style=self.prompt_style
