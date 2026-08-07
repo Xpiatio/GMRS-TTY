@@ -5,12 +5,23 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QSlider, QTabWidget, QToolButton,
-    QVBoxLayout, QWidget,
+    QMessageBox, QPlainTextEdit, QPushButton, QSlider, QSpinBox,
+    QTabWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
-from gmrs_tty.constants import VOICE_TEST_TEXT, validate_voice_path
+from gmrs_tty.constants import (
+    GAIN_MODES, VALID_FINAL_MODELS, VALID_WHISPER_MODELS, VOICE_TEST_TEXT,
+    validate_voice_path,
+)
+from gmrs_tty.stt import models as stt_models
+from gmrs_tty.stt.worker import STTWorker
 from gmrs_tty.ui.device_query import DeviceQueryThread
+
+GAIN_MODE_LABELS = {
+    "agc": "Dynamic AGC (recommended)",
+    "rms": "One-shot RMS normalize",
+    "off": "No gain",
+}
 
 
 class ConfigDialog(QDialog):
@@ -34,6 +45,7 @@ class ConfigDialog(QDialog):
             ("Identity", self._build_identity_rows),
             ("Audio", self._build_audio_rows),
             ("Voice", self._build_voice_rows),
+            ("STT", self._build_stt_rows),
             ("PTT", self._build_ptt_rows),
             ("Behavior", self._build_behavior_rows),
         ]:
@@ -254,6 +266,23 @@ class ConfigDialog(QDialog):
             "hidden from the View menu."
         )
 
+        self.attendance_autosave_input = QCheckBox(
+            "Save the callsigns-detected grid when Listen stops"
+        )
+        self.attendance_autosave_input.setChecked(
+            bool((self.config.get("attendance") or {}).get("autosave_sessions", False))
+        )
+        self.attendance_autosave_input.setToolTip(
+            "When enabled, each Listen session's attendance grid is stored "
+            "as a net session record (Tools → Net Attendance History) "
+            "automatically. Sessions with no callsigns are skipped."
+        )
+        self.attendance_autosave_input.setAccessibleName("Auto-save net sessions")
+        self.attendance_autosave_input.setAccessibleDescription(
+            "When checked, the callsigns detected during each listening "
+            "session are saved automatically for attendance history."
+        )
+
         self.gemini_api_key_input = QLineEdit(self.config.get("gemini_api_key", ""))
         self.gemini_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.gemini_api_key_input.setPlaceholderText("AIza…  (leave blank to disable journal export)")
@@ -277,11 +306,241 @@ class ConfigDialog(QDialog):
         gemini_row_layout.addWidget(self.gemini_api_key_input, 1)
         gemini_row_layout.addWidget(self._gemini_show_btn)
 
+        self.tx_conditioning_input = QCheckBox("Condition TX audio for radio (band-limit + compress)")
+        self.tx_conditioning_input.setChecked(bool(self.config.get("tx_conditioning", False)))
+        self.tx_conditioning_input.setToolTip(
+            "Band-limits synthesized speech to the 300–3000 Hz FM voice "
+            "channel, gently compresses peaks, and normalizes the level so "
+            "the voice modulates the radio consistently without clipping. "
+            "Leave off if TTS plays through regular speakers."
+        )
+        self.tx_conditioning_input.setAccessibleName("Condition TX audio")
+        self.tx_conditioning_input.setAccessibleDescription(
+            "When checked, synthesized speech is band-limited, compressed, "
+            "and level-normalized before it drives the radio's microphone input."
+        )
+
+        self.tx_max_duration_input = QSpinBox()
+        self.tx_max_duration_input.setRange(0, 600)
+        self.tx_max_duration_input.setSuffix(" s")
+        self.tx_max_duration_input.setSpecialValueText("Off")
+        self.tx_max_duration_input.setValue(int(self.config.get("tx_max_duration_seconds", 60)))
+        self.tx_max_duration_input.setToolTip(
+            "Hard cap on how long PTT may stay keyed for one transmission. "
+            "If playback runs longer, TX is stopped and PTT released. "
+            "0 disables the cap."
+        )
+        self.tx_max_duration_input.setAccessibleName("Maximum transmission length")
+        self.tx_max_duration_input.setAccessibleDescription(
+            "Longest a single transmission may key the radio, in seconds. "
+            "Zero disables the limit."
+        )
+
+        self.tx_synth_timeout_input = QSpinBox()
+        self.tx_synth_timeout_input.setRange(0, 300)
+        self.tx_synth_timeout_input.setSuffix(" s")
+        self.tx_synth_timeout_input.setSpecialValueText("Off")
+        self.tx_synth_timeout_input.setValue(
+            int(self.config.get("tx_synthesis_timeout_seconds", 30))
+        )
+        self.tx_synth_timeout_input.setToolTip(
+            "How long to wait for speech synthesis before giving up. The "
+            "radio is never keyed when synthesis times out. 0 disables."
+        )
+        self.tx_synth_timeout_input.setAccessibleName("Synthesis timeout")
+        self.tx_synth_timeout_input.setAccessibleDescription(
+            "Maximum seconds to wait for text-to-speech synthesis before "
+            "aborting the transmission. Zero disables the timeout."
+        )
+
         layout.addRow("Time &Format:", self.time_format_input)
         layout.addRow("Filter profanit&y:", self.filter_profanity_input)
         layout.addRow("F&uzzy callsigns:", self.fuzzy_callsign_input)
         layout.addRow("Callsigns &Detected:", self.attendance_enabled_input)
+        layout.addRow("Auto-save sessi&ons:", self.attendance_autosave_input)
+        layout.addRow("Condition T&X audio:", self.tx_conditioning_input)
+        layout.addRow("Max TX &length:", self.tx_max_duration_input)
+        layout.addRow("Synthesis &timeout:", self.tx_synth_timeout_input)
         layout.addRow("&Gemini API Key:", gemini_row)
+
+    def _build_stt_rows(self, layout: QFormLayout) -> None:
+        self.whisper_model_input = QComboBox()
+        staged = stt_models.staged_models(
+            VALID_WHISPER_MODELS, models_dir=STTWorker.MODELS_STT_DIR
+        )
+        current_model = self.config.get("whisper_model", "small.en")
+        if current_model not in staged:
+            staged.append(current_model)
+        for m in staged:
+            self.whisper_model_input.addItem(m, m)
+        idx = self.whisper_model_input.findData(current_model)
+        if idx >= 0:
+            self.whisper_model_input.setCurrentIndex(idx)
+        self.whisper_model_input.setToolTip(
+            "Whisper model used for transcription. Only models already staged "
+            "under Models/STT are listed — run bootstrap_models.py to add more. "
+            "Larger models are more accurate but slower."
+        )
+        self.whisper_model_input.setAccessibleName("Whisper model")
+        self.whisper_model_input.setAccessibleDescription(
+            "Select which locally staged Whisper model transcribes incoming audio."
+        )
+
+        self.gain_mode_input = QComboBox()
+        for mode in GAIN_MODES:
+            self.gain_mode_input.addItem(GAIN_MODE_LABELS[mode], mode)
+        idx = self.gain_mode_input.findData(self.config.get("stt_gain_mode", "agc"))
+        if idx >= 0:
+            self.gain_mode_input.setCurrentIndex(idx)
+        self.gain_mode_input.setToolTip(
+            "Gain stage applied to each utterance before transcription. "
+            "Dynamic AGC levels weak and strong stations smoothly; RMS applies "
+            "one flat gain; No gain leaves levels untouched."
+        )
+        self.gain_mode_input.setAccessibleName("STT gain mode")
+        self.gain_mode_input.setAccessibleDescription(
+            "Choose how audio levels are normalized before speech recognition."
+        )
+
+        self.final_model_input = QComboBox()
+        self.final_model_input.addItem("Off (single pass)", "")
+        self.final_model_input.addItem("Auto (best staged model)", "auto")
+        # include_hf: an HF-only staging is still offerable here because the
+        # final pass can run it on the GPU backend.
+        final_staged = stt_models.staged_models(
+            VALID_FINAL_MODELS - {"auto"},
+            include_hf=True,
+            models_dir=STTWorker.MODELS_STT_DIR,
+        )
+        current_final = self.config.get("whisper_model_final", "")
+        if current_final not in ("", "auto") and current_final not in final_staged:
+            final_staged.append(current_final)
+        for m in final_staged:
+            self.final_model_input.addItem(m, m)
+        idx = self.final_model_input.findData(current_final)
+        if idx >= 0:
+            self.final_model_input.setCurrentIndex(idx)
+        self.final_model_input.setToolTip(
+            "Optional second pass: after each transmission ends, the whole "
+            "utterance is re-transcribed with this larger model and the "
+            "chat line is upgraded in place. Off keeps single-pass "
+            "transcription; Auto picks the best model staged under "
+            "Models/STT (stage one with bootstrap_models.py --final-model)."
+        )
+        self.final_model_input.setAccessibleName("Final-pass model")
+        self.final_model_input.setAccessibleDescription(
+            "Select a larger Whisper model that re-transcribes each "
+            "complete transmission for higher accuracy, or Off to disable."
+        )
+
+        self.final_device_input = QComboBox()
+        self.final_device_input.addItem("Auto (GPU when available)", "auto")
+        self.final_device_input.addItem("GPU", "gpu")
+        self.final_device_input.addItem("CPU", "cpu")
+        idx = self.final_device_input.findData(self.config.get("stt_final_device", "auto"))
+        if idx >= 0:
+            self.final_device_input.setCurrentIndex(idx)
+        self.final_device_input.setToolTip(
+            "Where the final pass runs. GPU needs the optional "
+            "requirements-gpu.txt extras (torch + transformers); any GPU "
+            "failure falls back to CPU automatically."
+        )
+        self.final_device_input.setAccessibleName("Final-pass device")
+        self.final_device_input.setAccessibleDescription(
+            "Choose whether the final-pass model runs on the GPU or CPU."
+        )
+
+        self.final_max_s_input = QSpinBox()
+        self.final_max_s_input.setRange(5, 600)
+        self.final_max_s_input.setSuffix(" s")
+        self.final_max_s_input.setValue(int(float(self.config.get("stt_final_max_s", 60.0))))
+        self.final_max_s_input.setToolTip(
+            "Transmissions longer than this skip the second pass — the "
+            "streaming transcript already covers them."
+        )
+        self.final_max_s_input.setAccessibleName("Final-pass maximum length")
+        self.final_max_s_input.setAccessibleDescription(
+            "Longest transmission, in seconds, that the final pass will "
+            "re-transcribe."
+        )
+
+        self.noise_profile_input = QCheckBox(
+            "Learn the channel noise floor while squelch is closed"
+        )
+        self.noise_profile_input.setChecked(bool(self.config.get("stt_noise_profile", False)))
+        self.noise_profile_input.setToolTip(
+            "Samples static between transmissions and uses it as the noise "
+            "estimate when denoising speech, instead of guessing from the "
+            "speech itself. Can improve accuracy on consistently noisy channels."
+        )
+        self.noise_profile_input.setAccessibleName("Noise profile denoising")
+        self.noise_profile_input.setAccessibleDescription(
+            "When checked, background static sampled between transmissions "
+            "improves noise reduction on incoming speech."
+        )
+
+        self.saved_phrases_input = QPlainTextEdit()
+        self.saved_phrases_input.setPlainText("\n".join(self.config.get("saved_phrases", [])))
+        self.saved_phrases_input.setPlaceholderText("One phrase per line, e.g. a club name or local landmark")
+        self.saved_phrases_input.setFixedHeight(72)
+        self.saved_phrases_input.setToolTip(
+            "Custom words or phrases the transcriber should recognize — names, "
+            "landmarks, club jargon. Added to the Whisper vocabulary bias "
+            "alongside built-in radio procedure words and contact callsigns."
+        )
+        self.saved_phrases_input.setAccessibleName("Custom vocabulary phrases")
+        self.saved_phrases_input.setAccessibleDescription(
+            "Enter one phrase per line to bias speech recognition toward "
+            "words it would otherwise mishear."
+        )
+
+        self.vocab_max_callsigns_input = QSpinBox()
+        self.vocab_max_callsigns_input.setRange(0, 50)
+        self.vocab_max_callsigns_input.setValue(int(self.config.get("stt_vocab_max_callsigns", 15)))
+        self.vocab_max_callsigns_input.setToolTip(
+            "How many contact callsigns to include in the recognition "
+            "vocabulary. Each costs ~6 of the ~223 available prompt tokens; "
+            "newer contacts win when over the limit."
+        )
+        self.vocab_max_callsigns_input.setAccessibleName("Maximum vocabulary callsigns")
+        self.vocab_max_callsigns_input.setAccessibleDescription(
+            "Limit how many saved contact callsigns bias speech recognition."
+        )
+
+        self.debug_capture_input = QCheckBox("Save each utterance's audio and transcripts to disk")
+        self.debug_capture_input.setChecked(bool(self.config.get("stt_debug_capture", False)))
+        self.debug_capture_input.setToolTip(
+            "Records raw, segmented, and processed audio plus transcripts for "
+            "every utterance — used with the offline eval tool "
+            "(python -m gmrs_tty.tools.eval_stt) to measure accuracy. "
+            "Leave off in normal use; captures grow quickly."
+        )
+        self.debug_capture_input.setAccessibleName("STT debug capture")
+        self.debug_capture_input.setAccessibleDescription(
+            "When checked, every received utterance is saved to the debug "
+            "directory for offline transcription-accuracy analysis."
+        )
+
+        self.debug_dir_input = QLineEdit(self.config.get("stt_debug_dir", "debug/stt"))
+        self.debug_dir_input.setPlaceholderText("debug/stt")
+        self.debug_dir_input.setToolTip("Directory where debug captures are written.")
+        self.debug_dir_input.setAccessibleName("Debug capture directory")
+        self.debug_dir_input.setAccessibleDescription(
+            "Filesystem path where utterance debug captures are stored."
+        )
+        self.debug_capture_input.toggled.connect(self.debug_dir_input.setEnabled)
+        self.debug_dir_input.setEnabled(self.debug_capture_input.isChecked())
+
+        layout.addRow("Whisper &Model:", self.whisper_model_input)
+        layout.addRow("Fi&nal-pass model:", self.final_model_input)
+        layout.addRow("Final-pass de&vice:", self.final_device_input)
+        layout.addRow("Final-pass max &length:", self.final_max_s_input)
+        layout.addRow("&Gain mode:", self.gain_mode_input)
+        layout.addRow("Noise pro&file:", self.noise_profile_input)
+        layout.addRow("Custom p&hrases:", self.saved_phrases_input)
+        layout.addRow("Ma&x callsigns:", self.vocab_max_callsigns_input)
+        layout.addRow("De&bug capture:", self.debug_capture_input)
+        layout.addRow("Debug director&y:", self.debug_dir_input)
 
     def _build_ptt_rows(self, layout: QFormLayout) -> None:
         self.ptt_mode_input = QComboBox()
@@ -306,9 +565,62 @@ class ConfigDialog(QDialog):
 
         self.ptt_mode_input.currentIndexChanged.connect(self._update_ptt_fields)
 
+        self.vox_primer_input = QCheckBox("Play a short priming tone before speech")
+        self.vox_primer_input.setChecked(bool(self.config.get("vox_primer_enabled", False)))
+        self.vox_primer_input.setToolTip(
+            "For VOX-keyed radios: a 1 kHz tone keys the radio and a short "
+            "gap lets it settle, so the first spoken word isn't clipped."
+        )
+        self.vox_primer_input.setAccessibleName("VOX primer tone")
+        self.vox_primer_input.setAccessibleDescription(
+            "When checked, a short tone precedes speech so a VOX-keyed radio "
+            "is fully keyed before the message starts."
+        )
+
+        self.vox_primer_ms_input = QSpinBox()
+        self.vox_primer_ms_input.setRange(50, 2000)
+        self.vox_primer_ms_input.setSingleStep(50)
+        self.vox_primer_ms_input.setSuffix(" ms")
+        self.vox_primer_ms_input.setValue(int(self.config.get("vox_primer_ms", 300)))
+        self.vox_primer_ms_input.setToolTip(
+            "Length of the VOX priming tone. Longer tones suit radios with "
+            "slow VOX attack; 300 ms works for most."
+        )
+        self.vox_primer_ms_input.setAccessibleName("VOX primer tone length")
+        self.vox_primer_ms_input.setAccessibleDescription(
+            "Duration of the priming tone in milliseconds."
+        )
+
+        self.vox_primer_word_enabled_input = QCheckBox("Speak a priming word before the message")
+        self.vox_primer_word_enabled_input.setChecked(
+            bool(self.config.get("vox_primer_word_enabled", False))
+        )
+        self.vox_primer_word_enabled_input.setToolTip(
+            "Speaks a keyword (e.g. \"transmit\") before the actual message, "
+            "as an alternative or supplement to the tone, so the radio keys "
+            "on a clear spoken word."
+        )
+        self.vox_primer_word_enabled_input.setAccessibleName("VOX priming word")
+        self.vox_primer_word_enabled_input.setAccessibleDescription(
+            "When checked, a spoken keyword precedes every transmitted message."
+        )
+
+        self.vox_primer_word_input = QLineEdit(self.config.get("vox_primer_word", "transmit"))
+        self.vox_primer_word_input.setToolTip("The word spoken before the message.")
+        self.vox_primer_word_input.setAccessibleName("Priming word")
+        self.vox_primer_word_input.setAccessibleDescription(
+            "The keyword spoken before each transmitted message."
+        )
+        self.vox_primer_word_enabled_input.toggled.connect(self.vox_primer_word_input.setEnabled)
+        self.vox_primer_word_input.setEnabled(self.vox_primer_word_enabled_input.isChecked())
+
         layout.addRow("&PTT Mode:", self.ptt_mode_input)
         layout.addRow("&Serial Port:", self.ptt_serial_port_input)
         layout.addRow("Control Lin&e:", self.ptt_serial_line_input)
+        layout.addRow("V&OX primer tone:", self.vox_primer_input)
+        layout.addRow("Primer &length:", self.vox_primer_ms_input)
+        layout.addRow("Primin&g word:", self.vox_primer_word_enabled_input)
+        layout.addRow("&Word:", self.vox_primer_word_input)
         self._update_ptt_fields()
 
     # ------------------------------------------------------------------
@@ -360,6 +672,20 @@ class ConfigDialog(QDialog):
             "output_device": self.output_device_input.currentData(),
             "monitor_enabled": self.monitor_enabled_input.isChecked(),
             "vad_threshold": round(self.vad_threshold_input.value(), 2),
+            "whisper_model": self.whisper_model_input.currentData(),
+            "whisper_model_final": self.final_model_input.currentData(),
+            "stt_final_device": self.final_device_input.currentData(),
+            "stt_final_max_s": float(self.final_max_s_input.value()),
+            "stt_gain_mode": self.gain_mode_input.currentData(),
+            "stt_noise_profile": self.noise_profile_input.isChecked(),
+            "saved_phrases": [
+                line.strip()
+                for line in self.saved_phrases_input.toPlainText().splitlines()
+                if line.strip()
+            ],
+            "stt_vocab_max_callsigns": self.vocab_max_callsigns_input.value(),
+            "stt_debug_capture": self.debug_capture_input.isChecked(),
+            "stt_debug_dir": self.debug_dir_input.text().strip() or "debug/stt",
             "time_format": self.time_format_input.currentData(),
             "filter_profanity": self.filter_profanity_input.isChecked(),
             "fuzzy_callsign": self.fuzzy_callsign_input.isChecked(),
@@ -368,11 +694,19 @@ class ConfigDialog(QDialog):
             # without crowding the top-level namespace.
             "attendance": {
                 "enabled": self.attendance_enabled_input.isChecked(),
+                "autosave_sessions": self.attendance_autosave_input.isChecked(),
             },
             "gemini_api_key": self.gemini_api_key_input.text().strip(),
             "ptt_mode": self.ptt_mode_input.currentData(),
             "ptt_serial_port": self.ptt_serial_port_input.text().strip(),
             "ptt_serial_line": self.ptt_serial_line_input.currentData(),
+            "vox_primer_enabled": self.vox_primer_input.isChecked(),
+            "vox_primer_ms": self.vox_primer_ms_input.value(),
+            "vox_primer_word_enabled": self.vox_primer_word_enabled_input.isChecked(),
+            "vox_primer_word": self.vox_primer_word_input.text().strip() or "transmit",
+            "tx_conditioning": self.tx_conditioning_input.isChecked(),
+            "tx_max_duration_seconds": self.tx_max_duration_input.value(),
+            "tx_synthesis_timeout_seconds": self.tx_synth_timeout_input.value(),
         }
 
     def _update_length_scale_label(self, value):

@@ -25,6 +25,39 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
+class _FakeMonitor:
+    """Inert stand-in for AudioMonitor. Records what it was asked to do rather
+    than opening an sd.OutputStream, which raises PortAudioError on a host with
+    no audio device — the monitor tests toggle the button, so they would
+    otherwise only pass on a machine with a working sound card.
+    """
+
+    def __init__(self):
+        self.started = []
+        self.passthrough = None
+        self.muted = None
+        self.running = False
+
+    def is_active(self):
+        return self.running
+
+    def start(self, device=None):
+        self.started.append(device)
+        self.running = True
+
+    def stop(self):
+        self.running = False
+
+    def push(self, chunk):
+        pass
+
+    def set_passthrough(self, enabled):
+        self.passthrough = enabled
+
+    def mute(self, muted):
+        self.muted = muted
+
+
 class _FakePTT:
     lead_in_seconds = 0.0
     tail_seconds = 0.0
@@ -104,6 +137,9 @@ def _build_window(qapp, initial_listen_only=False, presets=None):
         while patches:
             patches.pop().__exit__(None, None, None)
         raise
+    # Toggling Monitor starts a real output stream; no test here asserts on the
+    # monitor itself, so swap in an inert one and stay device-independent.
+    window._monitor = _FakeMonitor()
     return _WindowHandle(window, saved, patches)
 
 

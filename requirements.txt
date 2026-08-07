@@ -2,8 +2,10 @@ PySide6
 sounddevice==0.5.5
 soundfile==0.13.1
 piper-tts
-faster-whisper
+faster-whisper>=1.0
 silero-vad>=5.0
-noisereduce
+noisereduce>=3.0
 numpy
+scipy
+jiwer
 pyserial

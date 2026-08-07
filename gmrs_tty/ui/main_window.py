@@ -1,5 +1,6 @@
 import datetime
 import os
+import time
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
@@ -17,17 +18,18 @@ from gmrs_tty.constants import (
     CONFIG_FILE, CONTACTS_FILE,
     DEFAULT_OPERATOR_NAME, UNSET_FIELD,
     SERVICE_FRS, SERVICE_GMRS, normalize_service,
-    utc_now_iso,
 )
 from gmrs_tty.fcc.id_rule import format_outgoing_message, format_standalone_id
 from gmrs_tty.net.online import is_online
 from gmrs_tty.persistence.contacts import (
     deduplicate_ham_cross_references,
     index_contacts_by_callsign,
-    known_callsigns,
+    ordered_callsigns,
     sort_contacts,
 )
+from gmrs_tty.stt.vocab import assemble_phrases
 from gmrs_tty.persistence.json_store import load_json, save_json
+from gmrs_tty.persistence.net_sessions import save_session
 from gmrs_tty.ptt import make_ptt
 from gmrs_tty.stt.worker import ModelCache, STTWorker
 from gmrs_tty.text.callsigns import spell_digits_in_callsigns
@@ -42,11 +44,14 @@ from gmrs_tty.ui.config_dialog import ConfigDialog
 from gmrs_tty.ui.contacts_dialog import ContactsDialog
 from gmrs_tty.ui.dock_layout import CompactTitleBar
 from gmrs_tty.ui.flow_layout import FlowLayout
+from gmrs_tty.ui.calibration_dialog import CalibrationDialog
 from gmrs_tty.ui.journal_controller import JournalController
+from gmrs_tty.ui.net_stats_dialog import NetStatsDialog
 from gmrs_tty.ui.pending_station_manager import PendingStationManager
 from gmrs_tty.ui.quick_messages_dialog import QuickMessagesDialog
 from gmrs_tty.ui.rx_session import RXSession
 from gmrs_tty.ui.spectro_manager import SpectrometerManager
+from gmrs_tty.ui.spectrogram_widget import SpectrogramWidget
 from gmrs_tty.ui.touch_view import TouchView
 
 PENDING_PILL_MAX_ROWS = 3
@@ -69,7 +74,7 @@ THEME_GLYPH_TO_DARK = "\U0001F319"   # 🌙 crescent moon
 THEME_GLYPH_TO_LIGHT = "☀️"  # ☀️ sun
 
 TOUCH_GLYPH_ENTER = "⊞"   # ⊞ — click to enter touch mode
-TOUCH_GLYPH_EXIT  = "⊟"   # ⊟ — click to exit touch mode
+TOUCH_GLYPH_EXIT = "⊟"    # ⊟ — click to exit touch mode
 
 
 class _DualChatProxy:
@@ -99,6 +104,13 @@ class _DualChatProxy:
         sb = self._block_map.get(block)
         if sb is not None:
             self._secondary.append_to_block(sb, text, color=color)
+        return result
+
+    def replace_block(self, block, html, color="black"):
+        result = self._primary.replace_block(block, html, color=color)
+        sb = self._block_map.get(block)
+        if sb is not None:
+            self._secondary.replace_block(sb, html, color=color)
         return result
 
     def clear(self):
@@ -159,6 +171,7 @@ class MainWindow(QMainWindow):
         # cheap and doesn't require a layout rebuild.
         self.attendance_enabled = self.config.attendance_enabled
         self.attendance_panel = None
+        self._listen_started_at = None
         # Set True while we programmatically toggle dock visibility so the
         # dock's visibilityChanged signal doesn't mistake our own hide
         # (FRS-mode, layout reset, restore-from-saved) for a user click on
@@ -691,6 +704,7 @@ class MainWindow(QMainWindow):
         is fully opt-in — when disabled the panel exists but is hidden
         and never receives ``record`` calls."""
         self.attendance_panel = AttendancePanel(self)
+        self.attendance_panel.save_session_requested.connect(self._save_net_session)
 
         dock = QDockWidget("Callsigns Detected", self)
         dock.setObjectName(dock_layout.DOCK_ATTENDANCE)
@@ -789,6 +803,24 @@ class MainWindow(QMainWindow):
         self.id_btn.clicked.connect(self.transmit_id_only)
         row.addWidget(self.id_btn)
 
+        # Kill switch for a runaway transmission. Hidden while idle so the
+        # row stays uncluttered; appears the moment a TX starts. Esc is the
+        # conventional "stop" key and can't collide with typing because the
+        # shortcut only exists while the button is visible.
+        self.abort_tx_btn = QPushButton("&Abort TX", content)
+        self.abort_tx_btn.setToolTip(
+            "Stop the in-progress transmission immediately and release PTT (Esc)"
+        )
+        self.abort_tx_btn.setAccessibleName("Abort transmission")
+        self.abort_tx_btn.setAccessibleDescription(
+            "Immediately stops the transmission in progress and releases "
+            "the push-to-talk. Only available while transmitting."
+        )
+        self.abort_tx_btn.setShortcut(QKeySequence(Qt.Key.Key_Escape))
+        self.abort_tx_btn.setVisible(False)
+        self.abort_tx_btn.clicked.connect(self.tx.abort_tx)
+        row.addWidget(self.abort_tx_btn)
+
         # Explicit tab order so keyboard users get a predictable traversal:
         # Listen (above chat) → target → message → Transmit → This is.
         # setTabOrder is window-level so the central-widget Listen button
@@ -797,6 +829,7 @@ class MainWindow(QMainWindow):
         self.setTabOrder(self.target_dropdown, self.message_input)
         self.setTabOrder(self.message_input, self.transmit_btn)
         self.setTabOrder(self.transmit_btn, self.id_btn)
+        self.setTabOrder(self.id_btn, self.abort_tx_btn)
 
         dock = QDockWidget("Transmit", self)
         dock.setObjectName(dock_layout.DOCK_TRANSMIT)
@@ -1023,6 +1056,24 @@ class MainWindow(QMainWindow):
         )
         view_journals_action.triggered.connect(self.journal_controller.open_dialog)
         tools_menu.addAction(view_journals_action)
+
+        net_stats_action = QAction("&Net Attendance History…", self)
+        net_stats_action.setStatusTip(
+            "Browse saved net sessions, attendance statistics, and CSV exports."
+        )
+        net_stats_action.triggered.connect(self.open_net_stats_dialog)
+        tools_menu.addAction(net_stats_action)
+
+        calibrate_action = QAction("Calibrate S&TT…", self)
+        calibrate_action.setStatusTip(
+            "Record a reference reading off the air and sweep model / gain / "
+            "noise-profile combinations to find the most accurate settings. "
+            "Requires Listen to be active."
+        )
+        calibrate_action.setEnabled(False)  # requires a running Listen session
+        calibrate_action.triggered.connect(self.open_calibration_dialog)
+        tools_menu.addAction(calibrate_action)
+        self._calibrate_action = calibrate_action
 
         tools_menu.addSeparator()
 
@@ -1543,6 +1594,7 @@ class MainWindow(QMainWindow):
 
     def _on_tx_busy_changed(self, busy: bool) -> None:
         self._monitor.mute(busy)
+        self.abort_tx_btn.setVisible(busy)
         self._refresh_tx_enabled()
 
     def _refresh_tx_enabled(self):
@@ -1602,6 +1654,16 @@ class MainWindow(QMainWindow):
             voice_path=self.config.voice,
             length_scale=self.config.tts_length_scale,
             output_device=self.config.output_device,
+            tx_conditioning=self.config.tx_conditioning,
+            vox_primer_ms=(
+                self.config.vox_primer_ms if self.config.vox_primer_enabled else 0.0
+            ),
+            vox_primer_word=(
+                self.config.vox_primer_word
+                if self.config.vox_primer_word_enabled else ""
+            ),
+            synthesis_timeout_s=self.config.tx_synthesis_timeout_seconds,
+            max_tx_s=self.config.tx_max_duration_seconds,
         )
 
     def _on_attendance_toggle(self, checked):
@@ -1727,6 +1789,24 @@ class MainWindow(QMainWindow):
         self.touch_view.chat_display.rescan_all_blocks()
         if self.attendance_panel is not None:
             self.attendance_panel.refresh(self.contacts)
+        # Keep the Whisper vocabulary bias in step with contacts so a
+        # newly saved callsign is recognized without restarting Listen.
+        if self.stt_worker is not None:
+            self.stt_worker.update_phrases(self._assemble_stt_phrases())
+
+    def _assemble_stt_phrases(self):
+        """Assemble the full STT bias list (curated vocab + saved phrases +
+        contact callsigns) ordered lowest-priority-first. Shared by worker
+        construction and live rebuilds on contact changes."""
+        callsigns = (
+            [] if self._service_mode() == SERVICE_FRS
+            else ordered_callsigns(self.contacts)
+        )
+        return assemble_phrases(
+            callsigns,
+            self.config.saved_phrases,
+            max_callsigns=self.config.stt_vocab_max_callsigns,
+        )
 
     def toggle_listening(self, on):
         if on:
@@ -1746,13 +1826,23 @@ class MainWindow(QMainWindow):
             vad_threshold=self.config.vad_threshold,
             model_cache=self._stt_model_cache,
             system_monitor_sink=self.config.system_monitor_sink,
+            saved_phrases=self._assemble_stt_phrases(),
+            debug_capture=self.config.stt_debug_capture,
+            debug_dir=self.config.stt_debug_dir,
+            gain_mode=self.config.stt_gain_mode,
+            noise_profile=self.config.stt_noise_profile,
+            whisper_model_final=self.config.whisper_model_final,
+            final_max_s=self.config.stt_final_max_s,
+            stt_final_device=self.config.stt_final_device,
             parent=self,
         )
         self.stt_worker.transcribed_segment.connect(self.on_transcription_segment)
         self.stt_worker.error.connect(self.on_stt_error)
         self.stt_worker.status.connect(self.on_stt_status)
         self.stt_worker.audio_level.connect(self.audio_level_meter.setValue)
+        self._listen_started_at = time.time()
         self.stt_worker.start()
+        self._calibrate_action.setEnabled(True)
         # Bring the waterfall online too if the operator has it enabled.
         # Done after stt_worker.start() so the audio_chunk signal already
         # exists by the time we connect it through spectro_manager.start().
@@ -1829,6 +1919,54 @@ class MainWindow(QMainWindow):
         )
         self.touch_view.sync_listen_state(False, "Listen")
         self.touch_view.sync_monitor_state(False, False)
+        self._calibrate_action.setEnabled(False)
+        # Auto-save the session's attendance roster before the next Listen
+        # cycle can clear it. Config-gated; empty sessions are never stored.
+        if self.config.attendance_autosave_sessions:
+            self._save_net_session(quiet=True)
+        self._listen_started_at = None
+
+    def _save_net_session(self, quiet: bool = False) -> None:
+        """Store the current attendance grid as a net session record.
+
+        ``quiet`` suppresses the "nothing to save" notice for the
+        auto-save path, which legitimately fires on silent sessions.
+        """
+        rows = self.attendance_panel.rows() if self.attendance_panel else []
+        if not rows:
+            if not quiet:
+                self.statusBar().showMessage(
+                    "No callsigns detected this session — nothing to save", 4000
+                )
+            return
+        started = self._listen_started_at or time.time()
+        ended = time.time()
+        try:
+            path = save_session(started, ended, int(ended - started), rows)
+        except OSError as exc:
+            self.statusBar().showMessage(f"Session save failed: {exc}", 5000)
+            return
+        self.statusBar().showMessage(f"Session saved to {path}", 5000)
+
+    def open_net_stats_dialog(self):
+        # Modeless, so nothing here holds a reference — let Qt own the
+        # lifetime and delete the widget on close rather than relying on the
+        # C++ object outliving the local name.
+        dlg = NetStatsDialog(self.contacts, parent=self)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dlg.show()
+
+    def open_calibration_dialog(self):
+        """STT calibration wizard. Requires a running Listen session — the
+        capture taps the live worker's raw audio_chunk fan-out."""
+        if self.stt_worker is None or not self.stt_worker.isRunning():
+            self.statusBar().showMessage(
+                "Start Listen before calibrating — calibration records "
+                "from the live audio stream", 5000
+            )
+            return
+        dlg = CalibrationDialog(self.stt_worker, self.config, parent=self)
+        dlg.exec()
 
     def _format_timestamp(self, now=None):
         """Render an HH:MM:SS clock string honoring the configured time_format
@@ -1849,8 +1987,10 @@ class MainWindow(QMainWindow):
             filter_fn=lambda t: mask_profanity(t) if self.config.filter_profanity else t,
         )
 
-    def on_transcription_segment(self, uid, text, is_final):
-        self._rx_session.receive(uid, text, is_final, color=theme.palette().rx)
+    def on_transcription_segment(self, uid, text, is_final, replace=False):
+        self._rx_session.receive(
+            uid, text, is_final, color=theme.palette().rx, replace=replace
+        )
 
     def on_stt_error(self, msg):
         self.append_to_chat(f"<i>STT Error: {msg}</i>", color=theme.palette().error)

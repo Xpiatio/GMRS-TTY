@@ -1,0 +1,370 @@
+"""Offline STT evaluation: replay WAV files through the production RX
+pipeline and score word-error-rate against hand-written references.
+
+The pipeline layer drives the *same* classes the live worker uses
+(SquelchDetector, SpeechSegmenter, preprocess_segment, WhisperTranscriber)
+with individual stages toggleable, so A/B comparisons measure production
+behavior rather than a reimplementation.
+
+Usage (from the repo root):
+
+    python -m gmrs_tty.tools.eval_stt --audio debug/stt --model small.en
+    python -m gmrs_tty.tools.eval_stt --audio samples/ --no-denoise --json
+
+Each WAV needs a reference transcript: either ``<stem>.txt`` beside the
+file, or ``reference.txt`` in the same directory (the debug-capture
+utterance layout). See docs/stt-eval.md for the capture workflow.
+"""
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import json
+import sys
+import wave
+from pathlib import Path
+
+import numpy as np
+
+from gmrs_tty.audio.dsp import lowpass, make_bandpass_sos, make_lowpass_sos
+from gmrs_tty.audio.squelch import SquelchDetector
+from gmrs_tty.constants import GAIN_MODES
+from gmrs_tty.stt.preprocess import preprocess_segment
+from gmrs_tty.stt.segmenter import SpeechSegmenter
+from gmrs_tty.stt.wer import normalize_text, score  # noqa: F401 — normalize_text re-exported for tests/callers
+from gmrs_tty.stt.worker import STTWorker
+
+
+@dataclasses.dataclass
+class EvalPipelineConfig:
+    """Pipeline knobs. Defaults mirror the production STTWorker constants so
+    a bare config reproduces live behavior exactly."""
+
+    sample_rate: int = STTWorker.SAMPLE_RATE
+    chunk_samples: int = STTWorker.CHUNK_SAMPLES
+    lowpass_enabled: bool = True
+    denoise_enabled: bool = True
+    gain_mode: str = "agc"
+    prop_decrease: float = 0.7
+    squelch_open_threshold: float = STTWorker.SQUELCH_OPEN_THRESHOLD
+    squelch_adaptive: bool = False
+    min_speech_s: float = STTWorker.MIN_SPEECH_DURATION_S
+    # Squelch-derived stationary noise profile for the denoise stage.
+    noise_profile: bool = False
+    pre_roll_s: float = STTWorker.PRE_BUFFER_CHUNKS * STTWorker.CHUNK_SAMPLES / STTWorker.SAMPLE_RATE
+    rolling_segment_s: float = STTWorker.ROLLING_SEGMENT_S
+    cut_window_s: float = STTWorker.CUT_WINDOW_S
+    # Zero-padding appended after the file so VAD can emit its end event.
+    flush_silence_s: float = 2.0
+
+
+def run_pipeline(
+    audio: np.ndarray, cfg: EvalPipelineConfig, transcriber, vad_iter,
+    noise_clip: "np.ndarray | None" = None,
+) -> list[dict]:
+    """Feed one audio buffer through segmentation + DSP + transcription.
+
+    Returns one dict per finalized utterance: {"utterance_id", "text"} where
+    text follows the server's accumulation rule (partials joined by spaces,
+    final appended). With ``cfg.noise_profile`` on, each dict also carries
+    ``noise_clip_used`` and ``noise_clip`` (an explicit captured clip, e.g. a
+    debug-capture ``noise.wav``) overrides live derivation for exact replay.
+    """
+    sr = cfg.sample_rate
+    chunk_n = cfg.chunk_samples
+
+    def to_chunks(seconds):
+        return int(seconds * sr / chunk_n)
+
+    squelch = SquelchDetector(
+        open_threshold=cfg.squelch_open_threshold,
+        open_hold_chunks=STTWorker.SQUELCH_OPEN_HOLD_CHUNKS,
+        close_hold_chunks=STTWorker.SQUELCH_CLOSE_HOLD_CHUNKS,
+        adaptive=cfg.squelch_adaptive,
+    )
+    segmenter = SpeechSegmenter(
+        vad_iter,
+        squelch,
+        sample_rate=sr,
+        rolling_target_chunks=to_chunks(cfg.rolling_segment_s),
+        cut_window_chunks=to_chunks(cfg.cut_window_s),
+        pre_buffer_chunks=max(1, to_chunks(cfg.pre_roll_s)),
+        squelch_buffer_max_chunks=STTWorker.SQUELCH_BUFFER_MAX_CHUNKS,
+        min_speech_duration_s=cfg.min_speech_s,
+        silence_reset_chunks=to_chunks(STTWorker.SILENCE_RESET_S),
+        noise_profile_chunks=(
+            to_chunks(STTWorker.NOISE_BUFFER_S) if cfg.noise_profile else 0
+        ),
+        noise_min_samples=int(STTWorker.NOISE_MIN_S * sr),
+    )
+    bandpass_sos = make_bandpass_sos(sr, STTWorker.BANDPASS_LOW_HZ, STTWorker.BANDPASS_HIGH_HZ)
+    lowpass_sos = make_lowpass_sos(sr, cutoff_hz=2700) if cfg.lowpass_enabled else None
+
+    audio = np.asarray(audio, dtype=np.float32)
+    flush = np.zeros(int(cfg.flush_silence_s * sr), dtype=np.float32)
+    stream = np.concatenate([audio, flush])
+    pad = (-len(stream)) % chunk_n
+    if pad:
+        stream = np.concatenate([stream, np.zeros(pad, dtype=np.float32)])
+
+    partial_texts: dict[int, list[str]] = {}
+    clip_used: dict[int, bool] = {}
+    results: list[dict] = []
+
+    def _result(uid: int, text: str) -> dict:
+        out = {"utterance_id": uid, "text": text}
+        if cfg.noise_profile:
+            out["noise_clip_used"] = clip_used.get(uid, False)
+        return out
+
+    for start in range(0, len(stream), chunk_n):
+        chunk = stream[start:start + chunk_n]
+        chunk_for_vad = lowpass(chunk, lowpass_sos) if lowpass_sos is not None else chunk
+        peak = float(np.max(np.abs(chunk_for_vad))) if chunk_for_vad.size else 0.0
+        segments, _events = segmenter.feed(chunk_for_vad, peak)
+        for uid, seg_audio, is_final in segments:
+            if cfg.noise_profile:
+                clip = noise_clip if noise_clip is not None else segmenter.utterance_noise_clip
+            else:
+                clip = None
+            clip_used.setdefault(uid, clip is not None)
+            processed = preprocess_segment(
+                seg_audio, sr, bandpass_sos,
+                denoise_enabled=cfg.denoise_enabled,
+                prop_decrease=cfg.prop_decrease,
+                gain_mode=cfg.gain_mode,
+                noise_clip=clip,
+            )
+            text = transcriber.transcribe(processed)
+            if not text:
+                continue
+            if is_final:
+                pieces = partial_texts.pop(uid, [])
+                pieces.append(text)
+                results.append(_result(uid, " ".join(pieces).strip()))
+            else:
+                partial_texts.setdefault(uid, []).append(text)
+    # Utterances whose final transcribed empty still count: surface partials.
+    for uid, pieces in partial_texts.items():
+        if pieces:
+            results.append(_result(uid, " ".join(pieces).strip()))
+    return results
+
+
+def find_reference(wav_path: Path) -> str | None:
+    """Locate the reference transcript for a WAV: ``<stem>.txt`` sibling, or
+    ``reference.txt`` in the same directory (debug-capture layout)."""
+    sibling = wav_path.with_suffix(".txt")
+    if sibling.exists():
+        return sibling.read_text().strip()
+    ref = wav_path.parent / "reference.txt"
+    if ref.exists():
+        return ref.read_text().strip()
+    return None
+
+
+def _read_wav(path: Path, target_sr: int) -> np.ndarray:
+    with wave.open(str(path), "rb") as w:
+        sr = w.getframerate()
+        n_ch = w.getnchannels()
+        width = w.getsampwidth()
+        frames = w.readframes(w.getnframes())
+    if width != 2:
+        raise ValueError(f"{path}: only 16-bit PCM WAV supported (got {width * 8}-bit)")
+    audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32767.0
+    if n_ch > 1:
+        audio = audio.reshape(-1, n_ch).mean(axis=1)
+    if sr != target_sr:
+        from scipy.signal import resample_poly
+        from math import gcd
+        g = gcd(sr, target_sr)
+        audio = resample_poly(audio, target_sr // g, sr // g).astype(np.float32)
+    return audio
+
+
+def _load_noise_override(wav_path: Path, target_sr: int) -> "np.ndarray | None":
+    """Load a debug-capture ``noise.wav`` beside the WAV, if present.
+
+    An explicit captured clip replays the live worker's exact denoise input.
+    Missing file → None (the pipeline then derives a clip live from closed-
+    squelch spans, or runs without one — never from pre-roll, which is
+    carrier-open audio and would over-subtract speech).
+    """
+    sibling = wav_path.parent / "noise.wav"
+    if sibling.exists():
+        return _read_wav(sibling, target_sr)
+    return None
+
+
+def build_decode_options(args) -> dict | None:
+    """Collect only the decode-tuning flags the user actually passed into a
+    dict for WhisperTranscriber's ``decode_options`` kwarg. Flags left at
+    their argparse default of None must not appear, so an eval run with none
+    of these flags set reproduces production decode kwargs byte-for-byte."""
+    opts = {}
+    if args.repetition_penalty is not None:
+        opts["repetition_penalty"] = args.repetition_penalty
+    if args.no_repeat_ngram_size is not None:
+        opts["no_repeat_ngram_size"] = args.no_repeat_ngram_size
+    if args.beam_size is not None:
+        opts["beam_size"] = args.beam_size
+    if args.hotwords is not None:
+        opts["hotwords"] = args.hotwords
+    return opts or None
+
+
+def _discover_wavs(root: Path) -> list[Path]:
+    if root.is_file():
+        return [root]
+    # Debug-capture utterance dirs are evaluated on their raw (pre-DSP) audio.
+    wavs = sorted(root.rglob("raw.wav"))
+    if not wavs:
+        wavs = sorted(p for p in root.rglob("*.wav"))
+    return wavs
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--audio", required=True, help="WAV file, directory of WAVs, or debug-capture directory")
+    ap.add_argument("--model", default="small.en", help="Whisper model for transcription")
+    ap.add_argument("--no-denoise", action="store_true")
+    ap.add_argument("--gain-mode", choices=list(GAIN_MODES), default="agc",
+                    help="gain stage after bandpass/denoise")
+    ap.add_argument("--no-agc", action="store_true",
+                    help="deprecated alias for --gain-mode off")
+    ap.add_argument("--no-lowpass", action="store_true")
+    ap.add_argument("--prop-decrease", type=float, default=0.7)
+    ap.add_argument("--vad-threshold", type=float, default=0.5)
+    ap.add_argument("--squelch-threshold", type=float, default=STTWorker.SQUELCH_OPEN_THRESHOLD)
+    ap.add_argument("--adaptive-squelch", action="store_true")
+    ap.add_argument("--min-speech-s", type=float, default=STTWorker.MIN_SPEECH_DURATION_S)
+    ap.add_argument("--repetition-penalty", type=float, default=None,
+                    help="faster-whisper decode option; penalizes repeated tokens")
+    ap.add_argument("--no-repeat-ngram-size", type=int, default=None,
+                    help="faster-whisper decode option; blocks repeated n-grams of this size")
+    ap.add_argument("--beam-size", type=int, default=None,
+                    help="faster-whisper decode option; overrides the default beam width (5)")
+    ap.add_argument("--hotwords", type=str, default=None,
+                    help="faster-whisper decode option; biases decoding toward these words")
+    ap.add_argument("--word-confidence-min", type=float, default=None,
+                    help="drop words below this per-word confidence instead of trusting segment text")
+    ap.add_argument("--prompt-style", choices=["list", "transcript"], default="list",
+                    help="initial_prompt rendering: 'list' (production default) or 'transcript'")
+    ap.add_argument("--vad-min-silence-ms", type=int, default=500,
+                    help="Silero VAD min_silence_duration_ms (default: 500)")
+    ap.add_argument("--vad-speech-pad-ms", type=int, default=200,
+                    help="Silero VAD speech_pad_ms (default: 200)")
+    ap.add_argument("--noise-profile", choices=["off", "auto"], default="off",
+                    help="stationary denoise from squelch-closed noise floor: "
+                         "'auto' replays a captured noise.wav beside each file, "
+                         "else derives one live from closed-squelch spans")
+    ap.add_argument("--json", action="store_true", help="machine-readable output")
+    args = ap.parse_args(argv)
+
+    cfg = EvalPipelineConfig(
+        lowpass_enabled=not args.no_lowpass,
+        denoise_enabled=not args.no_denoise,
+        gain_mode="off" if args.no_agc else args.gain_mode,
+        prop_decrease=args.prop_decrease,
+        squelch_open_threshold=args.squelch_threshold,
+        squelch_adaptive=args.adaptive_squelch,
+        min_speech_s=args.min_speech_s,
+        noise_profile=args.noise_profile == "auto",
+    )
+
+    decode_options = build_decode_options(args)
+
+    from gmrs_tty.audio.vad import load_vad_model, make_vad_iterator
+    from gmrs_tty.stt.transcriber import WhisperTranscriber
+
+    transcriber = WhisperTranscriber.load(
+        str(Path(STTWorker.MODELS_STT_DIR) / args.model),
+        decode_options=decode_options,
+        word_confidence_min=args.word_confidence_min,
+        prompt_style=args.prompt_style,
+    )
+    vad_model = load_vad_model()
+
+    wavs = _discover_wavs(Path(args.audio))
+    if not wavs:
+        print(f"No WAV files found under {args.audio}", file=sys.stderr)
+        return 2
+
+    per_file = []
+    refs, hyps = [], []
+    skipped = 0
+    noise_fallbacks = 0
+    for wav in wavs:
+        reference = find_reference(wav)
+        if reference is None:
+            skipped += 1
+            continue
+        audio = _read_wav(wav, cfg.sample_rate)
+        noise_override = (
+            _load_noise_override(wav, cfg.sample_rate) if cfg.noise_profile else None
+        )
+        # Fresh VAD state per file so utterances don't bleed across files.
+        vad_iter = make_vad_iterator(
+            vad_model,
+            sample_rate=cfg.sample_rate,
+            threshold=args.vad_threshold,
+            min_silence_duration_ms=args.vad_min_silence_ms,
+            speech_pad_ms=args.vad_speech_pad_ms,
+        )
+        results = run_pipeline(audio, cfg, transcriber, vad_iter, noise_clip=noise_override)
+        if cfg.noise_profile:
+            noise_fallbacks += sum(1 for r in results if not r.get("noise_clip_used"))
+        hypothesis = " ".join(r["text"] for r in results).strip()
+        file_score = score([reference], [hypothesis]) if reference else None
+        per_file.append({
+            "file": str(wav),
+            "reference": reference,
+            "hypothesis": hypothesis,
+            "wer": file_score["wer"],
+        })
+        refs.append(reference)
+        hyps.append(hypothesis)
+
+    if not refs:
+        print("No labelled files found (need <stem>.txt or reference.txt).", file=sys.stderr)
+        return 2
+
+    corpus = score(refs, hyps)
+    if args.json:
+        # Echo any non-default decode/VAD/prompt knobs so a saved run is
+        # self-describing for later A/B comparison; omitted entirely when
+        # every knob is at its default, keeping the baseline JSON unchanged.
+        config = {}
+        if decode_options:
+            config["decode_options"] = decode_options
+        if args.word_confidence_min is not None:
+            config["word_confidence_min"] = args.word_confidence_min
+        if args.prompt_style != "list":
+            config["prompt_style"] = args.prompt_style
+        if args.vad_min_silence_ms != 500:
+            config["vad_min_silence_ms"] = args.vad_min_silence_ms
+        if args.vad_speech_pad_ms != 200:
+            config["vad_speech_pad_ms"] = args.vad_speech_pad_ms
+        if args.noise_profile != "off":
+            config["noise_profile"] = args.noise_profile
+        output = {"corpus": corpus, "skipped_unlabelled": skipped, "files": per_file}
+        if args.noise_profile != "off":
+            # Utterances transcribed WITHOUT a clip (no noise.wav, no usable
+            # closed-squelch span) — shows an A/B run's real coverage.
+            output["noise_profile_fallbacks"] = noise_fallbacks
+        if config:
+            output["config"] = config
+        print(json.dumps(output, indent=2))
+    else:
+        for f in per_file:
+            print(f"{f['wer']:6.1%}  {f['file']}")
+            print(f"        ref: {f['reference']}")
+            print(f"        hyp: {f['hypothesis']}")
+        print(f"\nCorpus WER: {corpus['wer']:.1%} over {corpus['count']} file(s); {skipped} unlabelled skipped")
+        if args.noise_profile != "off":
+            print(f"Noise profile: {noise_fallbacks} utterance(s) fell back to no-clip denoise")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

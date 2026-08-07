@@ -3,8 +3,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-_log = logging.getLogger(__name__)
-
 from PySide6.QtCore import QObject, Qt
 from PySide6.QtWidgets import (
     QDockWidget, QFrame, QHBoxLayout, QMenu, QPushButton, QScrollArea, QWidget,
@@ -27,6 +25,8 @@ from gmrs_tty.ui.flow_layout import FlowLayout
 
 if TYPE_CHECKING:
     from gmrs_tty.ui.main_window import MainWindow
+
+_log = logging.getLogger(__name__)
 
 PENDING_PILL_MAX_ROWS = 3
 _MAX_PENDING_LOOKUPS = 50

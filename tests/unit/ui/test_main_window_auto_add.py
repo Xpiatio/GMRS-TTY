@@ -66,6 +66,17 @@ def _patch_save():
     return patch.object(psm_mod, "save_json", return_value=None)
 
 
+def _patch_online(online=True):
+    """Pin the connectivity check the scan consults.
+
+    ``is_online()`` probes the crossref host over the network, so a test that
+    leaves it unpatched passes or fails with the host's internet access — it
+    reports False on a sandboxed CI runner and the auto-add path never runs.
+    """
+    import gmrs_tty.ui.pending_station_manager as psm_mod
+    return patch.object(psm_mod, "is_online", return_value=online)
+
+
 class _SyncWorker:
     """Stand-in for ``CallsignLookupWorker`` that runs synchronously inside
     ``start()``. Lets us assert the full auto-add flow without spinning up a
@@ -156,7 +167,7 @@ class TestAutoAddVerified:
         w = _make_window(qapp, [{"callsign": "All", "name": "Everyone"}])
         try:
             ctx, factory = _install_sync_worker(_verified_result())
-            with ctx, _patch_save():
+            with ctx, _patch_save(), _patch_online():
                 w.pending_manager.scan_for_unknown_stations("This is WSLZ233 Benjamin from Jenison")
             # The synchronous worker fired the verified result inline, so the
             # pending pill should have been replaced by a real contact row.
@@ -181,7 +192,7 @@ class TestAutoAddVerified:
         w = _make_window(qapp, [{"callsign": "All", "name": "Everyone"}])
         try:
             ctx, _factory = _install_sync_worker(_verified_result())
-            with ctx, _patch_save():
+            with ctx, _patch_save(), _patch_online():
                 # No 'from <city>' clause — extract_name_location returns ''
                 # for location, so the FCC city is the only source.
                 w.pending_manager.scan_for_unknown_stations("This is WSLZ233 Benjamin here")
@@ -212,7 +223,7 @@ class TestAutoAddNoOp:
         w = _make_window(qapp, [{"callsign": "All", "name": "Everyone"}])
         try:
             ctx, factory = _install_sync_worker(_verified_result())
-            with ctx, _patch_save():
+            with ctx, _patch_save(), _patch_online():
                 # Just the callsign, no capitalized word after it.
                 w.pending_manager.scan_for_unknown_stations("WSLZ233 ten four")
             assert "WSLZ233" in w.pending_manager.buttons
@@ -232,7 +243,7 @@ class TestAutoAddNoOp:
                 license_active=True,
             )
             ctx, _factory = _install_sync_worker(mismatch)
-            with ctx, _patch_save():
+            with ctx, _patch_save(), _patch_online():
                 w.pending_manager.scan_for_unknown_stations("This is WSLZ233 Eliza here")
             assert "WSLZ233" in w.pending_manager.buttons
             assert not any(c.get("callsign") == "WSLZ233" for c in w.contacts)
@@ -245,7 +256,7 @@ class TestAutoAddNoOp:
         ])
         try:
             ctx, factory = _install_sync_worker(_verified_result())
-            with ctx, _patch_save():
+            with ctx, _patch_save(), _patch_online():
                 w.pending_manager.scan_for_unknown_stations("This is WSLZ233 Benjamin here")
             assert factory.factory_calls == []
         finally:
@@ -266,7 +277,7 @@ class TestAutoAddNoOp:
                 license_active=True,
             )
             ctx, factory = _install_sync_worker(mismatch)
-            with ctx, _patch_save():
+            with ctx, _patch_save(), _patch_online():
                 w.pending_manager.scan_for_unknown_stations("This is WSLZ233 Benjamin here")
                 w.pending_manager.scan_for_unknown_stations("WSLZ233 Benjamin again")
             assert len(factory.factory_calls) == 1
@@ -288,7 +299,7 @@ class TestPendingLookupCap:
             }
 
             ctx, factory = _install_sync_worker(_verified_result())
-            with ctx, _patch_save():
+            with ctx, _patch_save(), _patch_online():
                 w.pending_manager._start_callsign_lookup("WSLZ233", "Benjamin", "Jenison")
 
             assert factory.factory_calls == [], (

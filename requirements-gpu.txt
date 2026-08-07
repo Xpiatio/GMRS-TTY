@@ -1,0 +1,14 @@
+# Optional GPU acceleration for the two-tier STT final pass.
+#
+# NOT required for normal operation and never installed by the .deb — the
+# base app is CPU-only. Install into the app's venv only if you have a
+# supported GPU and want the large-model final pass to run on it:
+#
+#   ROCm (AMD):  pip install torch --index-url https://download.pytorch.org/whl/rocm6.2
+#   CUDA (NVIDIA): pip install torch --index-url https://download.pytorch.org/whl/cu124
+#
+# then: pip install -r requirements-gpu.txt
+# Floor pins only — the exact torch build comes from the index-url above, and
+# pinning it here would fight the ROCm/CUDA wheel selection.
+torch>=2.2
+transformers>=4.40

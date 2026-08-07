@@ -55,10 +55,24 @@ VOICE_TEST_TEXT = "GMRS-TTY voice test. Radio check, one two three."
 DEFAULT_OPERATOR_NAME = "Default User"
 UNSET_FIELD = "N/A"
 
+# Gain stage applied to each segment before transcription: dynamic AGC,
+# one-shot RMS normalize, or no gain.
+GAIN_MODES: tuple[str, ...] = ("agc", "rms", "off")
+
+# Whisper variants the config UI may select; must match bootstrap_models.py.
+VALID_WHISPER_MODELS: frozenset[str] = frozenset({
+    "tiny.en", "base.en", "small.en", "medium.en", "large-v3", "distil-large-v3",
+})
+# Final-pass-only additions: turbo is too slow for the streaming slices, so
+# it must never be selectable as the fast model; "auto" resolves to the best
+# staged model at worker construction.
+VALID_FINAL_MODELS: frozenset[str] = VALID_WHISPER_MODELS | {"large-v3-turbo", "auto"}
+
 
 def validate_voice_path(voice_path: str) -> bool:
     """Return True iff ``voice_path`` is non-empty and points to an existing file."""
     return bool(voice_path) and os.path.isfile(voice_path)
+
 
 # Common Whisper hallucinations on silence/noise — drop these transcripts.
 HALLUCINATIONS: frozenset[str] = frozenset({

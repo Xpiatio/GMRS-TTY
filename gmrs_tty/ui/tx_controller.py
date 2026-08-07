@@ -12,15 +12,16 @@ from __future__ import annotations
 import logging
 
 from piper.voice import PiperVoice
-
-_log = logging.getLogger(__name__)
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from gmrs_tty.audio.playback import AudioPlayerThread
+from gmrs_tty.text.primer import prepend_primer_word
 from gmrs_tty.text.shorthand import expand_tty_abbreviations
 from gmrs_tty.tts.synthesizer import TTSSynthesisThread
 from gmrs_tty.constants import VOICE_TEST_TEXT, validate_voice_path
 from gmrs_tty.ui import theme
+
+_log = logging.getLogger(__name__)
 
 
 class TXController(QObject):
@@ -49,6 +50,23 @@ class TXController(QObject):
         self._output_device = -1  # captured from config at synthesize time
         self._test_tts_thread: TTSSynthesisThread | None = None
         self._test_audio_thread: AudioPlayerThread | None = None
+        # Generation counter guards against a timed-out synthesis delivering
+        # late: a QThread running Piper can't be safely killed, so on timeout
+        # the generation is bumped and the stale ready/error result discarded.
+        self._synth_generation = 0
+        # Synthesis timeout — fires only while waiting on Piper; PTT is
+        # never keyed on this path.
+        self._synth_timer = QTimer(self)
+        self._synth_timer.setSingleShot(True)
+        self._synth_timer.timeout.connect(self._on_synthesis_timeout)
+        self._synth_timeout_s = 0.0
+        # Max-TX watchdog — armed at PTT key, hard-stops playback so a
+        # runaway transmission can't hold the channel (or violate the
+        # radio's own TX timer) indefinitely.
+        self._watchdog_timer = QTimer(self)
+        self._watchdog_timer.setSingleShot(True)
+        self._watchdog_timer.timeout.connect(self._on_watchdog_fired)
+        self._max_tx_s = 0.0
 
     # ------------------------------------------------------------------
     # Public interface
@@ -65,18 +83,32 @@ class TXController(QObject):
         voice_path: str,
         length_scale: float,
         output_device,
+        tx_conditioning: bool = False,
+        vox_primer_ms: float = 0.0,
+        vox_primer_word: str = "",
+        synthesis_timeout_s: float = 0.0,
+        max_tx_s: float = 0.0,
     ) -> None:
         """Start TTS synthesis. Emits ``tx_busy_changed(True)`` immediately.
 
         ``voice_path``  — absolute path to the ``.onnx`` Piper model file.
         ``length_scale`` — Piper synthesis speed (1.0 = native, >1 = slower).
         ``output_device`` — PortAudio device index (or -1 for system default).
+        ``tx_conditioning`` — band-limit/compress/normalize speech for radio.
+        ``vox_primer_ms`` — VOX priming tone length (0 disables).
+        ``vox_primer_word`` — spoken priming word prefixed to the text ("" disables).
+        ``synthesis_timeout_s`` — abort if Piper takes longer (0 disables);
+        PTT is never keyed on this path.
+        ``max_tx_s`` — hard cap on keyed transmission length (0 disables).
         """
         if self._tx_busy:
             return
         tts_text = expand_tty_abbreviations(tts_text)
+        tts_text = prepend_primer_word(tts_text, vox_primer_word)
         self._set_busy(True)
         self._output_device = output_device
+        self._synth_timeout_s = float(synthesis_timeout_s)
+        self._max_tx_s = float(max_tx_s)
 
         if not validate_voice_path(voice_path):
             self.chat_message.emit(
@@ -103,11 +135,35 @@ class TXController(QObject):
             voice, tts_text,
             self.ptt.lead_in_seconds, self.ptt.tail_seconds,
             length_scale=length_scale,
+            condition=tx_conditioning,
+            vox_primer_ms=vox_primer_ms,
             parent=self,
         )
-        self._tts_thread.ready.connect(self._on_tts_synthesized)
-        self._tts_thread.error.connect(self._on_tts_synthesis_error)
+        generation = self._synth_generation
+        self._tts_thread.ready.connect(
+            lambda audio, sr: self._on_tts_synthesized(audio, sr, generation)
+        )
+        self._tts_thread.error.connect(
+            lambda msg: self._on_tts_synthesis_error(msg, generation)
+        )
+        if self._synth_timeout_s > 0:
+            self._synth_timer.start(int(self._synth_timeout_s * 1000))
         self._tts_thread.start()
+
+    def abort_tx(self) -> None:
+        """Operator kill switch. Hard-stops an in-progress transmission:
+        during playback the audio device is stopped (PTT unkeys via the
+        normal finished path); during synthesis the pending result is
+        discarded and PTT is never keyed. No-op when idle."""
+        if not self._tx_busy:
+            return
+        if self._audio_thread is not None and self._audio_thread.isRunning():
+            self.chat_message.emit(
+                "<i>TX aborted by operator.</i>", theme.palette().error,
+            )
+            self._stop_playback()
+        else:
+            self._abandon_synthesis("<i>TX aborted by operator.</i>")
 
     def test_voice(self, voice_path: str, length_scale: float, output_device: int, done_cb) -> None:
         """Synthesize a short test sample and play it back (no PTT keying).
@@ -164,10 +220,68 @@ class TXController(QObject):
         self._tx_busy = busy
         self.tx_busy_changed.emit(busy)
 
-    def _on_tts_synthesized(self, audio, sample_rate: int) -> None:
+    def _abandon_synthesis(self, chat_html: str) -> None:
+        """Discard the in-flight synthesis: bump the generation so its late
+        ready/error is ignored, and release the busy state. The Piper thread
+        can't be killed safely, so it is left to finish and be discarded."""
+        self._synth_generation += 1
+        self._synth_timer.stop()
+        self.chat_message.emit(chat_html, theme.palette().error)
+        self._set_busy(False)
+
+    def _on_synthesis_timeout(self) -> None:
+        if not self._tx_busy:
+            return
+        if self._audio_thread is not None and self._audio_thread.isRunning():
+            return  # synthesis already delivered; the watchdog owns playback
+        _log.warning("TTS synthesis exceeded %.0fs — aborting TX", self._synth_timeout_s)
+        self._abandon_synthesis(
+            f"<i>TX aborted: TTS synthesis exceeded {self._synth_timeout_s:.0f}s.</i>"
+        )
+
+    def _stop_playback(self) -> None:
+        """Stop the audio device; sd.stop() unblocks sd.wait() inside
+        AudioPlayerThread.run so the normal finished path unkeys PTT.
+        sd.stop() is process-global, but TX is serialized through this
+        controller and callers gate on _tx_busy, so only our stream dies."""
+        import sounddevice as sd
+        sd.stop()
+
+    def _on_watchdog_fired(self) -> None:
+        if not self._tx_busy:
+            return
+        _log.warning("TX exceeded max duration (%.0fs) — forcing PTT unkey", self._max_tx_s)
+        self.chat_message.emit(
+            f"<i>TX aborted: exceeded {self._max_tx_s:.0f}s limit.</i>",
+            theme.palette().error,
+        )
+        self._stop_playback()
+
+    def _on_tts_synthesized(self, audio, sample_rate: int, generation: int) -> None:
+        if generation != self._synth_generation:
+            return  # abandoned by timeout or operator abort
+        self._synth_timer.stop()
         if audio is None or len(audio) == 0:
             self.chat_message.emit(
                 "<i>Warning: Piper generated no audio.</i>",
+                theme.palette().error,
+            )
+            self._set_busy(False)
+            return
+
+        # Refuse an over-long message before keying rather than aborting it
+        # mid-word: the operator gets a clear "shorten it" instead of a
+        # truncated transmission. The watchdog below stays as the backstop for
+        # playback that overruns its own predicted length.
+        duration_s = len(audio) / float(sample_rate) if sample_rate else 0.0
+        if self._max_tx_s > 0 and duration_s > self._max_tx_s:
+            _log.warning(
+                "TX cancelled: %.1fs message over the %.0fs limit",
+                duration_s, self._max_tx_s,
+            )
+            self.chat_message.emit(
+                f"<i>TX cancelled: message is {duration_s:.0f}s, over the "
+                f"{self._max_tx_s:.0f}s limit. Shorten it and try again.</i>",
                 theme.palette().error,
             )
             self._set_busy(False)
@@ -186,15 +300,21 @@ class TXController(QObject):
                 f"<i>PTT key failed: {exc}</i>",
                 theme.palette().error,
             )
+        if self._max_tx_s > 0:
+            self._watchdog_timer.start(int(self._max_tx_s * 1000))
         self._audio_thread.start()
 
-    def _on_tts_synthesis_error(self, msg: str) -> None:
+    def _on_tts_synthesis_error(self, msg: str, generation: int) -> None:
+        if generation != self._synth_generation:
+            return  # abandoned by timeout or operator abort
+        self._synth_timer.stop()
         _log.exception("TTS synthesis error: %s", msg)
         self.chat_message.emit(f"<i>TTS Error: {msg}</i>", theme.palette().error)
         self.stt_resume_requested.emit()
         self._set_busy(False)
 
     def _on_audio_finished(self) -> None:
+        self._watchdog_timer.stop()
         try:
             self.ptt.unkey()
         except Exception:
@@ -203,6 +323,7 @@ class TXController(QObject):
         self._set_busy(False)
 
     def _on_audio_error(self, error_msg: str) -> None:
+        self._watchdog_timer.stop()
         try:
             self.ptt.unkey()
         except Exception:

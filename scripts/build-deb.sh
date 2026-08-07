@@ -10,17 +10,23 @@
 #   * Whisper / Piper voice models are NOT bundled — they download on first run.
 #
 # Usage:
-#   ./scripts/build-deb.sh              # version 0.0.1
+#   ./scripts/build-deb.sh              # version from gmrs_tty/__init__.py
 #   ./scripts/build-deb.sh 0.0.2        # override version
 #
 # Re-running is safe; the build/deb/ tree is wiped first.
 
 set -euo pipefail
 
-VERSION="${1:-0.0.1}"
 ARCH="amd64"
 PKG="gmrs-tty"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Version defaults to the canonical gmrs_tty.__version__ stamp.
+VERSION="${1:-$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' "$REPO_ROOT/gmrs_tty/__init__.py")}"
+if [[ -z "$VERSION" ]]; then
+    echo "ERROR: could not read __version__ from gmrs_tty/__init__.py" >&2
+    exit 1
+fi
 STAGE="$REPO_ROOT/build/deb/${PKG}_${VERSION}_${ARCH}"
 DEB_OUT="$REPO_ROOT/build/deb/${PKG}_${VERSION}_${ARCH}.deb"
 
@@ -110,6 +116,9 @@ PY
 # ---------------------------------------------------------------------------
 # 3. Vendor Python wheels for offline install.
 #    --extra-index-url pulls the CPU build of torch instead of CUDA.
+#    requirements-gpu.txt (optional final-pass GPU extras) is deliberately
+#    NOT vendored — GPU support is a post-install `pip install -r
+#    requirements-gpu.txt` into the /opt/gmrs-tty venv.
 # ---------------------------------------------------------------------------
 echo ">>> Downloading wheels (this can take a few minutes) ..."
 "$PY" -m pip download \

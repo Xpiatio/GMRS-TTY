@@ -8,9 +8,25 @@
     "output_device": -1,
     "whisper_model": "small.en",
     "vad_threshold": 0.5,
+    "whisper_model_final": "",
+    "stt_final_device": "auto",
+    "stt_final_max_s": 60.0,
+    "stt_gain_mode": "agc",
+    "stt_noise_profile": false,
+    "saved_phrases": [],
+    "stt_vocab_max_callsigns": 15,
+    "stt_debug_capture": false,
+    "stt_debug_dir": "debug/stt",
     "ptt_mode": "manual",
     "ptt_serial_port": "",
     "ptt_serial_line": "RTS",
+    "vox_primer_enabled": false,
+    "vox_primer_ms": 300,
+    "vox_primer_word_enabled": false,
+    "vox_primer_word": "transmit",
+    "tx_conditioning": false,
+    "tx_max_duration_seconds": 60,
+    "tx_synthesis_timeout_seconds": 30,
     "filter_profanity": true,
     "fuzzy_callsign": false,
     "listen_only": false,
@@ -35,6 +51,7 @@
         "db_ceiling": -20.0
     },
     "attendance": {
-        "enabled": false
+        "enabled": false,
+        "autosave_sessions": false
     }
 }

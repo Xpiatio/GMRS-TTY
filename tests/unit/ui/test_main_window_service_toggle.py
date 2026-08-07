@@ -229,7 +229,6 @@ class TestToggleGatesDetectionAndTx:
 
 class TestTogglePersistsToConfig:
     def test_clicking_frs_writes_radio_service_to_config(self, qapp):
-        from gmrs_tty.ui import main_window as mw_mod
 
         save_capture = []
         w = _make_window(qapp, save_capture=save_capture)

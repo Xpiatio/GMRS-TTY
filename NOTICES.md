@@ -17,6 +17,8 @@ requirements and to make redistribution terms transparent.
 | faster-whisper | MIT | https://github.com/SYSTRAN/faster-whisper |
 | silero-vad | MIT | https://github.com/snakers4/silero-vad |
 | noisereduce | MIT | https://github.com/timsainb/noisereduce |
+| scipy | BSD-3-Clause | https://scipy.org/ |
+| jiwer | Apache-2.0 | https://github.com/jitsi/jiwer |
 | pyserial | BSD-3-Clause | https://github.com/pyserial/pyserial |
 
 These are installed at the user's site via `pip` and are not bundled in

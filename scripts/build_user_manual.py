@@ -29,6 +29,9 @@ from reportlab.platypus import (
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 OUTPUT_PATH = os.path.join(REPO_ROOT, "docs", "USER_MANUAL.pdf")
 
+sys.path.insert(0, REPO_ROOT)
+from gmrs_tty import __version__  # noqa: E402
+
 PRIMARY = colors.HexColor("#1D4ED8")   # TX blue
 ACCENT  = colors.HexColor("#15803D")   # RX green
 WARN    = colors.HexColor("#92400E")   # amber
@@ -277,6 +280,7 @@ def build_cover(b: Builder):
     b.add(Paragraph("GMRS-TTY", b.styles["cover_title"]))
     b.add(Paragraph("User Manual &mdash; Full Reference",
                     b.styles["cover_subtitle"]))
+    b.add(Paragraph(f"Version v{__version__}", b.styles["cover_subtitle"]))
     b.add(Spacer(1, 0.4 * inch))
     b.add(Paragraph(
         "A TTY-style accessibility communicator for the General Mobile "
@@ -574,7 +578,7 @@ def build_first_run(b: Builder):
         "<font face=\"Courier\">YOUR_CALL</font> the header will display "
         "that literal string — open Settings → Configuration "
         "(or click the gear icon on the right side of the service toolbar). "
-        "The dialog has five tabs; the minimum fields for a working session are:")
+        "The dialog has six tabs; the minimum fields for a working session are:")
     b.bullets([
         ("<b>Identity tab</b> — Callsign",
          "Your FCC GMRS callsign (e.g. "
@@ -956,9 +960,34 @@ def build_main_window(b: Builder):
                                             "Empties the entire grid "
                                             "immediately; future detections "
                                             "still log normally."),
-        ("Touch-screen mode", "When the app is in touch mode both the "
-                              "<b>Remove selected</b> and <b>Clear "
-                              "callsigns detected</b> buttons scale to "
+        ("Save session button", "Stores the current grid as a timestamped "
+                                "net-session record under "
+                                "<font face=\"Courier\">net_sessions/</font> "
+                                "for the attendance history (see Tools → "
+                                "Net Attendance History). Auto-save is "
+                                "available in Settings → Configuration → "
+                                "Behavior → Auto-save sessions: the grid is "
+                                "stored every time Listen stops, skipping "
+                                "sessions with no callsigns."),
+        ("Export CSV button", "Saves the live grid to a CSV file with "
+                              "columns Callsign, Name, Location, GMRS, HAM."),
+        ("Net Attendance History", "Tools → Net Attendance History opens a "
+                                   "two-tab browser. <b>History</b> lists "
+                                   "every saved session newest-first with "
+                                   "its full roster, per-session CSV export, "
+                                   "an export-all CSV (one row per station "
+                                   "per session), and per-session delete. "
+                                   "<b>Statistics</b> aggregates per-station "
+                                   "attendance — total nets, attendance over "
+                                   "the last 10, current streak, last seen — "
+                                   "sorted busiest-first, with CSV export. A "
+                                   "station is a callsign + name pair, so "
+                                   "family members sharing one GMRS callsign "
+                                   "count separately."),
+        ("Touch-screen mode", "When the app is in touch mode the "
+                              "<b>Remove selected</b>, <b>Clear "
+                              "callsigns detected</b>, <b>Save session</b>, "
+                              "and <b>Export CSV</b> buttons scale to "
                               "44 px minimum height for reliable touch "
                               "targets. The table itself is not affected."),
     ])
@@ -1179,7 +1208,7 @@ def build_touch_mode(b: Builder):
 def build_config_dialog(b: Builder):
     b.h1("6. Configuration dialog")
     b.p("Opened from Settings → Configuration, the gear icon, or "
-        "Ctrl+,. Minimum width 420 px. Settings are organized into five "
+        "Ctrl+,. Minimum width 420 px. Settings are organized into six "
         "tabs. All fields are mnemonic-linked (Alt+letter focuses the "
         "underlined field). The OK button is disabled until the background "
         "device-enumeration thread finishes; while loading you'll see "
@@ -1249,6 +1278,63 @@ def build_config_dialog(b: Builder):
         ],
         col_widths=[1.5 * inch, 1.4 * inch, 3.85 * inch],
     )
+    b.h3("STT tab")
+    b.table(
+        ["Field", "Type", "Behavior"],
+        [
+            ["Whisper Model (Alt+M)", "Dropdown",
+             "Which locally staged Whisper model transcribes incoming "
+             "audio. Only models already present under Models/STT are "
+             "listed — run bootstrap_models.py to stage more. Larger "
+             "models are more accurate but slower. Changing this "
+             "restarts the listener."],
+            ["Final-pass model (Alt+N)", "Dropdown",
+             "Default Off (single pass). When set, each completed "
+             "transmission is re-transcribed whole by this larger model on "
+             "a background thread and the chat line is upgraded in place. "
+             "Auto picks the best model staged under Models/STT. Stage one "
+             "with bootstrap_models.py --model small.en large-v3-turbo."],
+            ["Final-pass device (Alt+V)", "Dropdown",
+             "Auto / GPU / CPU. GPU needs the optional requirements-gpu.txt "
+             "extras; any GPU failure falls back to CPU automatically."],
+            ["Final-pass max length (Alt+L)", "Spin 5–600 s",
+             "Transmissions longer than this keep their streaming "
+             "transcript instead of a possibly-truncated re-read. "
+             "Default 60 s."],
+            ["Gain mode (Alt+G)", "Dropdown",
+             "Gain stage applied to each utterance before transcription. "
+             "Dynamic AGC (default) levels weak and strong stations with "
+             "fast-attack/slow-release smoothing; RMS normalize applies "
+             "one flat gain to −20 dBFS; No gain leaves levels "
+             "untouched. Stored as stt_gain_mode."],
+            ["Noise profile (Alt+F)", "Checkbox",
+             "Default off. Samples channel static while the squelch is "
+             "closed and uses it as the denoiser's stationary noise "
+             "estimate, instead of guessing from the speech itself. Can "
+             "improve accuracy on consistently noisy channels."],
+            ["Custom phrases (Alt+H)", "Multi-line text",
+             "One phrase per line — names, landmarks, club jargon. Added "
+             "to the Whisper vocabulary bias alongside built-in radio "
+             "procedure words and contact callsigns, so the transcriber "
+             "stops mishearing them. Stored as saved_phrases."],
+            ["Max callsigns (Alt+X)", "Spin 0–50",
+             "How many saved contact callsigns to include in the "
+             "recognition vocabulary (newest win when over the limit). "
+             "Each costs about 6 of the ~223 available prompt tokens. "
+             "Set 0 to leave callsigns out entirely and give the whole "
+             "prompt budget to procedure words and custom phrases."],
+            ["Debug capture (Alt+B)", "Checkbox",
+             "Default off. Records every utterance's raw, segmented, and "
+             "processed audio plus transcripts for offline accuracy "
+             "analysis with python -m gmrs_tty.tools.eval_stt. Captures "
+             "grow quickly; leave off in normal use."],
+            ["Debug directory (Alt+Y)", "Text",
+             "Where debug captures are written. Default debug/stt, "
+             "relative to the working directory. Only enabled while "
+             "Debug capture is checked."],
+        ],
+        col_widths=[1.5 * inch, 1.4 * inch, 3.85 * inch],
+    )
     b.h3("PTT tab")
     b.table(
         ["Field", "Type", "Behavior"],
@@ -1259,6 +1345,21 @@ def build_config_dialog(b: Builder):
              "Only enabled in USB FTDI mode. e.g. /dev/ttyUSB0 or COM3."],
             ["Control Line (Alt+E)", "Dropdown",
              "Only enabled in USB FTDI mode. RTS or DTR."],
+            ["VOX primer tone (Alt+O)", "Checkbox",
+             "Default off. Plays a 1 kHz priming tone (then a short "
+             "settle gap) before speech so a VOX-keyed radio is fully "
+             "keyed before the first word — stops VOX attack from "
+             "clipping the opening syllable."],
+            ["Primer length (Alt+L)", "Spin 50–2000 ms",
+             "Duration of the priming tone. Default 300 ms; radios with "
+             "slow VOX attack may need longer."],
+            ["Priming word (Alt+G)", "Checkbox",
+             "Default off. Speaks a keyword before the actual message so "
+             "the radio keys on a clear spoken word — an alternative or "
+             "supplement to the tone."],
+            ["Word (Alt+W)", "Text",
+             "The spoken priming word. Default \"transmit\". Only "
+             "enabled while Priming word is checked."],
         ],
         col_widths=[1.5 * inch, 1.4 * inch, 3.85 * inch],
     )
@@ -1288,6 +1389,31 @@ def build_config_dialog(b: Builder):
              "<font face=\"Courier\">attendance.enabled</font>. Also "
              "toggleable from View → Show callsigns detected "
              "(Ctrl+Shift+A). GMRS only."],
+            ["Auto-save sessions (Alt+O)", "Checkbox",
+             "Default off. Stores the Callsigns Detected grid as a net "
+             "session record each time Listen stops (empty sessions are "
+             "skipped). Records feed Tools → Net Attendance History. "
+             "Persists at "
+             "<font face=\"Courier\">attendance.autosave_sessions</font>."],
+            ["Condition TX audio (Alt+X)", "Checkbox",
+             "Default off. Band-limits synthesized speech to the "
+             "300–3000 Hz FM voice channel, compresses peaks, and "
+             "normalizes the level so the voice modulates the radio "
+             "consistently without clipping. Leave off if TTS plays "
+             "through regular speakers."],
+            ["Max TX length (Alt+L)", "Spin 0–600 s",
+             "Hard cap on how long PTT may stay keyed for one "
+             "transmission. A message that is already too long is "
+             "cancelled before the radio is keyed, with a chat notice "
+             "giving its length — shorten it and send again. Playback "
+             "that still overruns is stopped and PTT released. "
+             "Default 60 s; 0 (Off) "
+             "disables. An Abort TX button (Esc) also appears in the "
+             "Transmit row while a transmission is in progress."],
+            ["Synthesis timeout (Alt+T)", "Spin 0–300 s",
+             "How long to wait for Piper synthesis before abandoning the "
+             "transmission. The radio is never keyed on this path. "
+             "Default 30 s; 0 (Off) disables."],
             ["Gemini API Key (Alt+G)", "Password text + Show/Hide",
              "Google Gemini API key for AI-generated session journals. "
              "Leave blank to disable journal generation. The field uses "
@@ -1803,6 +1929,34 @@ def build_rx(b: Builder):
                                   "<b>Monitor audio</b> sets the power-on "
                                   "default; the in-strip toggle controls "
                                   "the live state."),
+    ])
+
+    b.h3("13.9 STT calibration wizard")
+    b.p("Tools &rarr; <b>Calibrate STT</b> (enabled while Listen is active) "
+        "finds the most accurate STT settings for your radio and channel "
+        "conditions in four steps:")
+    b.bullets([
+        ("1. Reference passage", "The wizard shows a fixed passage (the "
+                                 "opening of the Declaration of "
+                                 "Independence). Arrange for another "
+                                 "station to read it over the air, or read "
+                                 "it yourself on a loopback input."),
+        ("2. Recording", "Click <b>Start recording</b>, have the passage "
+                         "read, then <b>Stop and analyze</b>. At least a "
+                         "few seconds of audio are required; the capture "
+                         "is bounded at three minutes."),
+        ("3. Analyzing", "Every staged Whisper model &times; gain mode "
+                         "&times; noise profile combination transcribes "
+                         "the recording and is scored by word-error-rate "
+                         "against the passage. The progress bar reads "
+                         "\"combination N of M\"; on CPU a multi-model "
+                         "sweep takes minutes."),
+        ("4. Results", "Combinations are ranked best-first with the "
+                       "recommended row preselected. <b>Apply selected</b> "
+                       "writes the model, gain mode, and noise profile to "
+                       "the configuration; a model change takes effect the "
+                       "next time Listen starts. Escape cancels cleanly at "
+                       "any step."),
     ])
 
 

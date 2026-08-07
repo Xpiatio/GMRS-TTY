@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from gmrs_tty.constants import CONFIG_FILE
+from gmrs_tty.constants import CONFIG_FILE, GAIN_MODES
 from gmrs_tty.persistence.json_store import save_json
 
 
@@ -57,6 +57,62 @@ class AppConfig(dict):
     def system_monitor_sink(self) -> str:
         return (self.get("system_monitor_sink") or "").strip()
 
+    @property
+    def stt_gain_mode(self) -> str:
+        """Gain stage applied after bandpass/denoise, before transcription:
+        'agc' (dynamic attack/release AGC), 'rms' (one-shot RMS normalize),
+        or 'off' (no gain)."""
+        val = str(self.get("stt_gain_mode", "agc")).strip().lower()
+        return val if val in GAIN_MODES else "agc"
+
+    @property
+    def stt_noise_profile(self) -> bool:
+        """Feed squelch-closed noise-floor audio to the denoise stage as a
+        stationary noise estimate instead of letting it self-estimate from
+        the speech-bearing segment."""
+        return bool(self.get("stt_noise_profile", False))
+
+    @property
+    def stt_debug_capture(self) -> bool:
+        return bool(self.get("stt_debug_capture", False))
+
+    @property
+    def stt_debug_dir(self) -> str:
+        return self.get("stt_debug_dir", "debug/stt")
+
+    @property
+    def saved_phrases(self) -> list:
+        # Curated radio vocabulary lives in gmrs_tty/stt/vocab.py and is
+        # assembled at Listen start. saved_phrases holds only the operator's
+        # custom additions.
+        return list(self.get("saved_phrases", []))
+
+    @property
+    def stt_vocab_max_callsigns(self) -> int:
+        """Max number of contact callsigns to include in Whisper initial_prompt.
+        Callsigns are ~6 tokens each; smaller limit leaves room for procedure
+        vocabulary and custom phrases within the ~223-token budget."""
+        return int(self.get("stt_vocab_max_callsigns", 15))
+
+    @property
+    def whisper_model_final(self) -> str:
+        """Second-pass model that re-transcribes each finalized utterance
+        whole. "" (the deliberate default) disables the second pass; "auto"
+        resolves to the best final-pass model actually staged on disk."""
+        return (self.get("whisper_model_final") or "").strip()
+
+    @property
+    def stt_final_max_s(self) -> float:
+        """Utterances longer than this skip the final pass (the partial texts
+        already cover them; a truncated re-transcription would lose words)."""
+        return float(self.get("stt_final_max_s", 60.0))
+
+    @property
+    def stt_final_device(self) -> str:
+        """Final-pass compute: 'auto' (GPU when available), 'gpu', or 'cpu'."""
+        val = str(self.get("stt_final_device", "auto")).strip().lower()
+        return val if val in ("auto", "gpu", "cpu") else "auto"
+
     # ---- TTS -------------------------------------------------------------
 
     @property
@@ -66,6 +122,45 @@ class AppConfig(dict):
     @property
     def tts_length_scale(self) -> float:
         return float(self.get("tts_length_scale", 1.0))
+
+    @property
+    def tx_conditioning(self) -> bool:
+        """Band-limit, compress, and level-normalize synthesized speech before
+        it drives the radio's mic input."""
+        return bool(self.get("tx_conditioning", False))
+
+    @property
+    def vox_primer_enabled(self) -> bool:
+        """Prepend a short tone to synthesized TX audio so a VOX-keyed radio
+        is fully keyed before the message starts."""
+        return bool(self.get("vox_primer_enabled", False))
+
+    @property
+    def vox_primer_ms(self) -> int:
+        """Duration of the VOX primer tone in milliseconds."""
+        return int(self.get("vox_primer_ms", 300))
+
+    @property
+    def vox_primer_word_enabled(self) -> bool:
+        """Speak a configurable priming word (e.g. "transmit") after the VOX
+        primer tone and before the message, so a VOX-keyed radio is keyed on a
+        clear spoken keyword.  Different radios may need different words."""
+        return bool(self.get("vox_primer_word_enabled", False))
+
+    @property
+    def vox_primer_word(self) -> str:
+        """The spoken VOX priming word."""
+        return str(self.get("vox_primer_word", "transmit"))
+
+    @property
+    def tx_max_duration_seconds(self) -> int:
+        """Hard cap on how long PTT may remain keyed for any single transmission."""
+        return int(self.get("tx_max_duration_seconds", 60))
+
+    @property
+    def tx_synthesis_timeout_seconds(self) -> int:
+        """Max time to wait for TTS synthesis before aborting without keying PTT."""
+        return int(self.get("tx_synthesis_timeout_seconds", 30))
 
     # ---- UI / display ----------------------------------------------------
 
@@ -121,7 +216,17 @@ class AppConfig(dict):
 
     @attendance_enabled.setter
     def attendance_enabled(self, value: bool) -> None:
-        self["attendance"] = {"enabled": value}
+        # Merge rather than replace so sibling keys (autosave_sessions, …)
+        # survive a toggle of the enabled flag.
+        attendance = dict(self.get("attendance") or {})
+        attendance["enabled"] = bool(value)
+        self["attendance"] = attendance
+
+    @property
+    def attendance_autosave_sessions(self) -> bool:
+        """Automatically store the attendance grid as a net session record
+        each time Listen stops (empty sessions are skipped)."""
+        return bool((self.get("attendance") or {}).get("autosave_sessions", False))
 
     # ---- AI / journal ----------------------------------------------------
 
