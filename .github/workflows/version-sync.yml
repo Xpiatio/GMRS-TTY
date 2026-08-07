@@ -1,0 +1,18 @@
+# The version is written in more than one place (gmrs_tty/__init__.py, the
+# README release callout). Bumping only some of them ships a release that
+# misreports itself. This catches the drift on the PR, before a tag exists.
+name: version-sync
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check_version_sync.py

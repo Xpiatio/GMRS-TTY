@@ -29,6 +29,9 @@ from reportlab.platypus import (
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 OUTPUT_PATH = os.path.join(REPO_ROOT, "docs", "USER_MANUAL.pdf")
 
+sys.path.insert(0, REPO_ROOT)
+from gmrs_tty import __version__  # noqa: E402
+
 PRIMARY = colors.HexColor("#1D4ED8")   # TX blue
 ACCENT  = colors.HexColor("#15803D")   # RX green
 WARN    = colors.HexColor("#92400E")   # amber
@@ -277,6 +280,7 @@ def build_cover(b: Builder):
     b.add(Paragraph("GMRS-TTY", b.styles["cover_title"]))
     b.add(Paragraph("User Manual &mdash; Full Reference",
                     b.styles["cover_subtitle"]))
+    b.add(Paragraph(f"Version v{__version__}", b.styles["cover_subtitle"]))
     b.add(Spacer(1, 0.4 * inch))
     b.add(Paragraph(
         "A TTY-style accessibility communicator for the General Mobile "
