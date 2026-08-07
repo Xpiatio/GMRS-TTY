@@ -1320,7 +1320,9 @@ def build_config_dialog(b: Builder):
             ["Max callsigns (Alt+X)", "Spin 0–50",
              "How many saved contact callsigns to include in the "
              "recognition vocabulary (newest win when over the limit). "
-             "Each costs about 6 of the ~223 available prompt tokens."],
+             "Each costs about 6 of the ~223 available prompt tokens. "
+             "Set 0 to leave callsigns out entirely and give the whole "
+             "prompt budget to procedure words and custom phrases."],
             ["Debug capture (Alt+B)", "Checkbox",
              "Default off. Records every utterance's raw, segmented, and "
              "processed audio plus transcripts for offline accuracy "
@@ -1401,8 +1403,11 @@ def build_config_dialog(b: Builder):
              "through regular speakers."],
             ["Max TX length (Alt+L)", "Spin 0–600 s",
              "Hard cap on how long PTT may stay keyed for one "
-             "transmission — if playback runs longer, TX is stopped and "
-             "PTT released with a chat notice. Default 60 s; 0 (Off) "
+             "transmission. A message that is already too long is "
+             "cancelled before the radio is keyed, with a chat notice "
+             "giving its length — shorten it and send again. Playback "
+             "that still overruns is stopped and PTT released. "
+             "Default 60 s; 0 (Off) "
              "disables. An Abort TX button (Esc) also appears in the "
              "Transmit row while a transmission is in progress."],
             ["Synthesis timeout (Alt+T)", "Spin 0–300 s",

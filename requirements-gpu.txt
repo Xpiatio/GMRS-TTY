@@ -8,5 +8,7 @@
 #   CUDA (NVIDIA): pip install torch --index-url https://download.pytorch.org/whl/cu124
 #
 # then: pip install -r requirements-gpu.txt
-torch
-transformers
+# Floor pins only — the exact torch build comes from the index-url above, and
+# pinning it here would fight the ROCm/CUDA wheel selection.
+torch>=2.2
+transformers>=4.40
