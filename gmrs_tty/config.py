@@ -104,6 +104,45 @@ class AppConfig(dict):
     def tts_length_scale(self) -> float:
         return float(self.get("tts_length_scale", 1.0))
 
+    @property
+    def tx_conditioning(self) -> bool:
+        """Band-limit, compress, and level-normalize synthesized speech before
+        it drives the radio's mic input."""
+        return bool(self.get("tx_conditioning", False))
+
+    @property
+    def vox_primer_enabled(self) -> bool:
+        """Prepend a short tone to synthesized TX audio so a VOX-keyed radio
+        is fully keyed before the message starts."""
+        return bool(self.get("vox_primer_enabled", False))
+
+    @property
+    def vox_primer_ms(self) -> int:
+        """Duration of the VOX primer tone in milliseconds."""
+        return int(self.get("vox_primer_ms", 300))
+
+    @property
+    def vox_primer_word_enabled(self) -> bool:
+        """Speak a configurable priming word (e.g. "transmit") after the VOX
+        primer tone and before the message, so a VOX-keyed radio is keyed on a
+        clear spoken keyword.  Different radios may need different words."""
+        return bool(self.get("vox_primer_word_enabled", False))
+
+    @property
+    def vox_primer_word(self) -> str:
+        """The spoken VOX priming word."""
+        return str(self.get("vox_primer_word", "transmit"))
+
+    @property
+    def tx_max_duration_seconds(self) -> int:
+        """Hard cap on how long PTT may remain keyed for any single transmission."""
+        return int(self.get("tx_max_duration_seconds", 60))
+
+    @property
+    def tx_synthesis_timeout_seconds(self) -> int:
+        """Max time to wait for TTS synthesis before aborting without keying PTT."""
+        return int(self.get("tx_synthesis_timeout_seconds", 30))
+
     # ---- UI / display ----------------------------------------------------
 
     @property

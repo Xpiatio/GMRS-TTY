@@ -1305,6 +1305,21 @@ def build_config_dialog(b: Builder):
              "Only enabled in USB FTDI mode. e.g. /dev/ttyUSB0 or COM3."],
             ["Control Line (Alt+E)", "Dropdown",
              "Only enabled in USB FTDI mode. RTS or DTR."],
+            ["VOX primer tone (Alt+O)", "Checkbox",
+             "Default off. Plays a 1 kHz priming tone (then a short "
+             "settle gap) before speech so a VOX-keyed radio is fully "
+             "keyed before the first word — stops VOX attack from "
+             "clipping the opening syllable."],
+            ["Primer length (Alt+L)", "Spin 50–2000 ms",
+             "Duration of the priming tone. Default 300 ms; radios with "
+             "slow VOX attack may need longer."],
+            ["Priming word (Alt+G)", "Checkbox",
+             "Default off. Speaks a keyword before the actual message so "
+             "the radio keys on a clear spoken word — an alternative or "
+             "supplement to the tone."],
+            ["Word (Alt+W)", "Text",
+             "The spoken priming word. Default \"transmit\". Only "
+             "enabled while Priming word is checked."],
         ],
         col_widths=[1.5 * inch, 1.4 * inch, 3.85 * inch],
     )
@@ -1334,6 +1349,22 @@ def build_config_dialog(b: Builder):
              "<font face=\"Courier\">attendance.enabled</font>. Also "
              "toggleable from View → Show callsigns detected "
              "(Ctrl+Shift+A). GMRS only."],
+            ["Condition TX audio (Alt+X)", "Checkbox",
+             "Default off. Band-limits synthesized speech to the "
+             "300–3000 Hz FM voice channel, compresses peaks, and "
+             "normalizes the level so the voice modulates the radio "
+             "consistently without clipping. Leave off if TTS plays "
+             "through regular speakers."],
+            ["Max TX length (Alt+L)", "Spin 0–600 s",
+             "Hard cap on how long PTT may stay keyed for one "
+             "transmission — if playback runs longer, TX is stopped and "
+             "PTT released with a chat notice. Default 60 s; 0 (Off) "
+             "disables. An Abort TX button (Esc) also appears in the "
+             "Transmit row while a transmission is in progress."],
+            ["Synthesis timeout (Alt+T)", "Spin 0–300 s",
+             "How long to wait for Piper synthesis before abandoning the "
+             "transmission. The radio is never keyed on this path. "
+             "Default 30 s; 0 (Off) disables."],
             ["Gemini API Key (Alt+G)", "Password text + Show/Hide",
              "Google Gemini API key for AI-generated session journals. "
              "Leave blank to disable journal generation. The field uses "

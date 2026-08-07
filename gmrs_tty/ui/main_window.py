@@ -790,6 +790,24 @@ class MainWindow(QMainWindow):
         self.id_btn.clicked.connect(self.transmit_id_only)
         row.addWidget(self.id_btn)
 
+        # Kill switch for a runaway transmission. Hidden while idle so the
+        # row stays uncluttered; appears the moment a TX starts. Esc is the
+        # conventional "stop" key and can't collide with typing because the
+        # shortcut only exists while the button is visible.
+        self.abort_tx_btn = QPushButton("&Abort TX", content)
+        self.abort_tx_btn.setToolTip(
+            "Stop the in-progress transmission immediately and release PTT (Esc)"
+        )
+        self.abort_tx_btn.setAccessibleName("Abort transmission")
+        self.abort_tx_btn.setAccessibleDescription(
+            "Immediately stops the transmission in progress and releases "
+            "the push-to-talk. Only available while transmitting."
+        )
+        self.abort_tx_btn.setShortcut(QKeySequence(Qt.Key.Key_Escape))
+        self.abort_tx_btn.setVisible(False)
+        self.abort_tx_btn.clicked.connect(self.tx.abort_tx)
+        row.addWidget(self.abort_tx_btn)
+
         # Explicit tab order so keyboard users get a predictable traversal:
         # Listen (above chat) → target → message → Transmit → This is.
         # setTabOrder is window-level so the central-widget Listen button
@@ -798,6 +816,7 @@ class MainWindow(QMainWindow):
         self.setTabOrder(self.target_dropdown, self.message_input)
         self.setTabOrder(self.message_input, self.transmit_btn)
         self.setTabOrder(self.transmit_btn, self.id_btn)
+        self.setTabOrder(self.id_btn, self.abort_tx_btn)
 
         dock = QDockWidget("Transmit", self)
         dock.setObjectName(dock_layout.DOCK_TRANSMIT)
@@ -1544,6 +1563,7 @@ class MainWindow(QMainWindow):
 
     def _on_tx_busy_changed(self, busy: bool) -> None:
         self._monitor.mute(busy)
+        self.abort_tx_btn.setVisible(busy)
         self._refresh_tx_enabled()
 
     def _refresh_tx_enabled(self):
@@ -1603,6 +1623,16 @@ class MainWindow(QMainWindow):
             voice_path=self.config.voice,
             length_scale=self.config.tts_length_scale,
             output_device=self.config.output_device,
+            tx_conditioning=self.config.tx_conditioning,
+            vox_primer_ms=(
+                self.config.vox_primer_ms if self.config.vox_primer_enabled else 0.0
+            ),
+            vox_primer_word=(
+                self.config.vox_primer_word
+                if self.config.vox_primer_word_enabled else ""
+            ),
+            synthesis_timeout_s=self.config.tx_synthesis_timeout_seconds,
+            max_tx_s=self.config.tx_max_duration_seconds,
         )
 
     def _on_attendance_toggle(self, checked):

@@ -287,10 +287,60 @@ class ConfigDialog(QDialog):
         gemini_row_layout.addWidget(self.gemini_api_key_input, 1)
         gemini_row_layout.addWidget(self._gemini_show_btn)
 
+        self.tx_conditioning_input = QCheckBox("Condition TX audio for radio (band-limit + compress)")
+        self.tx_conditioning_input.setChecked(bool(self.config.get("tx_conditioning", False)))
+        self.tx_conditioning_input.setToolTip(
+            "Band-limits synthesized speech to the 300–3000 Hz FM voice "
+            "channel, gently compresses peaks, and normalizes the level so "
+            "the voice modulates the radio consistently without clipping. "
+            "Leave off if TTS plays through regular speakers."
+        )
+        self.tx_conditioning_input.setAccessibleName("Condition TX audio")
+        self.tx_conditioning_input.setAccessibleDescription(
+            "When checked, synthesized speech is band-limited, compressed, "
+            "and level-normalized before it drives the radio's microphone input."
+        )
+
+        self.tx_max_duration_input = QSpinBox()
+        self.tx_max_duration_input.setRange(0, 600)
+        self.tx_max_duration_input.setSuffix(" s")
+        self.tx_max_duration_input.setSpecialValueText("Off")
+        self.tx_max_duration_input.setValue(int(self.config.get("tx_max_duration_seconds", 60)))
+        self.tx_max_duration_input.setToolTip(
+            "Hard cap on how long PTT may stay keyed for one transmission. "
+            "If playback runs longer, TX is stopped and PTT released. "
+            "0 disables the cap."
+        )
+        self.tx_max_duration_input.setAccessibleName("Maximum transmission length")
+        self.tx_max_duration_input.setAccessibleDescription(
+            "Longest a single transmission may key the radio, in seconds. "
+            "Zero disables the limit."
+        )
+
+        self.tx_synth_timeout_input = QSpinBox()
+        self.tx_synth_timeout_input.setRange(0, 300)
+        self.tx_synth_timeout_input.setSuffix(" s")
+        self.tx_synth_timeout_input.setSpecialValueText("Off")
+        self.tx_synth_timeout_input.setValue(
+            int(self.config.get("tx_synthesis_timeout_seconds", 30))
+        )
+        self.tx_synth_timeout_input.setToolTip(
+            "How long to wait for speech synthesis before giving up. The "
+            "radio is never keyed when synthesis times out. 0 disables."
+        )
+        self.tx_synth_timeout_input.setAccessibleName("Synthesis timeout")
+        self.tx_synth_timeout_input.setAccessibleDescription(
+            "Maximum seconds to wait for text-to-speech synthesis before "
+            "aborting the transmission. Zero disables the timeout."
+        )
+
         layout.addRow("Time &Format:", self.time_format_input)
         layout.addRow("Filter profanit&y:", self.filter_profanity_input)
         layout.addRow("F&uzzy callsigns:", self.fuzzy_callsign_input)
         layout.addRow("Callsigns &Detected:", self.attendance_enabled_input)
+        layout.addRow("Condition T&X audio:", self.tx_conditioning_input)
+        layout.addRow("Max TX &length:", self.tx_max_duration_input)
+        layout.addRow("Synthesis &timeout:", self.tx_synth_timeout_input)
         layout.addRow("&Gemini API Key:", gemini_row)
 
     def _build_stt_rows(self, layout: QFormLayout) -> None:
@@ -431,9 +481,62 @@ class ConfigDialog(QDialog):
 
         self.ptt_mode_input.currentIndexChanged.connect(self._update_ptt_fields)
 
+        self.vox_primer_input = QCheckBox("Play a short priming tone before speech")
+        self.vox_primer_input.setChecked(bool(self.config.get("vox_primer_enabled", False)))
+        self.vox_primer_input.setToolTip(
+            "For VOX-keyed radios: a 1 kHz tone keys the radio and a short "
+            "gap lets it settle, so the first spoken word isn't clipped."
+        )
+        self.vox_primer_input.setAccessibleName("VOX primer tone")
+        self.vox_primer_input.setAccessibleDescription(
+            "When checked, a short tone precedes speech so a VOX-keyed radio "
+            "is fully keyed before the message starts."
+        )
+
+        self.vox_primer_ms_input = QSpinBox()
+        self.vox_primer_ms_input.setRange(50, 2000)
+        self.vox_primer_ms_input.setSingleStep(50)
+        self.vox_primer_ms_input.setSuffix(" ms")
+        self.vox_primer_ms_input.setValue(int(self.config.get("vox_primer_ms", 300)))
+        self.vox_primer_ms_input.setToolTip(
+            "Length of the VOX priming tone. Longer tones suit radios with "
+            "slow VOX attack; 300 ms works for most."
+        )
+        self.vox_primer_ms_input.setAccessibleName("VOX primer tone length")
+        self.vox_primer_ms_input.setAccessibleDescription(
+            "Duration of the priming tone in milliseconds."
+        )
+
+        self.vox_primer_word_enabled_input = QCheckBox("Speak a priming word before the message")
+        self.vox_primer_word_enabled_input.setChecked(
+            bool(self.config.get("vox_primer_word_enabled", False))
+        )
+        self.vox_primer_word_enabled_input.setToolTip(
+            "Speaks a keyword (e.g. \"transmit\") before the actual message, "
+            "as an alternative or supplement to the tone, so the radio keys "
+            "on a clear spoken word."
+        )
+        self.vox_primer_word_enabled_input.setAccessibleName("VOX priming word")
+        self.vox_primer_word_enabled_input.setAccessibleDescription(
+            "When checked, a spoken keyword precedes every transmitted message."
+        )
+
+        self.vox_primer_word_input = QLineEdit(self.config.get("vox_primer_word", "transmit"))
+        self.vox_primer_word_input.setToolTip("The word spoken before the message.")
+        self.vox_primer_word_input.setAccessibleName("Priming word")
+        self.vox_primer_word_input.setAccessibleDescription(
+            "The keyword spoken before each transmitted message."
+        )
+        self.vox_primer_word_enabled_input.toggled.connect(self.vox_primer_word_input.setEnabled)
+        self.vox_primer_word_input.setEnabled(self.vox_primer_word_enabled_input.isChecked())
+
         layout.addRow("&PTT Mode:", self.ptt_mode_input)
         layout.addRow("&Serial Port:", self.ptt_serial_port_input)
         layout.addRow("Control Lin&e:", self.ptt_serial_line_input)
+        layout.addRow("V&OX primer tone:", self.vox_primer_input)
+        layout.addRow("Primer &length:", self.vox_primer_ms_input)
+        layout.addRow("Primin&g word:", self.vox_primer_word_enabled_input)
+        layout.addRow("&Word:", self.vox_primer_word_input)
         self._update_ptt_fields()
 
     # ------------------------------------------------------------------
@@ -509,6 +612,13 @@ class ConfigDialog(QDialog):
             "ptt_mode": self.ptt_mode_input.currentData(),
             "ptt_serial_port": self.ptt_serial_port_input.text().strip(),
             "ptt_serial_line": self.ptt_serial_line_input.currentData(),
+            "vox_primer_enabled": self.vox_primer_input.isChecked(),
+            "vox_primer_ms": self.vox_primer_ms_input.value(),
+            "vox_primer_word_enabled": self.vox_primer_word_enabled_input.isChecked(),
+            "vox_primer_word": self.vox_primer_word_input.text().strip() or "transmit",
+            "tx_conditioning": self.tx_conditioning_input.isChecked(),
+            "tx_max_duration_seconds": self.tx_max_duration_input.value(),
+            "tx_synthesis_timeout_seconds": self.tx_synth_timeout_input.value(),
         }
 
     def _update_length_scale_label(self, value):
