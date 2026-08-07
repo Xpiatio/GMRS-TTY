@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, Qt
 from PySide6.QtWidgets import QMessageBox
 
 from gmrs_tty.ai.journal_worker import JournalWorker
@@ -23,7 +23,10 @@ class JournalController(QObject):
         self._worker: JournalWorker | None = None
 
     def open_dialog(self) -> None:
+        # Modeless with no stored reference — Qt owns the lifetime and deletes
+        # the widget on close.
         dlg = JournalDialog(parent=self._window)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dlg.show()
         dlg.raise_()
 

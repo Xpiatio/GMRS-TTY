@@ -16,12 +16,24 @@ _STATS_HEADER = [
     "recent_window", "current_streak", "last_seen",
 ]
 
+# Excel and LibreOffice evaluate a cell that opens with one of these as a
+# formula. Names and locations come from the operator's own contacts, so this
+# is defence in depth rather than a live hole — but exports get mailed around,
+# and a leading apostrophe costs nothing. No exported field is ever a negative
+# number, so escaping "-" loses no legitimate value.
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _sanitize(value) -> str:
+    text = "" if value is None else str(value)
+    return "'" + text if text.startswith(_FORMULA_PREFIXES) else text
+
 
 def _render(header: list[str], rows: list[list]) -> str:
     buf = io.StringIO()
     writer = csv.writer(buf, quoting=csv.QUOTE_ALL, lineterminator="\n")
     writer.writerow(header)
-    writer.writerows(rows)
+    writer.writerows([_sanitize(cell) for cell in row] for row in rows)
     return buf.getvalue().rstrip("\n")
 
 

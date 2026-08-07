@@ -269,6 +269,24 @@ class TXController(QObject):
             self._set_busy(False)
             return
 
+        # Refuse an over-long message before keying rather than aborting it
+        # mid-word: the operator gets a clear "shorten it" instead of a
+        # truncated transmission. The watchdog below stays as the backstop for
+        # playback that overruns its own predicted length.
+        duration_s = len(audio) / float(sample_rate) if sample_rate else 0.0
+        if self._max_tx_s > 0 and duration_s > self._max_tx_s:
+            _log.warning(
+                "TX cancelled: %.1fs message over the %.0fs limit",
+                duration_s, self._max_tx_s,
+            )
+            self.chat_message.emit(
+                f"<i>TX cancelled: message is {duration_s:.0f}s, over the "
+                f"{self._max_tx_s:.0f}s limit. Shorten it and try again.</i>",
+                theme.palette().error,
+            )
+            self._set_busy(False)
+            return
+
         self._audio_thread = AudioPlayerThread(
             audio, sample_rate, device=self._output_device
         )

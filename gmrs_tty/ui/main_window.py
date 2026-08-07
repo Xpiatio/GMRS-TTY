@@ -1949,7 +1949,11 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Session saved to {path}", 5000)
 
     def open_net_stats_dialog(self):
+        # Modeless, so nothing here holds a reference — let Qt own the
+        # lifetime and delete the widget on close rather than relying on the
+        # C++ object outliving the local name.
         dlg = NetStatsDialog(self.contacts, parent=self)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dlg.show()
 
     def open_calibration_dialog(self):

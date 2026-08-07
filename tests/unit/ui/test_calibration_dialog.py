@@ -115,6 +115,97 @@ class TestProgressAndResults:
         assert "Calibration failed" in dlg._progress_label.text()
 
 
+class _FakeSweep:
+    """Stand-in for CalibrationSweepWorker: real Qt signals, no thread."""
+    def __init__(self, running=True):
+        from PySide6.QtCore import QObject, Signal
+
+        class _Sweep(QObject):
+            progress = Signal(dict)
+            result = Signal(list)
+            error = Signal(str)
+            finished = Signal()
+
+        self._obj = _Sweep()
+        self._running = running
+        # The dialog subscribes to all three before starting the thread; mirror
+        # that so _detach_sweep's disconnect has something to remove.
+        self.seen = []
+        for signal in (self._obj.progress, self._obj.result, self._obj.error):
+            signal.connect(self.seen.append)
+
+    def __getattr__(self, name):
+        return getattr(self._obj, name)
+
+    def isRunning(self):
+        return self._running
+
+
+class TestSweepDetach:
+    """A running QThread must never lose its last reference — the sweep object
+    has no Qt parent, so both the cancel and the error path have to park it."""
+
+    def test_error_path_parks_a_still_running_sweep(self, qapp):
+        from gmrs_tty.ui import calibration_dialog as mod
+
+        dlg = _make_dialog(qapp)
+        sweep = _FakeSweep(running=True)
+        dlg._sweep = sweep
+        try:
+            dlg._on_sweep_error("boom")
+            assert dlg._sweep is None
+            assert sweep in mod._ORPHANED_SWEEPS
+            # Reaped once the thread reports it is done.
+            sweep.finished.emit()
+            assert sweep not in mod._ORPHANED_SWEEPS
+        finally:
+            if sweep in mod._ORPHANED_SWEEPS:
+                mod._ORPHANED_SWEEPS.remove(sweep)
+
+    def test_finished_sweep_is_not_parked(self, qapp):
+        from gmrs_tty.ui import calibration_dialog as mod
+
+        dlg = _make_dialog(qapp)
+        sweep = _FakeSweep(running=False)
+        dlg._sweep = sweep
+        dlg._on_sweep_error("boom")
+        assert dlg._sweep is None
+        assert sweep not in mod._ORPHANED_SWEEPS
+
+    def test_reject_parks_a_running_sweep_and_disconnects_it(self, qapp):
+        from gmrs_tty.ui import calibration_dialog as mod
+
+        dlg = _make_dialog(qapp)
+        sweep = _FakeSweep(running=True)
+        seen = []
+        sweep.result.connect(seen.append)
+        dlg._sweep = sweep
+        try:
+            dlg.reject()
+            assert dlg._sweep is None
+            assert sweep in mod._ORPHANED_SWEEPS
+            sweep.result.emit([{"model": "small.en"}])
+            assert seen == []   # disconnected, so a late result is dropped
+        finally:
+            if sweep in mod._ORPHANED_SWEEPS:
+                mod._ORPHANED_SWEEPS.remove(sweep)
+
+    def test_double_release_is_safe(self, qapp):
+        from gmrs_tty.ui import calibration_dialog as mod
+
+        sweep = _FakeSweep(running=True)
+        mod._ORPHANED_SWEEPS.append(sweep)
+        mod._release_sweep(sweep)
+        mod._release_sweep(sweep)   # must not raise ValueError
+        assert sweep not in mod._ORPHANED_SWEEPS
+
+    def test_detach_with_no_sweep_is_noop(self, qapp):
+        dlg = _make_dialog(qapp)
+        dlg._sweep = None
+        dlg._detach_sweep()
+        assert dlg._sweep is None
+
+
 class TestApply:
     def test_apply_writes_selected_combo_and_saves(self, qapp):
         dlg = _make_dialog(qapp, {"whisper_model": "tiny.en"})

@@ -44,6 +44,12 @@ class RXSession:
         self._block: int | None = None
         self._text: str = ""
         self._ts: str = ""
+        # The most recently closed utterance, kept so a two-tier final pass
+        # that lands after the line closed can still rewrite that line
+        # instead of appending a duplicate of the same transmission.
+        self._closed_uid: int | None = None
+        self._closed_block: int | None = None
+        self._closed_ts: str = ""
 
     # ------------------------------------------------------------------
 
@@ -77,9 +83,10 @@ class RXSession:
             return
 
         if uid != self._uid:
-            # New utterance — flush any in-progress one so its callsigns still land.
-            if self._uid is not None and self._text:
-                self._on_complete(self._text)
+            # New utterance — close any in-progress one so its callsigns still
+            # land and its line stays addressable by a late final pass.
+            if self._uid is not None:
+                self._close()
             self._open_line(uid, text, color)
         else:
             appended = self._chat.append_to_block(self._block, " " + text, color=color)
@@ -103,6 +110,9 @@ class RXSession:
     def _close(self) -> None:
         if self._text:
             self._on_complete(self._text)
+        self._closed_uid = self._uid
+        self._closed_block = self._block
+        self._closed_ts = self._ts
         self._uid = None
         self._block = None
         self._text = ""
@@ -120,18 +130,26 @@ class RXSession:
                 self._open_line(uid, text, color)
             self._close()
             return
-        # The utterance was already flushed (or a newer one is in progress —
-        # the slow final pass can land after the next transmission starts).
-        # Emit the replacement as its own line without disturbing whatever
-        # is currently being tracked.
+        # The line already closed (the slow final pass can land after the next
+        # transmission starts). Rewrite it in place — appending would show the
+        # same transmission twice, once superseded. The completion callback
+        # still fires so callsign discovery sees the corrected text.
+        if uid == self._closed_uid and self._closed_block is not None:
+            replaced = self._chat.replace_block(
+                self._closed_block, f"<b>[RX {self._closed_ts}]:</b> {text}",
+                color=color,
+            )
+            if replaced:
+                self._on_complete(text)
+                return
+        # No line left to rewrite (chat cleared, or an unknown uid) — show the
+        # replacement on its own line without disturbing what's in progress.
         ts = self._format_ts()
         self._chat.append_message(f"<b>[RX {ts}]:</b> {text}", color=color)
         self._on_complete(text)
 
     def flush(self) -> None:
         """Flush any in-progress utterance. Call before tearing down the STT worker."""
-        if self._uid is not None and self._text:
-            self._on_complete(self._text)
-        self._uid = None
-        self._block = None
-        self._text = ""
+        if self._uid is None:
+            return
+        self._close()

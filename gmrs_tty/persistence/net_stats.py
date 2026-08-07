@@ -24,18 +24,19 @@ def compute_attendance_stats(
     ``current_streak`` and ``last_seen`` both depend on that ordering.
     """
     index = index_contacts_by_callsign(contacts or [])
-    # Precompute one station map per session: streak and recent-window checks
-    # both scan the whole list, and re-deriving the keys each time is wasteful.
+    # One pass over the sessions records each station's session positions
+    # (0 = newest). Totals, the recent-window count and the streak all read
+    # from that list, so nothing re-scans the session history per station.
     per_session = [_station_names(s) for s in summaries]
-    recent = per_session[:_RECENT_WINDOW]
+    recent_window = min(len(per_session), _RECENT_WINDOW)
 
-    totals: dict[tuple[str, str], int] = {}
+    appearances: dict[tuple[str, str], list[int]] = {}
     display: dict[tuple[str, str], str] = {}
     last_seen: dict[tuple[str, str], str] = {}
 
-    for session, stations in zip(summaries, per_session):
+    for position, (session, stations) in enumerate(zip(summaries, per_session)):
         for key, name in stations.items():
-            totals[key] = totals.get(key, 0) + 1
+            appearances.setdefault(key, []).append(position)
             # Newest-first means the first sighting is the most recent one, so
             # both the timestamp and the name spelling come from the newest net.
             last_seen.setdefault(key, session.get("started_at", ""))
@@ -46,13 +47,13 @@ def compute_attendance_stats(
         {
             "callsign": key[0],
             "name": display.get(key) or _contact_name(index, key[0]),
-            "total_nets": total,
-            "attended_of_recent": sum(1 for stations in recent if key in stations),
-            "recent_window": len(recent),
-            "current_streak": _streak(per_session, key),
+            "total_nets": len(positions),
+            "attended_of_recent": sum(1 for p in positions if p < recent_window),
+            "recent_window": recent_window,
+            "current_streak": _streak(positions),
             "last_seen": last_seen.get(key, ""),
         }
-        for key, total in totals.items()
+        for key, positions in appearances.items()
     ]
     rows.sort(key=lambda r: (-r["total_nets"], r["callsign"], r["name"]))
     return rows
@@ -74,11 +75,16 @@ def _station_names(session: dict) -> dict[tuple[str, str], str]:
     return stations
 
 
-def _streak(per_session: list[dict[tuple[str, str], str]], key: tuple[str, str]) -> int:
-    """Consecutive most-recent sessions containing this station."""
+def _streak(positions: list[int]) -> int:
+    """Consecutive most-recent sessions containing this station.
+
+    ``positions`` are the station's session positions in ascending order with
+    0 the newest net, so the streak is the length of the leading run
+    0, 1, 2, ... — the first gap ends it.
+    """
     streak = 0
-    for stations in per_session:
-        if key not in stations:
+    for position in positions:
+        if position != streak:
             break
         streak += 1
     return streak

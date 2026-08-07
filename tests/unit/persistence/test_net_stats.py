@@ -43,6 +43,38 @@ class TestComputeAttendanceStats:
         # Sam attended the newest net but missed the one before it.
         assert rows[("WRAB123", "Sam")]["current_streak"] == 1
 
+    def test_streak_is_zero_when_newest_net_was_missed(self):
+        # The streak is derived from the station's own session positions, so a
+        # gap at position 0 must end it even with a long run behind it.
+        summaries = [
+            _session("s4", "2026-08-22T19:00:00Z", ("KD8XYZ", "Lee")),
+            *SUMMARIES,
+        ]
+        rows = _by_station(compute_attendance_stats(summaries))
+        assert rows[("KD8ABC", "Maria")]["current_streak"] == 0
+        assert rows[("KD8ABC", "Maria")]["total_nets"] == 3
+        assert rows[("KD8XYZ", "Lee")]["current_streak"] == 1
+
+    def test_recent_window_shrinks_below_ten(self):
+        rows = _by_station(compute_attendance_stats(SUMMARIES))
+        assert rows[("WRAB123", "Sam")]["recent_window"] == 3
+        assert rows[("WRAB123", "Sam")]["attended_of_recent"] == 2
+
+    def test_attended_of_recent_ignores_sessions_past_the_window(self):
+        # 12 nets, attended only the 2 oldest: outside the 10-net window.
+        summaries = [
+            _session(f"s{i}", "2026-01-01T00:00:00Z", ("KD8ABC", "Maria"))
+            for i in range(10)
+        ] + [
+            _session(f"o{i}", "2025-01-01T00:00:00Z", ("KD8XYZ", "Lee"))
+            for i in range(2)
+        ]
+        rows = _by_station(compute_attendance_stats(summaries))
+        lee = rows[("KD8XYZ", "Lee")]
+        assert lee["total_nets"] == 2
+        assert lee["attended_of_recent"] == 0
+        assert lee["current_streak"] == 0
+
     def test_recent_window_caps_at_ten_sessions(self):
         many = [_session(f"s{i}", "2026-01-01T00:00:00Z", ("KD8ABC", "Maria")) for i in range(14)]
         row = compute_attendance_stats(many)[0]

@@ -52,3 +52,38 @@ class TestStatsToCsv:
         lines = csv_text.split("\n")
         assert lines[0].startswith('"callsign","name","total_nets"')
         assert lines[1] == '"A1","Ann","3","2","10","1","2026-08-07T12:00:00+00:00"'
+
+
+class TestFormulaInjection:
+    """Excel and LibreOffice evaluate a cell opening with = + - @ as a formula.
+    Exports get mailed around, so neutralize the prefix."""
+
+    def _row(self, name):
+        return session_to_csv({"roster": [
+            {"callsign": "A1", "name": name, "location": "",
+             "gmrs": "", "ham": ""},
+        ]}).split("\n")[1]
+
+    def test_equals_prefix_is_escaped(self):
+        assert self._row("=1+1") == '"A1","\'=1+1","","",""'
+
+    def test_plus_at_and_minus_prefixes_are_escaped(self):
+        for prefix in ("+", "-", "@"):
+            assert self._row(f"{prefix}cmd") == f'"A1","\'{prefix}cmd","","",""'
+
+    def test_cmd_formula_payload_is_neutralized(self):
+        assert self._row('=cmd|" /c calc"!A1').startswith('"A1","\'=cmd')
+
+    def test_ordinary_text_is_untouched(self):
+        assert self._row("Ann O'Hara") == '"A1","Ann O\'Hara","","",""'
+
+    def test_formula_char_mid_string_is_untouched(self):
+        assert self._row("Ada=MI") == '"A1","Ada=MI","","",""'
+
+    def test_header_is_not_mangled(self):
+        assert session_to_csv({"roster": []}) == \
+            '"callsign","name","location","gmrs","ham"'
+
+    def test_missing_field_renders_empty_not_none(self):
+        row = session_to_csv({"roster": [{"callsign": "A1"}]}).split("\n")[1]
+        assert row == '"A1","","","",""'

@@ -167,12 +167,42 @@ class TestReplaceSemantics:
     def test_late_replace_does_not_disturb_newer_utterance(self):
         session, chat, completed = _session()
         session.receive(1, "old partial", False, "green")
-        session.receive(2, "new partial", False, "green")  # flushes uid 1
+        session.receive(2, "new partial", False, "green")  # closes uid 1
         session.receive(1, "old full text", True, "green", replace=True)
-        # Replacement landed as its own line; uid 2 still open and growable.
+        # uid 1's own (already closed) line is upgraded in place — no third
+        # line — and uid 2 stays open and growable.
+        assert len(chat.messages) == 2
+        assert chat.replacements == [
+            (0, "<b>[RX 12:00:00]:</b> old full text", "green")
+        ]
         assert completed == ["old partial", "old full text"]
         session.receive(2, "more", True, "green")
         assert completed[-1] == "new partial more"
+
+    def test_late_replace_after_line_closed_by_final(self):
+        session, chat, completed = _session()
+        session.receive(1, "rough text", True, "green")   # closed by is_final
+        session.receive(1, "polished text", True, "green", replace=True)
+        # One transmission, one line: the closed line is rewritten rather than
+        # duplicated by the slow final pass.
+        assert len(chat.messages) == 1
+        assert chat._blocks[0] == "<b>[RX 12:00:00]:</b> polished text"
+        assert completed == ["rough text", "polished text"]
+
+    def test_late_replace_falls_back_to_new_line_when_chat_cleared(self):
+        session, chat, completed = _session()
+        session.receive(1, "rough text", True, "green")
+        chat._blocks.clear()   # Clear chat between the passes
+        session.receive(1, "polished text", True, "green", replace=True)
+        assert chat.replacements == []
+        assert len(chat.messages) == 2
+        assert completed == ["rough text", "polished text"]
+
+    def test_replace_for_wholly_unknown_uid_opens_its_own_line(self):
+        session, chat, completed = _session()
+        session.receive(9, "orphan final", True, "green", replace=True)
+        assert len(chat.messages) == 1
+        assert completed == ["orphan final"]
 
     def test_empty_final_closes_line_without_output(self):
         session, chat, completed = _session()

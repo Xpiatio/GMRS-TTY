@@ -151,6 +151,48 @@ class TestMaxTxWatchdog:
         assert not ctrl._watchdog_timer.isActive()
 
 
+class TestOverLengthRefusedBeforeKeying:
+    """A message longer than the cap is refused up front rather than keyed and
+    then chopped off mid-word by the watchdog."""
+
+    def _deliver(self, ctrl, seconds, sample_rate=22050):
+        import numpy as np
+        mock_player = MagicMock()
+        with patch("gmrs_tty.ui.tx_controller.AudioPlayerThread",
+                   return_value=mock_player) as player_cls:
+            ctrl._on_tts_synthesized(
+                np.ones(int(sample_rate * seconds), dtype="int16"),
+                sample_rate, ctrl._synth_generation,
+            )
+        return player_cls
+
+    def test_over_length_message_never_keys_ptt(self, qapp):
+        ctrl = _make_controller(qapp)
+        messages = []
+        ctrl.chat_message.connect(lambda html, color: messages.append(html))
+        _start_synthesis(ctrl, max_tx_s=5.0)
+        player_cls = self._deliver(ctrl, seconds=6.0)
+
+        player_cls.assert_not_called()
+        ctrl.ptt.key.assert_not_called()
+        assert not ctrl.is_busy
+        assert not ctrl._watchdog_timer.isActive()
+        assert any("cancelled" in m and "6s" in m for m in messages)
+
+    def test_message_inside_the_cap_transmits_normally(self, qapp):
+        ctrl = _make_controller(qapp)
+        _start_synthesis(ctrl, max_tx_s=5.0)
+        self._deliver(ctrl, seconds=4.0)
+        ctrl.ptt.key.assert_called_once()
+        assert ctrl._watchdog_timer.isActive()
+
+    def test_no_cap_means_no_length_check(self, qapp):
+        ctrl = _make_controller(qapp)
+        _start_synthesis(ctrl, max_tx_s=0.0)
+        self._deliver(ctrl, seconds=120.0)
+        ctrl.ptt.key.assert_called_once()
+
+
 class TestOperatorAbort:
     def test_abort_during_playback_stops_device(self, qapp):
         ctrl = _make_controller(qapp)

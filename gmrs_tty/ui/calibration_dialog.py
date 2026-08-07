@@ -29,9 +29,16 @@ from PySide6.QtWidgets import (
 from gmrs_tty.stt.calibration import PREAMBLE_TEXT, CalibrationCapture
 from gmrs_tty.stt.calibration_worker import CalibrationSweepWorker
 
-# Sweeps orphaned by a cancelled dialog live here until their thread
-# finishes; a QThread must never be garbage-collected while running.
+# Sweeps detached from the dialog live here until their thread finishes; a
+# QThread must never be garbage-collected while running.
 _ORPHANED_SWEEPS: list[CalibrationSweepWorker] = []
+
+
+def _release_sweep(sweep: CalibrationSweepWorker) -> None:
+    """Drop the keep-alive reference once the sweep's thread has finished."""
+    if sweep in _ORPHANED_SWEEPS:
+        _ORPHANED_SWEEPS.remove(sweep)
+
 
 MIN_CAPTURE_S = 2.0
 
@@ -293,7 +300,10 @@ class CalibrationDialog(QDialog):
         self._progress_bar.setRange(0, 1)
         self._progress_bar.setValue(0)
         self._progress_label.setText(f"Calibration failed: {msg}")
-        self._sweep = None
+        # Detach through the same path as cancel: clearing _sweep on its own
+        # would drop the last reference to a thread that may still be winding
+        # down, and the worker has no Qt parent to hold it.
+        self._detach_sweep()
 
     def _apply_selected(self) -> None:
         row = self._results_table.currentRow()
@@ -310,19 +320,28 @@ class CalibrationDialog(QDialog):
     # Cancel semantics
     # ------------------------------------------------------------------
 
+    def _detach_sweep(self) -> None:
+        """Stop listening to the sweep and let go of it.
+
+        A Whisper decode can't be interrupted, so a still-running thread is
+        parked in ``_ORPHANED_SWEEPS`` and reaped when it finishes on its own.
+        No-op when there is no sweep.
+        """
+        sweep = self._sweep
+        self._sweep = None
+        if sweep is None:
+            return
+        for signal in (sweep.progress, sweep.result, sweep.error):
+            try:
+                signal.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+        if sweep.isRunning():
+            _ORPHANED_SWEEPS.append(sweep)
+            sweep.finished.connect(lambda: _release_sweep(sweep))
+
     def reject(self) -> None:
         self._disconnect_capture()
         self._capture = None
-        if self._sweep is not None and self._sweep.isRunning():
-            # A Whisper decode can't be interrupted; orphan the sweep and
-            # reap the thread object once it finishes on its own.
-            sweep = self._sweep
-            for signal in (sweep.progress, sweep.result, sweep.error):
-                try:
-                    signal.disconnect()
-                except (TypeError, RuntimeError):
-                    pass
-            _ORPHANED_SWEEPS.append(sweep)
-            sweep.finished.connect(lambda: _ORPHANED_SWEEPS.remove(sweep))
-            self._sweep = None
+        self._detach_sweep()
         super().reject()
