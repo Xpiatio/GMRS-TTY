@@ -264,6 +264,23 @@ class ConfigDialog(QDialog):
             "hidden from the View menu."
         )
 
+        self.attendance_autosave_input = QCheckBox(
+            "Save the callsigns-detected grid when Listen stops"
+        )
+        self.attendance_autosave_input.setChecked(
+            bool((self.config.get("attendance") or {}).get("autosave_sessions", False))
+        )
+        self.attendance_autosave_input.setToolTip(
+            "When enabled, each Listen session's attendance grid is stored "
+            "as a net session record (Tools → Net Attendance History) "
+            "automatically. Sessions with no callsigns are skipped."
+        )
+        self.attendance_autosave_input.setAccessibleName("Auto-save net sessions")
+        self.attendance_autosave_input.setAccessibleDescription(
+            "When checked, the callsigns detected during each listening "
+            "session are saved automatically for attendance history."
+        )
+
         self.gemini_api_key_input = QLineEdit(self.config.get("gemini_api_key", ""))
         self.gemini_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.gemini_api_key_input.setPlaceholderText("AIza…  (leave blank to disable journal export)")
@@ -338,6 +355,7 @@ class ConfigDialog(QDialog):
         layout.addRow("Filter profanit&y:", self.filter_profanity_input)
         layout.addRow("F&uzzy callsigns:", self.fuzzy_callsign_input)
         layout.addRow("Callsigns &Detected:", self.attendance_enabled_input)
+        layout.addRow("Auto-save sessi&ons:", self.attendance_autosave_input)
         layout.addRow("Condition T&X audio:", self.tx_conditioning_input)
         layout.addRow("Max TX &length:", self.tx_max_duration_input)
         layout.addRow("Synthesis &timeout:", self.tx_synth_timeout_input)
@@ -607,6 +625,7 @@ class ConfigDialog(QDialog):
             # without crowding the top-level namespace.
             "attendance": {
                 "enabled": self.attendance_enabled_input.isChecked(),
+                "autosave_sessions": self.attendance_autosave_input.isChecked(),
             },
             "gemini_api_key": self.gemini_api_key_input.text().strip(),
             "ptt_mode": self.ptt_mode_input.currentData(),

@@ -197,7 +197,17 @@ class AppConfig(dict):
 
     @attendance_enabled.setter
     def attendance_enabled(self, value: bool) -> None:
-        self["attendance"] = {"enabled": value}
+        # Merge rather than replace so sibling keys (autosave_sessions, …)
+        # survive a toggle of the enabled flag.
+        attendance = dict(self.get("attendance") or {})
+        attendance["enabled"] = bool(value)
+        self["attendance"] = attendance
+
+    @property
+    def attendance_autosave_sessions(self) -> bool:
+        """Automatically store the attendance grid as a net session record
+        each time Listen stops (empty sessions are skipped)."""
+        return bool((self.get("attendance") or {}).get("autosave_sessions", False))
 
     # ---- AI / journal ----------------------------------------------------
 

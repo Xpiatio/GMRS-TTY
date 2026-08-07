@@ -960,9 +960,34 @@ def build_main_window(b: Builder):
                                             "Empties the entire grid "
                                             "immediately; future detections "
                                             "still log normally."),
-        ("Touch-screen mode", "When the app is in touch mode both the "
-                              "<b>Remove selected</b> and <b>Clear "
-                              "callsigns detected</b> buttons scale to "
+        ("Save session button", "Stores the current grid as a timestamped "
+                                "net-session record under "
+                                "<font face=\"Courier\">net_sessions/</font> "
+                                "for the attendance history (see Tools → "
+                                "Net Attendance History). Auto-save is "
+                                "available in Settings → Configuration → "
+                                "Behavior → Auto-save sessions: the grid is "
+                                "stored every time Listen stops, skipping "
+                                "sessions with no callsigns."),
+        ("Export CSV button", "Saves the live grid to a CSV file with "
+                              "columns Callsign, Name, Location, GMRS, HAM."),
+        ("Net Attendance History", "Tools → Net Attendance History opens a "
+                                   "two-tab browser. <b>History</b> lists "
+                                   "every saved session newest-first with "
+                                   "its full roster, per-session CSV export, "
+                                   "an export-all CSV (one row per station "
+                                   "per session), and per-session delete. "
+                                   "<b>Statistics</b> aggregates per-station "
+                                   "attendance — total nets, attendance over "
+                                   "the last 10, current streak, last seen — "
+                                   "sorted busiest-first, with CSV export. A "
+                                   "station is a callsign + name pair, so "
+                                   "family members sharing one GMRS callsign "
+                                   "count separately."),
+        ("Touch-screen mode", "When the app is in touch mode the "
+                              "<b>Remove selected</b>, <b>Clear "
+                              "callsigns detected</b>, <b>Save session</b>, "
+                              "and <b>Export CSV</b> buttons scale to "
                               "44 px minimum height for reliable touch "
                               "targets. The table itself is not affected."),
     ])
@@ -1349,6 +1374,12 @@ def build_config_dialog(b: Builder):
              "<font face=\"Courier\">attendance.enabled</font>. Also "
              "toggleable from View → Show callsigns detected "
              "(Ctrl+Shift+A). GMRS only."],
+            ["Auto-save sessions (Alt+O)", "Checkbox",
+             "Default off. Stores the Callsigns Detected grid as a net "
+             "session record each time Listen stops (empty sessions are "
+             "skipped). Records feed Tools → Net Attendance History. "
+             "Persists at "
+             "<font face=\"Courier\">attendance.autosave_sessions</font>."],
             ["Condition TX audio (Alt+X)", "Checkbox",
              "Default off. Band-limits synthesized speech to the "
              "300–3000 Hz FM voice channel, compresses peaks, and "

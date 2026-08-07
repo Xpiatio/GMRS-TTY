@@ -1,5 +1,6 @@
 import datetime
 import os
+import time
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
@@ -28,6 +29,7 @@ from gmrs_tty.persistence.contacts import (
 )
 from gmrs_tty.stt.vocab import assemble_phrases
 from gmrs_tty.persistence.json_store import load_json, save_json
+from gmrs_tty.persistence.net_sessions import save_session
 from gmrs_tty.ptt import make_ptt
 from gmrs_tty.stt.worker import ModelCache, STTWorker
 from gmrs_tty.text.callsigns import spell_digits_in_callsigns
@@ -43,6 +45,7 @@ from gmrs_tty.ui.contacts_dialog import ContactsDialog
 from gmrs_tty.ui.dock_layout import CompactTitleBar
 from gmrs_tty.ui.flow_layout import FlowLayout
 from gmrs_tty.ui.journal_controller import JournalController
+from gmrs_tty.ui.net_stats_dialog import NetStatsDialog
 from gmrs_tty.ui.pending_station_manager import PendingStationManager
 from gmrs_tty.ui.quick_messages_dialog import QuickMessagesDialog
 from gmrs_tty.ui.rx_session import RXSession
@@ -160,6 +163,7 @@ class MainWindow(QMainWindow):
         # cheap and doesn't require a layout rebuild.
         self.attendance_enabled = self.config.attendance_enabled
         self.attendance_panel = None
+        self._listen_started_at = None
         # Set True while we programmatically toggle dock visibility so the
         # dock's visibilityChanged signal doesn't mistake our own hide
         # (FRS-mode, layout reset, restore-from-saved) for a user click on
@@ -692,6 +696,7 @@ class MainWindow(QMainWindow):
         is fully opt-in — when disabled the panel exists but is hidden
         and never receives ``record`` calls."""
         self.attendance_panel = AttendancePanel(self)
+        self.attendance_panel.save_session_requested.connect(self._save_net_session)
 
         dock = QDockWidget("Callsigns Detected", self)
         dock.setObjectName(dock_layout.DOCK_ATTENDANCE)
@@ -1043,6 +1048,13 @@ class MainWindow(QMainWindow):
         )
         view_journals_action.triggered.connect(self.journal_controller.open_dialog)
         tools_menu.addAction(view_journals_action)
+
+        net_stats_action = QAction("&Net Attendance History…", self)
+        net_stats_action.setStatusTip(
+            "Browse saved net sessions, attendance statistics, and CSV exports."
+        )
+        net_stats_action.triggered.connect(self.open_net_stats_dialog)
+        tools_menu.addAction(net_stats_action)
 
         tools_menu.addSeparator()
 
@@ -1806,6 +1818,7 @@ class MainWindow(QMainWindow):
         self.stt_worker.error.connect(self.on_stt_error)
         self.stt_worker.status.connect(self.on_stt_status)
         self.stt_worker.audio_level.connect(self.audio_level_meter.setValue)
+        self._listen_started_at = time.time()
         self.stt_worker.start()
         # Bring the waterfall online too if the operator has it enabled.
         # Done after stt_worker.start() so the audio_chunk signal already
@@ -1883,6 +1896,37 @@ class MainWindow(QMainWindow):
         )
         self.touch_view.sync_listen_state(False, "Listen")
         self.touch_view.sync_monitor_state(False, False)
+        # Auto-save the session's attendance roster before the next Listen
+        # cycle can clear it. Config-gated; empty sessions are never stored.
+        if self.config.attendance_autosave_sessions:
+            self._save_net_session(quiet=True)
+        self._listen_started_at = None
+
+    def _save_net_session(self, quiet: bool = False) -> None:
+        """Store the current attendance grid as a net session record.
+
+        ``quiet`` suppresses the "nothing to save" notice for the
+        auto-save path, which legitimately fires on silent sessions.
+        """
+        rows = self.attendance_panel.rows() if self.attendance_panel else []
+        if not rows:
+            if not quiet:
+                self.statusBar().showMessage(
+                    "No callsigns detected this session — nothing to save", 4000
+                )
+            return
+        started = self._listen_started_at or time.time()
+        ended = time.time()
+        try:
+            path = save_session(started, ended, int(ended - started), rows)
+        except OSError as exc:
+            self.statusBar().showMessage(f"Session save failed: {exc}", 5000)
+            return
+        self.statusBar().showMessage(f"Session saved to {path}", 5000)
+
+    def open_net_stats_dialog(self):
+        dlg = NetStatsDialog(self.contacts, parent=self)
+        dlg.show()
 
     def _format_timestamp(self, now=None):
         """Render an HH:MM:SS clock string honoring the configured time_format

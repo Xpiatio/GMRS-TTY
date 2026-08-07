@@ -33,3 +33,7 @@ build/
 
 # AI-generated session journals (application output, not source)
 journals/
+
+# Net session records and STT debug captures (application output, not source)
+net_sessions/
+debug/

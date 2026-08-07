@@ -48,6 +48,7 @@
         "db_ceiling": -20.0
     },
     "attendance": {
-        "enabled": false
+        "enabled": false,
+        "autosave_sessions": false
     }
 }

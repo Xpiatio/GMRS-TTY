@@ -13,16 +13,18 @@ panel's own Clear button both route through ``clear()``.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHBoxLayout, QHeaderView, QMenu, QPushButton,
-    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QAbstractItemView, QFileDialog, QHBoxLayout, QHeaderView, QMenu,
+    QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout,
+    QWidget,
 )
 
 from gmrs_tty.persistence.attendance import (
     AttendanceTracker,
     build_attendance_rows,
 )
+from gmrs_tty.persistence.csv_export import session_to_csv
 from gmrs_tty.ui import theme
 
 
@@ -30,6 +32,10 @@ COLUMNS = ("Callsign", "Name", "Location", "GMRS", "HAM")
 
 
 class AttendancePanel(QWidget):
+    # Operator asked for the current grid to be stored as a net session.
+    # MainWindow owns the session timestamps, so it handles the save.
+    save_session_requested = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._tracker = AttendanceTracker()
@@ -68,6 +74,29 @@ class AttendancePanel(QWidget):
         button_row.setContentsMargins(0, 0, 0, 0)
         button_row.setSpacing(theme.SPACING_S)
         button_row.addStretch(1)
+        self.save_session_button = QPushButton("&Save session", self)
+        self.save_session_button.setToolTip(
+            "Store the current grid as a net session record for the "
+            "attendance history (Tools → Net Attendance History)."
+        )
+        self.save_session_button.setAccessibleName("Save session")
+        self.save_session_button.setAccessibleDescription(
+            "Store the callsigns detected this session as a net session "
+            "record for later attendance statistics and CSV export."
+        )
+        self.save_session_button.clicked.connect(self.save_session_requested.emit)
+        button_row.addWidget(self.save_session_button)
+        self.export_button = QPushButton("&Export CSV…", self)
+        self.export_button.setToolTip(
+            "Save the current grid to a CSV file (Callsign, Name, "
+            "Location, GMRS, HAM)."
+        )
+        self.export_button.setAccessibleName("Export callsigns detected as CSV")
+        self.export_button.setAccessibleDescription(
+            "Save the current callsigns-detected grid to a CSV file."
+        )
+        self.export_button.clicked.connect(self._export_csv)
+        button_row.addWidget(self.export_button)
         self.remove_button = QPushButton("&Remove selected", self)
         self.remove_button.setEnabled(False)
         self.remove_button.setToolTip(
@@ -99,6 +128,25 @@ class AttendancePanel(QWidget):
         min_h = 44 if enabled else 0
         self.remove_button.setMinimumHeight(min_h)
         self.clear_button.setMinimumHeight(min_h)
+        self.save_session_button.setMinimumHeight(min_h)
+        self.export_button.setMinimumHeight(min_h)
+
+    def rows(self) -> list[dict]:
+        """Current grid rows joined against the contacts snapshot — the
+        roster shape stored in net session records."""
+        return build_attendance_rows(self._tracker.callsigns(), self._contacts)
+
+    def _export_csv(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export CSV", "callsigns_detected.csv", "CSV files (*.csv)"
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8", newline="") as fh:
+                fh.write(session_to_csv({"roster": self.rows()}) + "\n")
+        except OSError as exc:
+            QMessageBox.warning(self, "Export Failed", f"Could not write file:\n{exc}")
 
     def record(self, callsign: str) -> None:
         """Add `callsign` to the session. No-op when it has already been
