@@ -94,6 +94,25 @@ class AppConfig(dict):
         vocabulary and custom phrases within the ~223-token budget."""
         return int(self.get("stt_vocab_max_callsigns", 15))
 
+    @property
+    def whisper_model_final(self) -> str:
+        """Second-pass model that re-transcribes each finalized utterance
+        whole. "" (the deliberate default) disables the second pass; "auto"
+        resolves to the best final-pass model actually staged on disk."""
+        return (self.get("whisper_model_final") or "").strip()
+
+    @property
+    def stt_final_max_s(self) -> float:
+        """Utterances longer than this skip the final pass (the partial texts
+        already cover them; a truncated re-transcription would lose words)."""
+        return float(self.get("stt_final_max_s", 60.0))
+
+    @property
+    def stt_final_device(self) -> str:
+        """Final-pass compute: 'auto' (GPU when available), 'gpu', or 'cpu'."""
+        val = str(self.get("stt_final_device", "auto")).strip().lower()
+        return val if val in ("auto", "gpu", "cpu") else "auto"
+
     # ---- TTS -------------------------------------------------------------
 
     @property

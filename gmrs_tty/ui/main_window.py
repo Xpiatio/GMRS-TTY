@@ -106,6 +106,13 @@ class _DualChatProxy:
             self._secondary.append_to_block(sb, text, color=color)
         return result
 
+    def replace_block(self, block, html, color="black"):
+        result = self._primary.replace_block(block, html, color=color)
+        sb = self._block_map.get(block)
+        if sb is not None:
+            self._secondary.replace_block(sb, html, color=color)
+        return result
+
     def clear(self):
         self._primary.clear()
         self._secondary.clear()
@@ -1824,6 +1831,9 @@ class MainWindow(QMainWindow):
             debug_dir=self.config.stt_debug_dir,
             gain_mode=self.config.stt_gain_mode,
             noise_profile=self.config.stt_noise_profile,
+            whisper_model_final=self.config.whisper_model_final,
+            final_max_s=self.config.stt_final_max_s,
+            stt_final_device=self.config.stt_final_device,
             parent=self,
         )
         self.stt_worker.transcribed_segment.connect(self.on_transcription_segment)
@@ -1973,8 +1983,10 @@ class MainWindow(QMainWindow):
             filter_fn=lambda t: mask_profanity(t) if self.config.filter_profanity else t,
         )
 
-    def on_transcription_segment(self, uid, text, is_final):
-        self._rx_session.receive(uid, text, is_final, color=theme.palette().rx)
+    def on_transcription_segment(self, uid, text, is_final, replace=False):
+        self._rx_session.receive(
+            uid, text, is_final, color=theme.palette().rx, replace=replace
+        )
 
     def on_stt_error(self, msg):
         self.append_to_chat(f"<i>STT Error: {msg}</i>", color=theme.palette().error)

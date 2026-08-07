@@ -1288,6 +1288,19 @@ def build_config_dialog(b: Builder):
              "listed — run bootstrap_models.py to stage more. Larger "
              "models are more accurate but slower. Changing this "
              "restarts the listener."],
+            ["Final-pass model (Alt+N)", "Dropdown",
+             "Default Off (single pass). When set, each completed "
+             "transmission is re-transcribed whole by this larger model on "
+             "a background thread and the chat line is upgraded in place. "
+             "Auto picks the best model staged under Models/STT. Stage one "
+             "with bootstrap_models.py --model small.en large-v3-turbo."],
+            ["Final-pass device (Alt+V)", "Dropdown",
+             "Auto / GPU / CPU. GPU needs the optional requirements-gpu.txt "
+             "extras; any GPU failure falls back to CPU automatically."],
+            ["Final-pass max length (Alt+L)", "Spin 5–600 s",
+             "Transmissions longer than this keep their streaming "
+             "transcript instead of a possibly-truncated re-read. "
+             "Default 60 s."],
             ["Gain mode (Alt+G)", "Dropdown",
              "Gain stage applied to each utterance before transcription. "
              "Dynamic AGC (default) levels weak and strong stations with "

@@ -63,6 +63,10 @@ GAIN_MODES: tuple[str, ...] = ("agc", "rms", "off")
 VALID_WHISPER_MODELS: frozenset[str] = frozenset({
     "tiny.en", "base.en", "small.en", "medium.en", "large-v3", "distil-large-v3",
 })
+# Final-pass-only additions: turbo is too slow for the streaming slices, so
+# it must never be selectable as the fast model; "auto" resolves to the best
+# staged model at worker construction.
+VALID_FINAL_MODELS: frozenset[str] = VALID_WHISPER_MODELS | {"large-v3-turbo", "auto"}
 
 
 def validate_voice_path(voice_path: str) -> bool:

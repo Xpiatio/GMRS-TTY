@@ -30,6 +30,9 @@ class ModelCache:
     whisper: object
     vad_model: object
     model_name: str
+    # Second-pass model that re-transcribes full utterances on finalization.
+    whisper_final: object = None
+    final_model_name: str = ""
 
 
 class STTWorker(QThread):
@@ -47,11 +50,14 @@ class STTWorker(QThread):
     `utterance_id` so the UI can grow a single chat line as the
     transmission progresses, instead of waiting for the operator to unkey.
     """
-    # (utterance_id, text, is_final). Partial segments emit with is_final=False
-    # so the UI can grow a single chat line; the last segment of an utterance
-    # emits with is_final=True so consumers can close the line and run any
-    # full-text passes (callsign scan, etc.).
-    transcribed_segment = Signal(int, str, bool)
+    # (utterance_id, text, is_final, replace). Partial segments emit with
+    # is_final=False so the UI can grow a single chat line; the last segment
+    # of an utterance emits with is_final=True so consumers can close the
+    # line and run any full-text passes (callsign scan, etc.).
+    # ``replace=True`` marks a two-tier full-utterance re-transcription that
+    # supersedes the accumulated partial texts: the UI rewrites the
+    # utterance's chat line with this text instead of appending.
+    transcribed_segment = Signal(int, str, bool, bool)
     error = Signal(str)
     status = Signal(str)
     # Peak amplitude per captured chunk on a 0-100 scale, emitted live so
@@ -95,6 +101,10 @@ class STTWorker(QThread):
     # buffer/minimum sizes give >= ~31 STFT frames for a stable threshold.
     NOISE_BUFFER_S = 2.0
     NOISE_MIN_S = 0.5
+    # whisper_model_final="auto" resolves to the first of these actually
+    # staged under Models/STT (skipping the fast-path model). Turbo first:
+    # near large-v3 accuracy at a fraction of the decode cost.
+    FINAL_MODEL_PREFERENCE = ("large-v3-turbo", "distil-large-v3", "large-v3")
 
     MODELS_STT_DIR = os.path.join("Models", "STT")
 
@@ -102,6 +112,7 @@ class STTWorker(QThread):
                  model_cache: "ModelCache | None" = None, system_monitor_sink="",
                  saved_phrases=(), debug_capture=False, debug_dir="",
                  gain_mode="agc", noise_profile=False,
+                 whisper_model_final="", final_max_s=60.0, stt_final_device="auto",
                  parent=None):
         super().__init__(parent)
         self.input_device = input_device if input_device not in (None, -1) else None
@@ -115,6 +126,24 @@ class STTWorker(QThread):
         self._debug_recorder = None
         self.gain_mode = gain_mode if gain_mode in GAIN_MODES else "agc"
         self.noise_profile = bool(noise_profile)
+        # Two-tier transcription: when a final model is configured, every
+        # finalized utterance is re-transcribed whole on a low-priority
+        # thread and emitted as a replacing final. "auto" resolves to the
+        # best model actually staged; since the worker is rebuilt on every
+        # Listen toggle, a model downloaded between toggles is picked up.
+        self.final_max_s = float(final_max_s)
+        self.stt_final_device = stt_final_device
+        self.whisper_model_final_configured = (whisper_model_final or "").strip()
+        self.whisper_model_final = self._resolve_final_model(
+            self.whisper_model_final_configured
+        )
+        self._final_q: "queue.Queue | None" = (
+            queue.Queue(maxsize=8) if self.whisper_model_final else None
+        )
+        # uid → accumulated segment audio; None marks "too long, pass abandoned"
+        self._pending_final: dict = {}
+        # uid → the utterance's noise clip, held until the final pass is queued
+        self._pending_noise: dict = {}
         self._running = True
         self._paused = False
         self._model_cache: ModelCache | None = model_cache
@@ -143,6 +172,9 @@ class STTWorker(QThread):
         self.saved_phrases = list(phrases)
         if self._model_cache is not None:
             self._model_cache.whisper.update_prompt(self.saved_phrases)
+            final = getattr(self._model_cache, "whisper_final", None)
+            if final is not None:
+                final.update_prompt(self.saved_phrases)
 
     def run(self):
         if not self._running:
@@ -215,6 +247,15 @@ class STTWorker(QThread):
             daemon=True,
         )
         transcribe_thread.start()
+
+        final_thread = None
+        if self._final_q is not None:
+            final_thread = threading.Thread(
+                target=self._final_pass_loop,
+                args=(self._final_q, bandpass_sos),
+                daemon=True,
+            )
+            final_thread.start()
 
         self.status.emit("Listening...")
         squelch = SquelchDetector(
@@ -319,6 +360,16 @@ class STTWorker(QThread):
                 pass
             transcribe_queue.put(None)
             transcribe_thread.join(timeout=15)
+            if final_thread is not None:
+                # Sentinel after the transcription thread has drained so any
+                # finals it enqueued are processed first. The bounded queue
+                # could be full if the final model is far behind — don't hang
+                # shutdown on it.
+                try:
+                    self._final_q.put(None, timeout=5)
+                except queue.Full:
+                    pass
+                final_thread.join(timeout=30)
             self.status.emit("Stopped listening")
 
     def _transcription_loop(self, transcribe_queue, transcriber, bandpass_sos):
@@ -327,6 +378,7 @@ class STTWorker(QThread):
         is_final, noise_clip); a None sentinel signals shutdown.
         Single-threaded by design so partials emit in capture order.
         """
+        final_enabled = self._final_q is not None
         while True:
             job = transcribe_queue.get()
             if job is None:
@@ -334,6 +386,8 @@ class STTWorker(QThread):
             uid, audio, is_final, noise_clip = job
             recorder = self._debug_recorder
             try:
+                if final_enabled:
+                    self._accumulate_for_final(uid, audio, noise_clip)
                 processed = preprocess_segment(
                     audio, self.SAMPLE_RATE, bandpass_sos, gain_mode=self.gain_mode,
                     noise_clip=noise_clip,
@@ -341,12 +395,221 @@ class STTWorker(QThread):
                 if recorder is not None:
                     recorder.on_processed(uid, processed)
                 text = transcriber.transcribe(processed)
-                if text:
-                    if recorder is not None:
-                        recorder.on_transcript(uid, text, partial=not is_final)
-                    self.transcribed_segment.emit(uid, text, is_final)
+                if text and recorder is not None:
+                    recorder.on_transcript(uid, text, partial=not is_final)
+                if final_enabled and is_final:
+                    full = self._take_final_audio(uid)
+                    clip = self._pending_noise.pop(uid, None)
+                    if full is not None:
+                        # Demote the fast-path tail to a partial; the final
+                        # pass replaces the whole utterance shortly.
+                        if text:
+                            self.transcribed_segment.emit(uid, text, False, False)
+                        self._enqueue_final(uid, full, clip)
+                    else:
+                        # Too long for the final pass — flush as a plain
+                        # final (empty text still releases the partials).
+                        self.transcribed_segment.emit(uid, text or "", True, False)
+                elif text:
+                    self.transcribed_segment.emit(uid, text, is_final, False)
             except Exception as e:
                 self.error.emit(f"Transcription error: {e}")
             finally:
                 if recorder is not None and is_final:
                     recorder.finalize(uid)
+
+    # ------------------------------------------------------------------
+    # Two-tier final pass — full-utterance re-transcription
+    # ------------------------------------------------------------------
+
+    def _accumulate_for_final(self, uid, audio, noise_clip=None) -> None:
+        """Collect raw segment audio per utterance for the final pass.
+        Past the final_max_s cap the pass is abandoned (marked None) so the
+        partial texts — which cover the whole utterance — are kept instead of
+        being replaced by a truncated re-transcription."""
+        if noise_clip is not None and uid not in self._pending_noise:
+            self._pending_noise[uid] = noise_clip
+        entry = self._pending_final.get(uid, [])
+        if entry is None:
+            return
+        cap = int(self.final_max_s * self.SAMPLE_RATE)
+        if sum(c.size for c in entry) + audio.size > cap:
+            self._pending_final[uid] = None
+            return
+        entry.append(audio)
+        self._pending_final[uid] = entry
+
+    def _take_final_audio(self, uid):
+        """Pop the accumulated utterance audio, or None if abandoned/missing."""
+        entry = self._pending_final.pop(uid, None)
+        if not entry:
+            return None
+        return np.concatenate(entry)
+
+    def _enqueue_final(self, uid, audio, noise_clip=None) -> None:
+        """Queue a final-pass job; under backlog, drop the oldest job and
+        flush its partials with an empty plain final so nothing is lost."""
+        try:
+            self._final_q.put_nowait((uid, audio, noise_clip))
+            return
+        except queue.Full:
+            pass
+        try:
+            old_uid, _, _ = self._final_q.get_nowait()
+            self.transcribed_segment.emit(old_uid, "", True, False)
+        except queue.Empty:
+            pass
+        try:
+            self._final_q.put_nowait((uid, audio, noise_clip))
+        except queue.Full:
+            self.transcribed_segment.emit(uid, "", True, False)
+
+    def _resolve_final_model(self, configured: str) -> str:
+        """Map the configured final-model name to the one the worker uses.
+
+        Explicit names (and "") pass through untouched — a missing explicit
+        model keeps today's loud load-time error. "auto" returns the first
+        FINAL_MODEL_PREFERENCE entry staged under Models/STT, skipping the
+        fast-path model, or "" (silent single-pass) when none qualifies.
+
+        The usability probe is isdir-only: with stt_final_device="auto" a
+        candidate needs its CT2 dir — rocm_available() is deliberately never
+        called here (it imports torch, and __init__ runs on the GUI thread),
+        so hf-only staging requires explicit stt_final_device="gpu".
+        """
+        if configured != "auto":
+            return configured
+        for name in self.FINAL_MODEL_PREFERENCE:
+            if name == self.whisper_model_name:
+                continue
+            ct2 = os.path.isdir(os.path.join(self.MODELS_STT_DIR, name))
+            if self.stt_final_device == "gpu":
+                usable = ct2 or os.path.isdir(
+                    os.path.join(self.MODELS_STT_DIR, name + "-hf")
+                )
+            else:
+                usable = ct2
+            if usable:
+                return name
+        _log.info(
+            "whisper_model_final='auto': no final-pass model staged under %s — "
+            "running single-pass", self.MODELS_STT_DIR,
+        )
+        return ""
+
+    def _resolve_final_backend(self) -> str:
+        """'gpu' or 'cpu' — honoring config and GPU availability."""
+        from gmrs_tty.stt._device import rocm_available
+
+        if self.stt_final_device == "cpu":
+            return "cpu"
+        if self.stt_final_device == "gpu":
+            return "gpu"
+        return "gpu" if rocm_available() else "cpu"
+
+    def _final_model_path(self, backend: str) -> str:
+        """CT2 dir for CPU, '<name>-hf' dir for the GPU transformers model."""
+        name = self.whisper_model_final + ("-hf" if backend == "gpu" else "")
+        return os.path.join(self.MODELS_STT_DIR, name)
+
+    def _load_one_final(self, backend: str):
+        """Load a single backend's final transcriber, or None on missing dir."""
+        from gmrs_tty.stt.gpu_transcriber import GpuWhisperTranscriber
+
+        path = self._final_model_path(backend)
+        if not os.path.isdir(path):
+            return None
+        self.status.emit(
+            f"Loading final-pass model {self.whisper_model_final} ({backend})..."
+        )
+        cores = os.cpu_count() or 2
+        cls = GpuWhisperTranscriber if backend == "gpu" else WhisperTranscriber
+        return cls.load(
+            path, saved_phrases=self.saved_phrases, cpu_threads=max(1, cores // 2)
+        )
+
+    def _load_final_transcriber(self):
+        """Lazy-load the final-pass model (cached across Listen toggles).
+        Selects GPU vs CPU; any GPU failure falls back to CPU. Returns None
+        only when no backend can load (caller then emits plain finals)."""
+        cache = self._model_cache
+        if (
+            cache is not None
+            and cache.whisper_final is not None
+            and cache.final_model_name == self.whisper_model_final
+        ):
+            cache.whisper_final.update_prompt(self.saved_phrases)
+            return cache.whisper_final
+
+        backend = self._resolve_final_backend()
+        transcriber = None
+        if backend == "gpu":
+            try:
+                transcriber = self._load_one_final("gpu")
+            except Exception as e:
+                self.error.emit(f"GPU final-pass load failed ({e}); falling back to CPU.")
+                transcriber = None
+            if transcriber is None:
+                self.status.emit(
+                    "Final-pass GPU model not available; falling back to CPU."
+                )
+                backend = "cpu"
+        if transcriber is None:
+            try:
+                transcriber = self._load_one_final("cpu")
+            except Exception as e:
+                self.error.emit(f"Failed to load final-pass model: {e}")
+                return None
+            if transcriber is None:
+                path = self._final_model_path("cpu")
+                self.error.emit(
+                    f"Final-pass model not found at '{path}'. Run "
+                    f"'python bootstrap_models.py --final-model {self.whisper_model_final}' "
+                    f"then copy Models/ here. "
+                    f"Falling back to single-pass transcription."
+                )
+                return None
+
+        if transcriber is not None and cache is not None:
+            cache.whisper_final = transcriber
+            cache.final_model_name = self.whisper_model_final
+        return transcriber
+
+    def _final_pass_loop(self, final_q, bandpass_sos) -> None:
+        """Re-transcribe whole utterances with the larger model and emit
+        replacing finals. Runs at reduced scheduler priority; every job ends
+        in exactly one final emission (replace, or empty fallback) so the
+        UI's per-utterance line always closes."""
+        try:
+            os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), 10)
+        except Exception:
+            pass
+        transcriber = None
+        load_failed = False
+        while True:
+            job = final_q.get()
+            if job is None:
+                break
+            uid, audio, noise_clip = job
+            if transcriber is None and not load_failed:
+                transcriber = self._load_final_transcriber()
+                load_failed = transcriber is None
+            text = None
+            if transcriber is not None:
+                try:
+                    processed = preprocess_segment(
+                        audio, self.SAMPLE_RATE, bandpass_sos, gain_mode=self.gain_mode,
+                        noise_clip=noise_clip,
+                    )
+                    # Whole utterance, already squelch-bounded: don't let VAD
+                    # re-gating or a low-confidence drop truncate long messages.
+                    text = transcriber.transcribe(
+                        processed, vad_filter=False, drop_low_confidence=False
+                    )
+                except Exception as e:
+                    self.error.emit(f"Final-pass transcription error: {e}")
+                    text = None
+            if text:
+                self.transcribed_segment.emit(uid, text, True, True)
+            else:
+                self.transcribed_segment.emit(uid, "", True, False)

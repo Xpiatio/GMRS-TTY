@@ -86,6 +86,30 @@ class ChatDisplay(QTextEdit):
             sb.setValue(sb.maximum())
         return True
 
+    def replace_block(self, block_number, html, color="black"):
+        """Rewrite an existing block's content in place. Used by the
+        two-tier RX final pass: the whole-utterance re-transcription
+        supersedes the accumulated partial texts, so the line is rewritten
+        rather than grown. Returns True on success, False if the block is
+        no longer valid (e.g., the chat was cleared)."""
+        doc = self.document()
+        block = doc.findBlockByNumber(int(block_number))
+        if not block.isValid():
+            return False
+        sb = self.verticalScrollBar()
+        was_at_bottom = sb is None or sb.value() >= sb.maximum() - 2
+        cursor = QTextCursor(block)
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+        cursor.movePosition(
+            QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor
+        )
+        cursor.insertHtml(f"<span style='color:{color};'>{html}</span>")
+        block = doc.findBlockByNumber(int(block_number))
+        self._apply_pill_format(block.position(), block.text())
+        if was_at_bottom and sb is not None:
+            sb.setValue(sb.maximum())
+        return True
+
     def rescan_all_blocks(self):
         """Re-walk every block and apply pill formatting under the current index.
         Used when the contacts list changes so previously-displayed lines get

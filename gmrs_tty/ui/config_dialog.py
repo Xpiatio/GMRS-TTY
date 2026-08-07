@@ -10,7 +10,8 @@ from PySide6.QtWidgets import (
 )
 
 from gmrs_tty.constants import (
-    GAIN_MODES, VALID_WHISPER_MODELS, VOICE_TEST_TEXT, validate_voice_path,
+    GAIN_MODES, VALID_FINAL_MODELS, VALID_WHISPER_MODELS, VOICE_TEST_TEXT,
+    validate_voice_path,
 )
 from gmrs_tty.stt.worker import STTWorker
 from gmrs_tty.ui.device_query import DeviceQueryThread
@@ -401,6 +402,66 @@ class ConfigDialog(QDialog):
             "Choose how audio levels are normalized before speech recognition."
         )
 
+        self.final_model_input = QComboBox()
+        self.final_model_input.addItem("Off (single pass)", "")
+        self.final_model_input.addItem("Auto (best staged model)", "auto")
+        final_staged = sorted(
+            m for m in VALID_FINAL_MODELS - {"auto"}
+            if os.path.isdir(os.path.join(STTWorker.MODELS_STT_DIR, m))
+            or os.path.isdir(os.path.join(STTWorker.MODELS_STT_DIR, m + "-hf"))
+        )
+        current_final = self.config.get("whisper_model_final", "")
+        if current_final not in ("", "auto") and current_final not in final_staged:
+            final_staged.append(current_final)
+        for m in final_staged:
+            self.final_model_input.addItem(m, m)
+        idx = self.final_model_input.findData(current_final)
+        if idx >= 0:
+            self.final_model_input.setCurrentIndex(idx)
+        self.final_model_input.setToolTip(
+            "Optional second pass: after each transmission ends, the whole "
+            "utterance is re-transcribed with this larger model and the "
+            "chat line is upgraded in place. Off keeps single-pass "
+            "transcription; Auto picks the best model staged under "
+            "Models/STT (stage one with bootstrap_models.py --final-model)."
+        )
+        self.final_model_input.setAccessibleName("Final-pass model")
+        self.final_model_input.setAccessibleDescription(
+            "Select a larger Whisper model that re-transcribes each "
+            "complete transmission for higher accuracy, or Off to disable."
+        )
+
+        self.final_device_input = QComboBox()
+        self.final_device_input.addItem("Auto (GPU when available)", "auto")
+        self.final_device_input.addItem("GPU", "gpu")
+        self.final_device_input.addItem("CPU", "cpu")
+        idx = self.final_device_input.findData(self.config.get("stt_final_device", "auto"))
+        if idx >= 0:
+            self.final_device_input.setCurrentIndex(idx)
+        self.final_device_input.setToolTip(
+            "Where the final pass runs. GPU needs the optional "
+            "requirements-gpu.txt extras (torch + transformers); any GPU "
+            "failure falls back to CPU automatically."
+        )
+        self.final_device_input.setAccessibleName("Final-pass device")
+        self.final_device_input.setAccessibleDescription(
+            "Choose whether the final-pass model runs on the GPU or CPU."
+        )
+
+        self.final_max_s_input = QSpinBox()
+        self.final_max_s_input.setRange(5, 600)
+        self.final_max_s_input.setSuffix(" s")
+        self.final_max_s_input.setValue(int(float(self.config.get("stt_final_max_s", 60.0))))
+        self.final_max_s_input.setToolTip(
+            "Transmissions longer than this skip the second pass — the "
+            "streaming transcript already covers them."
+        )
+        self.final_max_s_input.setAccessibleName("Final-pass maximum length")
+        self.final_max_s_input.setAccessibleDescription(
+            "Longest transmission, in seconds, that the final pass will "
+            "re-transcribe."
+        )
+
         self.noise_profile_input = QCheckBox(
             "Learn the channel noise floor while squelch is closed"
         )
@@ -469,6 +530,9 @@ class ConfigDialog(QDialog):
         self.debug_dir_input.setEnabled(self.debug_capture_input.isChecked())
 
         layout.addRow("Whisper &Model:", self.whisper_model_input)
+        layout.addRow("Fi&nal-pass model:", self.final_model_input)
+        layout.addRow("Final-pass de&vice:", self.final_device_input)
+        layout.addRow("Final-pass max &length:", self.final_max_s_input)
         layout.addRow("&Gain mode:", self.gain_mode_input)
         layout.addRow("Noise pro&file:", self.noise_profile_input)
         layout.addRow("Custom p&hrases:", self.saved_phrases_input)
@@ -607,6 +671,9 @@ class ConfigDialog(QDialog):
             "monitor_enabled": self.monitor_enabled_input.isChecked(),
             "vad_threshold": round(self.vad_threshold_input.value(), 2),
             "whisper_model": self.whisper_model_input.currentData(),
+            "whisper_model_final": self.final_model_input.currentData(),
+            "stt_final_device": self.final_device_input.currentData(),
+            "stt_final_max_s": float(self.final_max_s_input.value()),
             "stt_gain_mode": self.gain_mode_input.currentData(),
             "stt_noise_profile": self.noise_profile_input.isChecked(),
             "saved_phrases": [

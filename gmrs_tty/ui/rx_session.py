@@ -43,10 +43,14 @@ class RXSession:
         self._uid: int | None = None
         self._block: int | None = None
         self._text: str = ""
+        self._ts: str = ""
 
     # ------------------------------------------------------------------
 
-    def receive(self, uid: int, text: str, is_final: bool, color: str) -> None:
+    def receive(
+        self, uid: int, text: str, is_final: bool, color: str,
+        replace: bool = False,
+    ) -> None:
         """Append one transcription segment to the chat.
 
         Args:
@@ -54,37 +58,75 @@ class RXSession:
             text:     Transcribed text for this segment.
             is_final: True on the last segment of an utterance.
             color:    CSS-compatible color string for the chat line.
+            replace:  True for a two-tier full-utterance re-transcription
+                      that supersedes the accumulated partial texts — the
+                      utterance's chat line is rewritten, not grown.
         """
         text = self._filter(text)
+
+        if replace and text:
+            self._replace_utterance(uid, text, color)
+            return
+
         if not text:
+            # An empty *final* still closes the utterance — the two-tier
+            # pipeline emits one to release the partials when a final pass
+            # is abandoned or fails.
+            if is_final and uid == self._uid:
+                self._close()
             return
 
         if uid != self._uid:
             # New utterance — flush any in-progress one so its callsigns still land.
             if self._uid is not None and self._text:
                 self._on_complete(self._text)
-            ts = self._format_ts()
-            block = self._chat.append_message(f"<b>[RX {ts}]:</b> {text}", color=color)
-            self._uid = uid
-            self._block = block
-            self._text = text
+            self._open_line(uid, text, color)
         else:
             appended = self._chat.append_to_block(self._block, " " + text, color=color)
             if not appended:
                 # Chat was cleared mid-utterance — open a fresh line.
-                ts = self._format_ts()
-                self._block = self._chat.append_message(
-                    f"<b>[RX {ts}]:</b> {text}", color=color
-                )
-                self._text = text
+                self._open_line(uid, text, color)
             else:
                 self._text += " " + text
 
         if is_final:
+            self._close()
+
+    def _open_line(self, uid: int, text: str, color: str) -> None:
+        self._ts = self._format_ts()
+        self._block = self._chat.append_message(
+            f"<b>[RX {self._ts}]:</b> {text}", color=color
+        )
+        self._uid = uid
+        self._text = text
+
+    def _close(self) -> None:
+        if self._text:
             self._on_complete(self._text)
-            self._uid = None
-            self._block = None
-            self._text = ""
+        self._uid = None
+        self._block = None
+        self._text = ""
+
+    def _replace_utterance(self, uid: int, text: str, color: str) -> None:
+        """Rewrite the utterance's chat line with the final-pass text."""
+        if uid == self._uid and self._block is not None:
+            replaced = self._chat.replace_block(
+                self._block, f"<b>[RX {self._ts}]:</b> {text}", color=color
+            )
+            if replaced:
+                self._text = text
+            else:
+                # Chat was cleared mid-utterance — same uid, safe to reopen.
+                self._open_line(uid, text, color)
+            self._close()
+            return
+        # The utterance was already flushed (or a newer one is in progress —
+        # the slow final pass can land after the next transmission starts).
+        # Emit the replacement as its own line without disturbing whatever
+        # is currently being tracked.
+        ts = self._format_ts()
+        self._chat.append_message(f"<b>[RX {ts}]:</b> {text}", color=color)
+        self._on_complete(text)
 
     def flush(self) -> None:
         """Flush any in-progress utterance. Call before tearing down the STT worker."""

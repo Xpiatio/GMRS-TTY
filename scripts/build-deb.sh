@@ -116,6 +116,9 @@ PY
 # ---------------------------------------------------------------------------
 # 3. Vendor Python wheels for offline install.
 #    --extra-index-url pulls the CPU build of torch instead of CUDA.
+#    requirements-gpu.txt (optional final-pass GPU extras) is deliberately
+#    NOT vendored — GPU support is a post-install `pip install -r
+#    requirements-gpu.txt` into the /opt/gmrs-tty venv.
 # ---------------------------------------------------------------------------
 echo ">>> Downloading wheels (this can take a few minutes) ..."
 "$PY" -m pip download \
