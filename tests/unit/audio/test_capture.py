@@ -1,6 +1,5 @@
 """Unit tests for SystemMonitorSource, enumerate_monitor_sources, and AudioInputSource."""
-import sys
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -218,7 +217,7 @@ class TestOpenInputSourceRouting:
     def test_system_monitor_returns_system_monitor_source(self):
         with patch("gmrs_tty.audio.capture.SystemMonitorSource") as mock_cls:
             mock_cls.return_value = MagicMock()
-            result = open_input_source(16000, 512, input_device="system_monitor", system_monitor_sink="my_sink")
+            open_input_source(16000, 512, input_device="system_monitor", system_monitor_sink="my_sink")
         mock_cls.assert_called_once_with(16000, 512, sink="my_sink")
 
     def test_none_device_tries_parec_first(self):

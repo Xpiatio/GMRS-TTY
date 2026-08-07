@@ -12,8 +12,6 @@ from __future__ import annotations
 import logging
 
 from piper.voice import PiperVoice
-
-_log = logging.getLogger(__name__)
 from PySide6.QtCore import QObject, Signal
 
 from gmrs_tty.audio.playback import AudioPlayerThread
@@ -21,6 +19,8 @@ from gmrs_tty.text.shorthand import expand_tty_abbreviations
 from gmrs_tty.tts.synthesizer import TTSSynthesisThread
 from gmrs_tty.constants import VOICE_TEST_TEXT, validate_voice_path
 from gmrs_tty.ui import theme
+
+_log = logging.getLogger(__name__)
 
 
 class TXController(QObject):

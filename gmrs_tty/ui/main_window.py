@@ -17,14 +17,12 @@ from gmrs_tty.constants import (
     CONFIG_FILE, CONTACTS_FILE,
     DEFAULT_OPERATOR_NAME, UNSET_FIELD,
     SERVICE_FRS, SERVICE_GMRS, normalize_service,
-    utc_now_iso,
 )
 from gmrs_tty.fcc.id_rule import format_outgoing_message, format_standalone_id
 from gmrs_tty.net.online import is_online
 from gmrs_tty.persistence.contacts import (
     deduplicate_ham_cross_references,
     index_contacts_by_callsign,
-    known_callsigns,
     sort_contacts,
 )
 from gmrs_tty.persistence.json_store import load_json, save_json
@@ -47,6 +45,7 @@ from gmrs_tty.ui.pending_station_manager import PendingStationManager
 from gmrs_tty.ui.quick_messages_dialog import QuickMessagesDialog
 from gmrs_tty.ui.rx_session import RXSession
 from gmrs_tty.ui.spectro_manager import SpectrometerManager
+from gmrs_tty.ui.spectrogram_widget import SpectrogramWidget
 from gmrs_tty.ui.touch_view import TouchView
 
 PENDING_PILL_MAX_ROWS = 3
@@ -69,7 +68,7 @@ THEME_GLYPH_TO_DARK = "\U0001F319"   # 🌙 crescent moon
 THEME_GLYPH_TO_LIGHT = "☀️"  # ☀️ sun
 
 TOUCH_GLYPH_ENTER = "⊞"   # ⊞ — click to enter touch mode
-TOUCH_GLYPH_EXIT  = "⊟"   # ⊟ — click to exit touch mode
+TOUCH_GLYPH_EXIT = "⊟"    # ⊟ — click to exit touch mode
 
 
 class _DualChatProxy:

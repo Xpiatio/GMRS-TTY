@@ -10,7 +10,7 @@ from gmrs_tty.audio.spectro_worker import SpectrogramWorker
 from gmrs_tty.constants import CONFIG_FILE
 from gmrs_tty.persistence.json_store import save_json
 from gmrs_tty.stt.worker import STTWorker
-from gmrs_tty.ui import dock_layout, theme
+from gmrs_tty.ui import dock_layout
 from gmrs_tty.ui.dock_layout import CompactTitleBar
 from gmrs_tty.ui.spectro_colormap import AVAILABLE_COLORMAPS
 from gmrs_tty.ui.spectrogram_widget import (

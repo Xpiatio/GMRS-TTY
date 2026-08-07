@@ -157,7 +157,6 @@ class TestThemeToggleGlyph:
     def test_glyph_flips_after_toggle(self, qapp, reset_theme):
         # After clicking the toggle the icon has to update so the next
         # click's destination is correctly advertised.
-        from gmrs_tty.ui import main_window as mw_mod
 
         window = _make_window(qapp, dark_mode=False)
         try:
@@ -176,7 +175,6 @@ class TestThemeTogglePersistence:
         # next launch lands in the user's chosen theme. The fixture only
         # patches save_json during construction; re-patch here so the
         # click-time call is captured.
-        from gmrs_tty.ui import main_window as mw_mod
 
         saved = []
         window = _make_window(qapp, dark_mode=False)
@@ -194,7 +192,6 @@ class TestThemeTogglePersistence:
             window.close()
 
     def test_second_click_flips_back_to_light(self, qapp, reset_theme):
-        from gmrs_tty.ui import main_window as mw_mod
 
         saved = []
         window = _make_window(qapp, dark_mode=False)
@@ -240,7 +237,6 @@ class TestThemeAppliedToWidgets:
         # The header label uses an inline stylesheet (it's not a QPalette
         # role), so the toggle path has to update it explicitly. Patch
         # save_json again so the click doesn't hit the real config file.
-        from gmrs_tty.ui import main_window as mw_mod
 
         window = _make_window(qapp, dark_mode=False)
         try:
@@ -258,7 +254,6 @@ class TestThemeAppliedToWidgets:
         # Live pending pills mustn't keep their light-mode amber-100 bg
         # against a dark window — the toggle path must walk
         # pending_buttons and reapply the current pill stylesheet.
-        from gmrs_tty.ui import main_window as mw_mod
 
         window = _make_window(qapp, dark_mode=False)
         try:
