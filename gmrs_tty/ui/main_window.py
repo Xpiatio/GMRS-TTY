@@ -44,6 +44,7 @@ from gmrs_tty.ui.config_dialog import ConfigDialog
 from gmrs_tty.ui.contacts_dialog import ContactsDialog
 from gmrs_tty.ui.dock_layout import CompactTitleBar
 from gmrs_tty.ui.flow_layout import FlowLayout
+from gmrs_tty.ui.calibration_dialog import CalibrationDialog
 from gmrs_tty.ui.journal_controller import JournalController
 from gmrs_tty.ui.net_stats_dialog import NetStatsDialog
 from gmrs_tty.ui.pending_station_manager import PendingStationManager
@@ -1056,6 +1057,17 @@ class MainWindow(QMainWindow):
         net_stats_action.triggered.connect(self.open_net_stats_dialog)
         tools_menu.addAction(net_stats_action)
 
+        calibrate_action = QAction("Calibrate S&TT…", self)
+        calibrate_action.setStatusTip(
+            "Record a reference reading off the air and sweep model / gain / "
+            "noise-profile combinations to find the most accurate settings. "
+            "Requires Listen to be active."
+        )
+        calibrate_action.setEnabled(False)  # requires a running Listen session
+        calibrate_action.triggered.connect(self.open_calibration_dialog)
+        tools_menu.addAction(calibrate_action)
+        self._calibrate_action = calibrate_action
+
         tools_menu.addSeparator()
 
         clear_chat_action = QAction("&Clear Chat", self)
@@ -1820,6 +1832,7 @@ class MainWindow(QMainWindow):
         self.stt_worker.audio_level.connect(self.audio_level_meter.setValue)
         self._listen_started_at = time.time()
         self.stt_worker.start()
+        self._calibrate_action.setEnabled(True)
         # Bring the waterfall online too if the operator has it enabled.
         # Done after stt_worker.start() so the audio_chunk signal already
         # exists by the time we connect it through spectro_manager.start().
@@ -1896,6 +1909,7 @@ class MainWindow(QMainWindow):
         )
         self.touch_view.sync_listen_state(False, "Listen")
         self.touch_view.sync_monitor_state(False, False)
+        self._calibrate_action.setEnabled(False)
         # Auto-save the session's attendance roster before the next Listen
         # cycle can clear it. Config-gated; empty sessions are never stored.
         if self.config.attendance_autosave_sessions:
@@ -1927,6 +1941,18 @@ class MainWindow(QMainWindow):
     def open_net_stats_dialog(self):
         dlg = NetStatsDialog(self.contacts, parent=self)
         dlg.show()
+
+    def open_calibration_dialog(self):
+        """STT calibration wizard. Requires a running Listen session — the
+        capture taps the live worker's raw audio_chunk fan-out."""
+        if self.stt_worker is None or not self.stt_worker.isRunning():
+            self.statusBar().showMessage(
+                "Start Listen before calibrating — calibration records "
+                "from the live audio stream", 5000
+            )
+            return
+        dlg = CalibrationDialog(self.stt_worker, self.config, parent=self)
+        dlg.exec()
 
     def _format_timestamp(self, now=None):
         """Render an HH:MM:SS clock string honoring the configured time_format

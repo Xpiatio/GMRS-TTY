@@ -1913,6 +1913,34 @@ def build_rx(b: Builder):
                                   "the live state."),
     ])
 
+    b.h3("13.9 STT calibration wizard")
+    b.p("Tools &rarr; <b>Calibrate STT</b> (enabled while Listen is active) "
+        "finds the most accurate STT settings for your radio and channel "
+        "conditions in four steps:")
+    b.bullets([
+        ("1. Reference passage", "The wizard shows a fixed passage (the "
+                                 "opening of the Declaration of "
+                                 "Independence). Arrange for another "
+                                 "station to read it over the air, or read "
+                                 "it yourself on a loopback input."),
+        ("2. Recording", "Click <b>Start recording</b>, have the passage "
+                         "read, then <b>Stop and analyze</b>. At least a "
+                         "few seconds of audio are required; the capture "
+                         "is bounded at three minutes."),
+        ("3. Analyzing", "Every staged Whisper model &times; gain mode "
+                         "&times; noise profile combination transcribes "
+                         "the recording and is scored by word-error-rate "
+                         "against the passage. The progress bar reads "
+                         "\"combination N of M\"; on CPU a multi-model "
+                         "sweep takes minutes."),
+        ("4. Results", "Combinations are ranked best-first with the "
+                       "recommended row preselected. <b>Apply selected</b> "
+                       "writes the model, gain mode, and noise profile to "
+                       "the configuration; a model change takes effect the "
+                       "next time Listen starts. Escape cancels cleanly at "
+                       "any step."),
+    ])
+
 
 def build_tx(b: Builder):
     b.h1("14. Transmit (Tx) pipeline")
