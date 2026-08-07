@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from gmrs_tty.constants import CONFIG_FILE
+from gmrs_tty.constants import CONFIG_FILE, GAIN_MODES
 from gmrs_tty.persistence.json_store import save_json
 
 
@@ -56,6 +56,43 @@ class AppConfig(dict):
     @property
     def system_monitor_sink(self) -> str:
         return (self.get("system_monitor_sink") or "").strip()
+
+    @property
+    def stt_gain_mode(self) -> str:
+        """Gain stage applied after bandpass/denoise, before transcription:
+        'agc' (dynamic attack/release AGC), 'rms' (one-shot RMS normalize),
+        or 'off' (no gain)."""
+        val = str(self.get("stt_gain_mode", "agc")).strip().lower()
+        return val if val in GAIN_MODES else "agc"
+
+    @property
+    def stt_noise_profile(self) -> bool:
+        """Feed squelch-closed noise-floor audio to the denoise stage as a
+        stationary noise estimate instead of letting it self-estimate from
+        the speech-bearing segment."""
+        return bool(self.get("stt_noise_profile", False))
+
+    @property
+    def stt_debug_capture(self) -> bool:
+        return bool(self.get("stt_debug_capture", False))
+
+    @property
+    def stt_debug_dir(self) -> str:
+        return self.get("stt_debug_dir", "debug/stt")
+
+    @property
+    def saved_phrases(self) -> list:
+        # Curated radio vocabulary lives in gmrs_tty/stt/vocab.py and is
+        # assembled at Listen start. saved_phrases holds only the operator's
+        # custom additions.
+        return list(self.get("saved_phrases", []))
+
+    @property
+    def stt_vocab_max_callsigns(self) -> int:
+        """Max number of contact callsigns to include in Whisper initial_prompt.
+        Callsigns are ~6 tokens each; smaller limit leaves room for procedure
+        vocabulary and custom phrases within the ~223-token budget."""
+        return int(self.get("stt_vocab_max_callsigns", 15))
 
     # ---- TTS -------------------------------------------------------------
 

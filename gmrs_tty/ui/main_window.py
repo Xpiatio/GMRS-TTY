@@ -23,8 +23,10 @@ from gmrs_tty.net.online import is_online
 from gmrs_tty.persistence.contacts import (
     deduplicate_ham_cross_references,
     index_contacts_by_callsign,
+    ordered_callsigns,
     sort_contacts,
 )
+from gmrs_tty.stt.vocab import assemble_phrases
 from gmrs_tty.persistence.json_store import load_json, save_json
 from gmrs_tty.ptt import make_ptt
 from gmrs_tty.stt.worker import ModelCache, STTWorker
@@ -1726,6 +1728,24 @@ class MainWindow(QMainWindow):
         self.touch_view.chat_display.rescan_all_blocks()
         if self.attendance_panel is not None:
             self.attendance_panel.refresh(self.contacts)
+        # Keep the Whisper vocabulary bias in step with contacts so a
+        # newly saved callsign is recognized without restarting Listen.
+        if self.stt_worker is not None:
+            self.stt_worker.update_phrases(self._assemble_stt_phrases())
+
+    def _assemble_stt_phrases(self):
+        """Assemble the full STT bias list (curated vocab + saved phrases +
+        contact callsigns) ordered lowest-priority-first. Shared by worker
+        construction and live rebuilds on contact changes."""
+        callsigns = (
+            [] if self._service_mode() == SERVICE_FRS
+            else ordered_callsigns(self.contacts)
+        )
+        return assemble_phrases(
+            callsigns,
+            self.config.saved_phrases,
+            max_callsigns=self.config.stt_vocab_max_callsigns,
+        )
 
     def toggle_listening(self, on):
         if on:
@@ -1745,6 +1765,11 @@ class MainWindow(QMainWindow):
             vad_threshold=self.config.vad_threshold,
             model_cache=self._stt_model_cache,
             system_monitor_sink=self.config.system_monitor_sink,
+            saved_phrases=self._assemble_stt_phrases(),
+            debug_capture=self.config.stt_debug_capture,
+            debug_dir=self.config.stt_debug_dir,
+            gain_mode=self.config.stt_gain_mode,
+            noise_profile=self.config.stt_noise_profile,
             parent=self,
         )
         self.stt_worker.transcribed_segment.connect(self.on_transcription_segment)

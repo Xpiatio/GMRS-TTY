@@ -1,3 +1,4 @@
+import logging
 import os
 import queue
 import threading
@@ -7,11 +8,15 @@ import numpy as np
 from PySide6.QtCore import QThread, Signal
 
 from gmrs_tty.audio.capture import open_input_source
-from gmrs_tty.audio.dsp import bandpass, denoise, make_bandpass_sos, normalize_rms
+from gmrs_tty.audio.dsp import lowpass, make_bandpass_sos, make_lowpass_sos
 from gmrs_tty.audio.squelch import SquelchDetector
 from gmrs_tty.audio.vad import load_vad_model, make_vad_iterator
+from gmrs_tty.constants import GAIN_MODES
+from gmrs_tty.stt.preprocess import preprocess_segment
 from gmrs_tty.stt.segmenter import SpeechSegmenter
 from gmrs_tty.stt.transcriber import WhisperTranscriber
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -84,11 +89,19 @@ class STTWorker(QThread):
     # CUT_WINDOW_S so cuts land in a natural pause between words.
     ROLLING_SEGMENT_S = 5.0
     CUT_WINDOW_S = 0.5
+    # Squelch-derived noise profile: while the squelch is closed the channel
+    # is pure noise floor. Quiet chunks are buffered and snapshotted at each
+    # utterance start as the denoise stage's stationary noise estimate. The
+    # buffer/minimum sizes give >= ~31 STFT frames for a stable threshold.
+    NOISE_BUFFER_S = 2.0
+    NOISE_MIN_S = 0.5
 
     MODELS_STT_DIR = os.path.join("Models", "STT")
 
     def __init__(self, input_device=None, whisper_model="small.en", vad_threshold=0.5,
                  model_cache: "ModelCache | None" = None, system_monitor_sink="",
+                 saved_phrases=(), debug_capture=False, debug_dir="",
+                 gain_mode="agc", noise_profile=False,
                  parent=None):
         super().__init__(parent)
         self.input_device = input_device if input_device not in (None, -1) else None
@@ -96,6 +109,12 @@ class STTWorker(QThread):
         self.whisper_model_name = whisper_model
         self.whisper_model_path = os.path.join(self.MODELS_STT_DIR, whisper_model)
         self.vad_threshold = float(vad_threshold)
+        self.saved_phrases: "list[str]" = list(saved_phrases)
+        self.debug_capture = bool(debug_capture)
+        self.debug_dir = debug_dir or ""
+        self._debug_recorder = None
+        self.gain_mode = gain_mode if gain_mode in GAIN_MODES else "agc"
+        self.noise_profile = bool(noise_profile)
         self._running = True
         self._paused = False
         self._model_cache: ModelCache | None = model_cache
@@ -115,6 +134,16 @@ class STTWorker(QThread):
     def resume(self):
         self._paused = False
 
+    def update_phrases(self, phrases: "list[str]") -> None:
+        """Update the Whisper initial_prompt without restarting the worker.
+
+        Safe to call from any thread — the GIL protects the string assignment
+        inside WhisperTranscriber.update_prompt().
+        """
+        self.saved_phrases = list(phrases)
+        if self._model_cache is not None:
+            self._model_cache.whisper.update_prompt(self.saved_phrases)
+
     def run(self):
         if not self._running:
             return
@@ -129,9 +158,11 @@ class STTWorker(QThread):
             return
 
         try:
-            if self._model_cache is None:
+            if self._model_cache is None or self._model_cache.model_name != self.whisper_model_name:
                 self.status.emit(f"Loading Whisper model from {self.whisper_model_path}...")
-                whisper = WhisperTranscriber.load(self.whisper_model_path)
+                whisper = WhisperTranscriber.load(
+                    self.whisper_model_path, saved_phrases=self.saved_phrases,
+                )
                 vad_model = load_vad_model()
                 self._model_cache = ModelCache(
                     whisper=whisper,
@@ -139,6 +170,9 @@ class STTWorker(QThread):
                     model_name=self.whisper_model_name,
                 )
             transcriber = self._model_cache.whisper
+            # The cached transcriber may carry a stale prompt from the
+            # previous Listen session; contacts/phrases can change between.
+            transcriber.update_prompt(self.saved_phrases)
             vad_iter = make_vad_iterator(
                 self._model_cache.vad_model,
                 sample_rate=self.SAMPLE_RATE,
@@ -152,6 +186,13 @@ class STTWorker(QThread):
         except Exception as e:
             self.error.emit(f"Failed to initialize STT models: {e}")
             return
+
+        # Construct once; failure is non-fatal (fall back to unfiltered path).
+        try:
+            lowpass_sos = make_lowpass_sos(self.SAMPLE_RATE, cutoff_hz=2700)
+        except Exception as e:
+            _log.error("Failed to construct lowpass filter: %s — proceeding without LPF", e)
+            lowpass_sos = None
 
         if not self._running:
             return
@@ -190,8 +231,31 @@ class STTWorker(QThread):
             squelch_buffer_max_chunks=self.SQUELCH_BUFFER_MAX_CHUNKS,
             min_speech_duration_s=self.MIN_SPEECH_DURATION_S,
             silence_reset_chunks=int(self.SILENCE_RESET_S * self.SAMPLE_RATE / self.CHUNK_SAMPLES),
+            noise_profile_chunks=(
+                int(self.NOISE_BUFFER_S * self.SAMPLE_RATE / self.CHUNK_SAMPLES)
+                if self.noise_profile else 0
+            ),
+            noise_min_samples=int(self.NOISE_MIN_S * self.SAMPLE_RATE),
         )
         was_paused = False
+
+        if self.debug_capture and self.debug_dir:
+            try:
+                from gmrs_tty.stt.debug_capture import UtteranceDebugRecorder
+                self._debug_recorder = UtteranceDebugRecorder(
+                    self.debug_dir,
+                    sample_rate=self.SAMPLE_RATE,
+                    pre_roll_chunks=self.PRE_BUFFER_CHUNKS,
+                    meta={
+                        "whisper_model": self.whisper_model_name,
+                        "vad_threshold": self.vad_threshold,
+                        "squelch_open_threshold": self.SQUELCH_OPEN_THRESHOLD,
+                    },
+                )
+            except Exception as e:
+                _log.warning("Debug capture disabled (init failed): %s", e)
+                self._debug_recorder = None
+        recorder = self._debug_recorder
 
         try:
             while self._running:
@@ -201,11 +265,18 @@ class STTWorker(QThread):
                     self.error.emit(f"Audio read error: {e}")
                     break
 
+                # Low-pass the chunk for squelch/VAD processing; the raw chunk
+                # is kept for the level meter fan-out and waterfall so the
+                # operator sees the true unfiltered signal.
+                chunk_for_vad = (
+                    lowpass(np.asarray(chunk, dtype=np.float32), lowpass_sos)
+                    if lowpass_sos is not None else chunk
+                )
                 # Emit input level before any pause/VAD gating so a stuck or
                 # disconnected mic shows up as a flat-zero meter regardless
                 # of transmit state. Peak (not RMS) matches what users expect
                 # from a VU-style indicator and reacts fast to short syllables.
-                peak = float(np.max(np.abs(chunk))) if chunk.size else 0.0
+                peak = float(np.max(np.abs(chunk_for_vad))) if chunk_for_vad.size else 0.0
                 self.audio_level.emit(min(100, int(peak * 100)))
                 # Fan the raw chunk out to any spectrometer consumer. Done
                 # before the pause / VAD branches so the waterfall keeps
@@ -227,11 +298,20 @@ class STTWorker(QThread):
                     self.status.emit("Listening...")
                     was_paused = False
 
-                segments, events = segmenter.feed(chunk, peak)
+                if recorder is not None:
+                    recorder.feed_raw(np.asarray(chunk, dtype=np.float32))
+                segments, events = segmenter.feed(chunk_for_vad, peak)
                 for event in events:
                     self.capture_event.emit(event)
+                    if recorder is not None:
+                        recorder.on_capture_event(event)
                 for uid, audio, is_final in segments:
-                    transcribe_queue.put((uid, audio, is_final))
+                    noise_clip = segmenter.utterance_noise_clip if self.noise_profile else None
+                    if recorder is not None:
+                        recorder.on_segment(uid, audio, is_final)
+                        if noise_clip is not None:
+                            recorder.on_noise_clip(uid, noise_clip)
+                    transcribe_queue.put((uid, audio, is_final, noise_clip))
         finally:
             try:
                 source.close()
@@ -243,21 +323,30 @@ class STTWorker(QThread):
 
     def _transcription_loop(self, transcribe_queue, transcriber, bandpass_sos):
         """Drain the segmentation queue on a background thread so the capture
-        loop never blocks on Whisper. Items are (utterance_id, audio, is_final);
-        a None sentinel signals shutdown. Single-threaded by design so
-        partials emit in capture order.
+        loop never blocks on Whisper. Items are (utterance_id, audio,
+        is_final, noise_clip); a None sentinel signals shutdown.
+        Single-threaded by design so partials emit in capture order.
         """
         while True:
             job = transcribe_queue.get()
             if job is None:
                 break
-            uid, audio, is_final = job
+            uid, audio, is_final, noise_clip = job
+            recorder = self._debug_recorder
             try:
-                filtered = bandpass(audio, bandpass_sos)
-                denoised = denoise(filtered, self.SAMPLE_RATE, prop_decrease=0.7)
-                normalize_rms(denoised)
-                text = transcriber.transcribe(denoised)
+                processed = preprocess_segment(
+                    audio, self.SAMPLE_RATE, bandpass_sos, gain_mode=self.gain_mode,
+                    noise_clip=noise_clip,
+                )
+                if recorder is not None:
+                    recorder.on_processed(uid, processed)
+                text = transcriber.transcribe(processed)
                 if text:
+                    if recorder is not None:
+                        recorder.on_transcript(uid, text, partial=not is_final)
                     self.transcribed_segment.emit(uid, text, is_final)
             except Exception as e:
                 self.error.emit(f"Transcription error: {e}")
+            finally:
+                if recorder is not None and is_final:
+                    recorder.finalize(uid)

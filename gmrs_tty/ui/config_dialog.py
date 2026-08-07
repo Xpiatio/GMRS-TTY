@@ -5,12 +5,21 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QSlider, QTabWidget, QToolButton,
-    QVBoxLayout, QWidget,
+    QMessageBox, QPlainTextEdit, QPushButton, QSlider, QSpinBox,
+    QTabWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
-from gmrs_tty.constants import VOICE_TEST_TEXT, validate_voice_path
+from gmrs_tty.constants import (
+    GAIN_MODES, VALID_WHISPER_MODELS, VOICE_TEST_TEXT, validate_voice_path,
+)
+from gmrs_tty.stt.worker import STTWorker
 from gmrs_tty.ui.device_query import DeviceQueryThread
+
+GAIN_MODE_LABELS = {
+    "agc": "Dynamic AGC (recommended)",
+    "rms": "One-shot RMS normalize",
+    "off": "No gain",
+}
 
 
 class ConfigDialog(QDialog):
@@ -34,6 +43,7 @@ class ConfigDialog(QDialog):
             ("Identity", self._build_identity_rows),
             ("Audio", self._build_audio_rows),
             ("Voice", self._build_voice_rows),
+            ("STT", self._build_stt_rows),
             ("PTT", self._build_ptt_rows),
             ("Behavior", self._build_behavior_rows),
         ]:
@@ -283,6 +293,121 @@ class ConfigDialog(QDialog):
         layout.addRow("Callsigns &Detected:", self.attendance_enabled_input)
         layout.addRow("&Gemini API Key:", gemini_row)
 
+    def _build_stt_rows(self, layout: QFormLayout) -> None:
+        self.whisper_model_input = QComboBox()
+        staged = sorted(
+            m for m in VALID_WHISPER_MODELS
+            if os.path.isdir(os.path.join(STTWorker.MODELS_STT_DIR, m))
+        )
+        current_model = self.config.get("whisper_model", "small.en")
+        if current_model not in staged:
+            staged.append(current_model)
+        for m in staged:
+            self.whisper_model_input.addItem(m, m)
+        idx = self.whisper_model_input.findData(current_model)
+        if idx >= 0:
+            self.whisper_model_input.setCurrentIndex(idx)
+        self.whisper_model_input.setToolTip(
+            "Whisper model used for transcription. Only models already staged "
+            "under Models/STT are listed — run bootstrap_models.py to add more. "
+            "Larger models are more accurate but slower."
+        )
+        self.whisper_model_input.setAccessibleName("Whisper model")
+        self.whisper_model_input.setAccessibleDescription(
+            "Select which locally staged Whisper model transcribes incoming audio."
+        )
+
+        self.gain_mode_input = QComboBox()
+        for mode in GAIN_MODES:
+            self.gain_mode_input.addItem(GAIN_MODE_LABELS[mode], mode)
+        idx = self.gain_mode_input.findData(self.config.get("stt_gain_mode", "agc"))
+        if idx >= 0:
+            self.gain_mode_input.setCurrentIndex(idx)
+        self.gain_mode_input.setToolTip(
+            "Gain stage applied to each utterance before transcription. "
+            "Dynamic AGC levels weak and strong stations smoothly; RMS applies "
+            "one flat gain; No gain leaves levels untouched."
+        )
+        self.gain_mode_input.setAccessibleName("STT gain mode")
+        self.gain_mode_input.setAccessibleDescription(
+            "Choose how audio levels are normalized before speech recognition."
+        )
+
+        self.noise_profile_input = QCheckBox(
+            "Learn the channel noise floor while squelch is closed"
+        )
+        self.noise_profile_input.setChecked(bool(self.config.get("stt_noise_profile", False)))
+        self.noise_profile_input.setToolTip(
+            "Samples static between transmissions and uses it as the noise "
+            "estimate when denoising speech, instead of guessing from the "
+            "speech itself. Can improve accuracy on consistently noisy channels."
+        )
+        self.noise_profile_input.setAccessibleName("Noise profile denoising")
+        self.noise_profile_input.setAccessibleDescription(
+            "When checked, background static sampled between transmissions "
+            "improves noise reduction on incoming speech."
+        )
+
+        self.saved_phrases_input = QPlainTextEdit()
+        self.saved_phrases_input.setPlainText("\n".join(self.config.get("saved_phrases", [])))
+        self.saved_phrases_input.setPlaceholderText("One phrase per line, e.g. a club name or local landmark")
+        self.saved_phrases_input.setFixedHeight(72)
+        self.saved_phrases_input.setToolTip(
+            "Custom words or phrases the transcriber should recognize — names, "
+            "landmarks, club jargon. Added to the Whisper vocabulary bias "
+            "alongside built-in radio procedure words and contact callsigns."
+        )
+        self.saved_phrases_input.setAccessibleName("Custom vocabulary phrases")
+        self.saved_phrases_input.setAccessibleDescription(
+            "Enter one phrase per line to bias speech recognition toward "
+            "words it would otherwise mishear."
+        )
+
+        self.vocab_max_callsigns_input = QSpinBox()
+        self.vocab_max_callsigns_input.setRange(0, 50)
+        self.vocab_max_callsigns_input.setValue(int(self.config.get("stt_vocab_max_callsigns", 15)))
+        self.vocab_max_callsigns_input.setToolTip(
+            "How many contact callsigns to include in the recognition "
+            "vocabulary. Each costs ~6 of the ~223 available prompt tokens; "
+            "newer contacts win when over the limit."
+        )
+        self.vocab_max_callsigns_input.setAccessibleName("Maximum vocabulary callsigns")
+        self.vocab_max_callsigns_input.setAccessibleDescription(
+            "Limit how many saved contact callsigns bias speech recognition."
+        )
+
+        self.debug_capture_input = QCheckBox("Save each utterance's audio and transcripts to disk")
+        self.debug_capture_input.setChecked(bool(self.config.get("stt_debug_capture", False)))
+        self.debug_capture_input.setToolTip(
+            "Records raw, segmented, and processed audio plus transcripts for "
+            "every utterance — used with the offline eval tool "
+            "(python -m gmrs_tty.tools.eval_stt) to measure accuracy. "
+            "Leave off in normal use; captures grow quickly."
+        )
+        self.debug_capture_input.setAccessibleName("STT debug capture")
+        self.debug_capture_input.setAccessibleDescription(
+            "When checked, every received utterance is saved to the debug "
+            "directory for offline transcription-accuracy analysis."
+        )
+
+        self.debug_dir_input = QLineEdit(self.config.get("stt_debug_dir", "debug/stt"))
+        self.debug_dir_input.setPlaceholderText("debug/stt")
+        self.debug_dir_input.setToolTip("Directory where debug captures are written.")
+        self.debug_dir_input.setAccessibleName("Debug capture directory")
+        self.debug_dir_input.setAccessibleDescription(
+            "Filesystem path where utterance debug captures are stored."
+        )
+        self.debug_capture_input.toggled.connect(self.debug_dir_input.setEnabled)
+        self.debug_dir_input.setEnabled(self.debug_capture_input.isChecked())
+
+        layout.addRow("Whisper &Model:", self.whisper_model_input)
+        layout.addRow("&Gain mode:", self.gain_mode_input)
+        layout.addRow("Noise pro&file:", self.noise_profile_input)
+        layout.addRow("Custom p&hrases:", self.saved_phrases_input)
+        layout.addRow("Ma&x callsigns:", self.vocab_max_callsigns_input)
+        layout.addRow("De&bug capture:", self.debug_capture_input)
+        layout.addRow("Debug director&y:", self.debug_dir_input)
+
     def _build_ptt_rows(self, layout: QFormLayout) -> None:
         self.ptt_mode_input = QComboBox()
         self.ptt_mode_input.addItem("Manual (you press PTT on the radio)", "manual")
@@ -360,6 +485,17 @@ class ConfigDialog(QDialog):
             "output_device": self.output_device_input.currentData(),
             "monitor_enabled": self.monitor_enabled_input.isChecked(),
             "vad_threshold": round(self.vad_threshold_input.value(), 2),
+            "whisper_model": self.whisper_model_input.currentData(),
+            "stt_gain_mode": self.gain_mode_input.currentData(),
+            "stt_noise_profile": self.noise_profile_input.isChecked(),
+            "saved_phrases": [
+                line.strip()
+                for line in self.saved_phrases_input.toPlainText().splitlines()
+                if line.strip()
+            ],
+            "stt_vocab_max_callsigns": self.vocab_max_callsigns_input.value(),
+            "stt_debug_capture": self.debug_capture_input.isChecked(),
+            "stt_debug_dir": self.debug_dir_input.text().strip() or "debug/stt",
             "time_format": self.time_format_input.currentData(),
             "filter_profanity": self.filter_profanity_input.isChecked(),
             "fuzzy_callsign": self.fuzzy_callsign_input.isChecked(),

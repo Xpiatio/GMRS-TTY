@@ -578,7 +578,7 @@ def build_first_run(b: Builder):
         "<font face=\"Courier\">YOUR_CALL</font> the header will display "
         "that literal string — open Settings → Configuration "
         "(or click the gear icon on the right side of the service toolbar). "
-        "The dialog has five tabs; the minimum fields for a working session are:")
+        "The dialog has six tabs; the minimum fields for a working session are:")
     b.bullets([
         ("<b>Identity tab</b> — Callsign",
          "Your FCC GMRS callsign (e.g. "
@@ -1183,7 +1183,7 @@ def build_touch_mode(b: Builder):
 def build_config_dialog(b: Builder):
     b.h1("6. Configuration dialog")
     b.p("Opened from Settings → Configuration, the gear icon, or "
-        "Ctrl+,. Minimum width 420 px. Settings are organized into five "
+        "Ctrl+,. Minimum width 420 px. Settings are organized into six "
         "tabs. All fields are mnemonic-linked (Alt+letter focuses the "
         "underlined field). The OK button is disabled until the background "
         "device-enumeration thread finishes; while loading you'll see "
@@ -1250,6 +1250,48 @@ def build_config_dialog(b: Builder):
              "Maps to Piper length_scale. 1.00× normal, lower = "
              "faster, higher = slower. Step 0.05. Stored as "
              "tts_length_scale."],
+        ],
+        col_widths=[1.5 * inch, 1.4 * inch, 3.85 * inch],
+    )
+    b.h3("STT tab")
+    b.table(
+        ["Field", "Type", "Behavior"],
+        [
+            ["Whisper Model (Alt+M)", "Dropdown",
+             "Which locally staged Whisper model transcribes incoming "
+             "audio. Only models already present under Models/STT are "
+             "listed — run bootstrap_models.py to stage more. Larger "
+             "models are more accurate but slower. Changing this "
+             "restarts the listener."],
+            ["Gain mode (Alt+G)", "Dropdown",
+             "Gain stage applied to each utterance before transcription. "
+             "Dynamic AGC (default) levels weak and strong stations with "
+             "fast-attack/slow-release smoothing; RMS normalize applies "
+             "one flat gain to −20 dBFS; No gain leaves levels "
+             "untouched. Stored as stt_gain_mode."],
+            ["Noise profile (Alt+F)", "Checkbox",
+             "Default off. Samples channel static while the squelch is "
+             "closed and uses it as the denoiser's stationary noise "
+             "estimate, instead of guessing from the speech itself. Can "
+             "improve accuracy on consistently noisy channels."],
+            ["Custom phrases (Alt+H)", "Multi-line text",
+             "One phrase per line — names, landmarks, club jargon. Added "
+             "to the Whisper vocabulary bias alongside built-in radio "
+             "procedure words and contact callsigns, so the transcriber "
+             "stops mishearing them. Stored as saved_phrases."],
+            ["Max callsigns (Alt+X)", "Spin 0–50",
+             "How many saved contact callsigns to include in the "
+             "recognition vocabulary (newest win when over the limit). "
+             "Each costs about 6 of the ~223 available prompt tokens."],
+            ["Debug capture (Alt+B)", "Checkbox",
+             "Default off. Records every utterance's raw, segmented, and "
+             "processed audio plus transcripts for offline accuracy "
+             "analysis with python -m gmrs_tty.tools.eval_stt. Captures "
+             "grow quickly; leave off in normal use."],
+            ["Debug directory (Alt+Y)", "Text",
+             "Where debug captures are written. Default debug/stt, "
+             "relative to the working directory. Only enabled while "
+             "Debug capture is checked."],
         ],
         col_widths=[1.5 * inch, 1.4 * inch, 3.85 * inch],
     )
