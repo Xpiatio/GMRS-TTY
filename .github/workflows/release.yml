@@ -1,0 +1,72 @@
+# Build the self-contained .deb and open a draft GitHub release for it.
+#
+# Draft, not published: release titles are hand-written ("v1.9.0 — Tabbed
+# settings, ..."), so the workflow does the slow, mechanical half and leaves the
+# title and notes to a human.
+#
+# workflow_dispatch exists for tags that were pushed before this workflow did —
+# re-pushing a tag to trigger a build would rewrite release history.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing vX.Y.Z tag to build and draft a release for"
+        required: true
+        type: string
+
+jobs:
+  deb:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # Fails when the tag disagrees with gmrs_tty.__version__, before we spend
+      # ten minutes downloading wheels for a release that would misreport itself.
+      - name: Check the tag agrees with the tree
+        run: python3 scripts/check_version_sync.py
+        env:
+          GITHUB_REF: refs/tags/${{ inputs.tag || github.ref_name }}
+
+      - name: Fetch the Whisper STT model
+        run: |
+          pip install huggingface_hub
+          python bootstrap_models.py --model small.en
+
+      - name: Fetch the Piper voices
+        run: ./scripts/fetch-voices.sh
+
+      - name: Build the .deb
+        run: PYTHON=python3 ./scripts/build-deb.sh
+
+      # GitHub rejects release assets over 2 GB. A CPU-only build lands around
+      # 1.6 GB, so crossing 1.9 GB means either the voice list grew or the
+      # CUDA torch wheels slipped past the --extra-index-url in build-deb.sh.
+      - name: Check the .deb fits a release asset
+        run: |
+          deb=$(ls build/deb/*.deb)
+          size=$(stat -c %s "$deb")
+          echo "$deb: $((size / 1024 / 1024)) MiB"
+          if [ "$size" -gt 2040109465 ]; then
+            echo "ERROR: $deb exceeds the 1.9 GiB budget (2 GB asset limit)." >&2
+            exit 1
+          fi
+
+      - name: Draft the release
+        run: gh release create "$TAG" --draft --generate-notes --title "$TAG" build/deb/*.deb
+        env:
+          GH_TOKEN: ${{ github.token }}
