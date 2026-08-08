@@ -7,11 +7,15 @@
 #   * Targets Debian 13 / LMDE 7 (glibc >= 2.41, Python 3.13, x86_64).
 #   * Vendors all Python wheels so the postinst is fully offline.
 #   * Uses CPU-only torch (drops ~1.6 GB of nvidia CUDA wheels).
-#   * Whisper / Piper voice models are NOT bundled — they download on first run.
+#   * Bundles the Whisper STT model and the Piper voices, so the install is
+#     fully offline. Populate them first with:
+#         python bootstrap_models.py
+#         ./scripts/fetch-voices.sh
 #
 # Usage:
 #   ./scripts/build-deb.sh              # version from gmrs_tty/__init__.py
 #   ./scripts/build-deb.sh 0.0.2        # override version
+#   PYTHON=python3 ./scripts/build-deb.sh   # override the interpreter
 #
 # Re-running is safe; the build/deb/ tree is wiped first.
 
@@ -30,8 +34,12 @@ fi
 STAGE="$REPO_ROOT/build/deb/${PKG}_${VERSION}_${ARCH}"
 DEB_OUT="$REPO_ROOT/build/deb/${PKG}_${VERSION}_${ARCH}.deb"
 
-# Pick a Python interpreter: prefer the project venv, then python3.13, then python3.
-if [[ -x "$REPO_ROOT/.venv/bin/python" ]]; then
+# Pick a Python interpreter: an explicit $PYTHON wins (CI runners have neither a
+# .venv nor a python3.13 on PATH), then the project venv, then python3.13, then
+# python3.
+if [[ -n "${PYTHON:-}" ]]; then
+    PY="$PYTHON"
+elif [[ -x "$REPO_ROOT/.venv/bin/python" ]]; then
     PY="$REPO_ROOT/.venv/bin/python"
 elif command -v python3.13 >/dev/null 2>&1; then
     PY="$(command -v python3.13)"
@@ -78,8 +86,8 @@ chmod 755 "$STAGE/usr/share/doc/$PKG/install.sh"
 
 # ---------------------------------------------------------------------------
 # 2c. Bundle offline models.
-#     Both STT (Whisper) and Speaker (ECAPA-TDNN) models must be present.
-#     Run 'python bootstrap_models.py' on an internet-connected machine first.
+#     The STT (Whisper) model must be present. Run 'python bootstrap_models.py'
+#     on an internet-connected machine first.
 # ---------------------------------------------------------------------------
 if [ ! -d "$REPO_ROOT/Models/STT" ]; then
     echo "ERROR: Models/STT/ not found."
@@ -98,7 +106,7 @@ find "$STAGE/opt/$PKG/Models" -name ".gitattributes" -delete 2>/dev/null || true
 # ---------------------------------------------------------------------------
 if [ ! -d "$REPO_ROOT/Voices" ] || [ -z "$(ls -A "$REPO_ROOT/Voices" 2>/dev/null)" ]; then
     echo "ERROR: Voices/ directory not found or empty."
-    echo "       Download Piper voice models into Voices/ before building."
+    echo "       Run './scripts/fetch-voices.sh' to download the bundled voices."
     exit 1
 fi
 
@@ -199,8 +207,7 @@ Description: GMRS/FRS speech-to-text and text-to-speech assistant
  and text-to-speech on transmit (Piper), with PTT keying and noise
  reduction.
  .
- Whisper STT and speaker identification models are bundled offline.
- Piper TTS voice models are bundled offline.
+ The Whisper STT model and the Piper TTS voice models are bundled offline.
 CONTROL
 
 cat > "$STAGE/DEBIAN/postinst" <<'POSTINST'

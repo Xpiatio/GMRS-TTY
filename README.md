@@ -165,7 +165,7 @@ System dependencies installed automatically: `python3.13`, `python3.13-venv`, `l
 
 ### Adding Piper TTS voices
 
-The installers do **not** bundle Piper voice models — they are large, numerous, and user-chosen. Drop `.onnx` + `.onnx.json` pairs into the `Voices/` subdirectory of the install location:
+The `.deb` bundles the five voices listed in [`scripts/voices.txt`](scripts/voices.txt) (`amy`, `arctic`, `lessac`, `libritts`, `ryan`) so a fresh install can transmit without any download. To add more, drop `.onnx` + `.onnx.json` pairs into the `Voices/` subdirectory of the install location:
 
 | Platform | Location |
 |----------|----------|
@@ -193,7 +193,13 @@ pip install -r requirements.txt
 
 ### 2. Voice models (Piper)
 
-Download one or more Piper ONNX voices and their accompanying `.json` config files into a `Voices/` directory at the project root:
+Fetch the same five voices the `.deb` ships:
+
+```bash
+./scripts/fetch-voices.sh
+```
+
+Or download any other Piper ONNX voices and their accompanying `.json` config files into a `Voices/` directory at the project root:
 
 ```
 Voices/
@@ -345,9 +351,11 @@ GMRS-TTY/
 ├── config.example.json     # Template — copy to config.json and edit
 ├── scripts/
 │   ├── build-deb.sh        # Build the Debian .deb installer
+│   ├── fetch-voices.sh     # Download the bundled Piper voices into Voices/
+│   ├── voices.txt          # Which Piper voices the installer bundles
 │   └── build_user_manual.py # Regenerate docs/USER_MANUAL.pdf
 ├── journals/               # AI-generated session journal entries (auto-created; gitignored)
-├── Voices/                 # Piper voice models (gitignored; download yourself)
+├── Voices/                 # Piper voice models (gitignored; run scripts/fetch-voices.sh)
 ├── Models/                 # Bundled STT model artifacts (gitignored; run bootstrap_models.py)
 ├── spec.md                 # Original problem statement
 ├── technical_spec.md       # Detailed technical spec
@@ -383,6 +391,20 @@ Issues, feature requests, and pull requests are welcome. A few ground rules:
 - Match the existing style (no comments unless the *why* is non-obvious; clear names over docstrings).
 - New dependencies should be justified — this project's off-grid goal means every dep must work without internet at runtime.
 - If you add functionality that affects FCC compliance behavior (callsign formatting, ID timing, etc.), call it out explicitly in the PR description.
+
+## Releasing
+
+Releases are cut from tags. `.github/workflows/release.yml` builds the `.deb` and opens a **draft** release with it attached; the title and notes stay hand-written.
+
+1. Bump `__version__` in `gmrs_tty/__init__.py` and the **Latest release** callout at the top of this README. `scripts/check_version_sync.py` fails CI if they disagree.
+2. Merge to `main`.
+3. Tag and push:
+   ```bash
+   git tag v1.9.0
+   git push origin v1.9.0
+   ```
+4. The workflow fetches the STT model and voices, builds the installer, and drafts the release. For a tag that already exists, trigger it manually instead: `gh workflow run release.yml -f tag=v1.9.0`.
+5. Edit the draft's title to `v1.9.0 — <highlights>`, tidy the generated notes, and publish.
 
 ## License
 

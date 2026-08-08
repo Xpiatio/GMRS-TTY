@@ -1,0 +1,14 @@
+# Piper voices bundled in the .deb, as paths relative to the root of
+# https://huggingface.co/rhasspy/piper-voices (no extension — fetch-voices.sh
+# appends .onnx and .onnx.json).
+#
+# Single source of truth for both local builds and the release workflow: what
+# is listed here is what ships. Adding a line grows the installer by the voice
+# size, so mind the 2 GB GitHub per-asset limit.
+#
+# en_US-libritts-high is CC BY 4.0 and requires attribution — see NOTICES.md.
+en/en_US/amy/medium/en_US-amy-medium
+en/en_US/arctic/medium/en_US-arctic-medium
+en/en_US/lessac/high/en_US-lessac-high
+en/en_US/libritts/high/en_US-libritts-high
+en/en_US/ryan/high/en_US-ryan-high
