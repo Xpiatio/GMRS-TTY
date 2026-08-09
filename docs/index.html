@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GMRS-TTY — TTY-style accessibility communicator for GMRS radio</title>
+<meta name="description" content="Live-transcribes incoming GMRS radio audio and speaks out typed messages, so hard-of-hearing, deaf, or mute operators can participate in voice radio conversations. Fully offline. FCC Part 95 ID rules built in.">
+<meta property="og:title" content="GMRS-TTY">
+<meta property="og:description" content="A TTY-style accessibility communicator for GMRS radio. Live transcription in, text-to-speech out, fully offline, Part 95 ID rules built into the message flow.">
+<meta property="og:image" content="https://xpiatio.github.io/GMRS-TTY/icon.png">
+<meta property="og:url" content="https://xpiatio.github.io/GMRS-TTY/">
+<link rel="icon" type="image/png" href="icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;600&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="plate">
+      <span class="screw tl" aria-hidden="true"></span>
+      <span class="screw tr" aria-hidden="true"></span>
+      <span class="screw bl" aria-hidden="true"></span>
+      <span class="screw br" aria-hidden="true"></span>
+      <div class="plate-head">
+        <img src="icon.png" alt="" width="72" height="72">
+        <div>
+          <h1>GMRS&#8209;TTY</h1>
+          <p class="plate-sub">TTY-style accessibility communicator &mdash; GMRS / FRS</p>
+        </div>
+      </div>
+      <dl class="plate-specs">
+        <div><dt>Version</dt><dd>1.9.0</dd></div>
+        <div><dt>Runtime</dt><dd>Python 3.13</dd></div>
+        <div><dt>Network</dt><dd>None required</dd></div>
+        <div><dt>License</dt><dd>MIT</dd></div>
+      </dl>
+    </div>
+
+    <p class="hero-copy">Lets hard-of-hearing, deaf, or mute operators participate in voice radio
+    conversations: incoming audio is live-transcribed to a chat log, typed messages are spoken
+    out over the air, and FCC Part&nbsp;95 ID rules are built into the message flow.</p>
+
+    <div class="actions">
+      <a class="btn btn-primary" href="https://github.com/Xpiatio/GMRS-TTY/releases/latest">Download .deb (v1.9.0)</a>
+      <a class="btn btn-secondary" href="USER_MANUAL.pdf">User manual (PDF)</a>
+      <p class="dl-note">1.6&nbsp;GB &mdash; bundles Python wheels, the Whisper STT model, and five Piper voices, so a fresh install works with no internet.</p>
+    </div>
+
+    <figure class="chat">
+      <div class="chat-window" role="img" aria-label="Rendering of the chat surface: a green received line asks WSLZ233 for a radio check, a blue transmitted line answers with the operator's callsign and name, a second received line acknowledges, and a blue station-ID line spells the callsign in NATO phonetics with digits read one at a time.">
+        <p class="chat-rx">[RX 14:31:52]: <span class="chat-pill">WRPD407</span><span class="chat-check">&#10003;</span> to WSLZ233 radio check how copy</p>
+        <p class="chat-tx">[TX to WRPD407]: WSLZ233 Sam calling WRPD407. Loud and clear, go ahead</p>
+        <p class="chat-rx">[RX 14:33:10]: QSL copy loud and clear best regards</p>
+        <p class="chat-tx">[TX ID]: This is WSLZ233, Whiskey Sierra Lima Zulu 2 3 3. Sam from Grand Rapids.</p>
+      </div>
+      <figcaption>Fig. 1 &mdash; the chat surface (HTML rendering of the default layout, not a screenshot). Amber pill = saved contact; &#10003; = FCC-verified license.</figcaption>
+    </figure>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section id="operation">
+  <h2>Section 1 &mdash; Operation</h2>
+  <hr class="rule">
+  <p>GMRS-TTY is a desktop app (Python + PySide6) that sits between a GMRS or FRS radio and its
+  operator. Point the radio's audio at a sound card and the app transcribes every transmission
+  into a chat log as it happens; type a reply and the app synthesizes it to speech and keys the
+  radio. The idea traces back to the TTY &mdash; the teletypewriter deaf users ran over telephone
+  lines &mdash; brought to radio: the author's sister used one, and this is the same conversation
+  model on a different medium.</p>
+  <p>Everything runs locally. Speech-to-text (faster-whisper), text-to-speech (Piper), and voice
+  activity detection (Silero) are all offline models staged on disk; the core radio workflow never
+  touches the network. The one online feature &mdash; FCC callsign verification &mdash; is strictly
+  opt-in via a connectivity probe and degrades cleanly when the network is gone.</p>
+  <blockquote>&ldquo;This application exists for users with disabilities, so accessibility is a
+  hard design constraint rather than a nice-to-have.&rdquo; &mdash; from the README</blockquote>
+  <p>The UI targets WCAG 2.1 Level AA: every text color meets contrast, no state is conveyed by
+  color alone, the whole app drives from the keyboard, and every widget is labelled for NVDA /
+  JAWS / Orca / VoiceOver. A rolling audio waterfall below the chat gives deaf and hard-of-hearing
+  operators a visual readout of the channel &mdash; squelch breaks, voice formants, and
+  neighbor-channel splatter are visible the moment they arrive.</p>
+</section>
+
+<section id="receive">
+  <h2>Section 2 &mdash; Receive</h2>
+  <hr class="rule">
+  <p>The receive pipeline is built around how radio traffic actually behaves, not around clean
+  studio audio.</p>
+  <ul>
+    <li><strong>Squelch-open pre-trigger</strong> &mdash; buffering starts the moment the remote
+    carrier opens, so the leading syllables survive VAD onset latency. If the carrier drops without
+    voice ever being detected &mdash; a kerchunk, accidental key, or noise burst &mdash; the buffer
+    is discarded and nothing reaches the chat.</li>
+    <li><strong>Silero VAD gating</strong> with a tunable threshold; after ~30&nbsp;s of continuous
+    silence it re-baselines so detection stays responsive on long-quiet channels.</li>
+    <li><strong>Streaming transcription</strong> &mdash; speech longer than ~5&nbsp;s is sliced at
+    the quietest point (cuts land between words, not mid-syllable) and the chat line grows in real
+    time instead of waiting for the unkey. When the squelch closes mid-speech, the static crash is
+    trimmed and the utterance finalizes immediately.</li>
+    <li><strong>Offline Whisper</strong> via faster-whisper (<code>small.en</code> int8 on CPU by
+    default; any staged model from <code>tiny.en</code> to <code>large-v3</code>). An optional
+    two-tier mode re-transcribes each finished utterance with a larger model
+    (<code>large-v3-turbo</code>) on a background thread and upgrades the chat line in place.
+    Optional GPU (CUDA / ROCm) for the final pass; the base install stays CPU-only.</li>
+    <li><strong>Radio-band DSP</strong> &mdash; 300&ndash;3000&nbsp;Hz bandpass matched to
+    narrowband FM, spectral-gating noise reduction, a gain stage (dynamic AGC by default), and an
+    optional noise-profile mode that samples the closed-squelch noise floor instead of guessing
+    from the speech.</li>
+    <li><strong>Vocabulary biasing</strong> &mdash; Whisper's prompt is assembled from NATO
+    alphabet, Q-codes, prowords, your custom phrases, and your saved contacts' callsigns, updated
+    live when contacts change.</li>
+    <li><strong>Calibration wizard</strong> &mdash; records a reference passage over the air, then
+    sweeps every staged model &times; gain mode &times; noise profile and ranks the combinations by
+    word-error-rate. One click applies the winner.</li>
+  </ul>
+  <p>A monitor toggle routes the raw channel audio to speakers while transcription continues, a
+  listen-only mode blocks every TX path for safe monitoring, and a system-loopback input source
+  transcribes whatever is playing through the computer's own output. The waterfall's FFT runs on
+  its own thread and is designed to hold under 10% CPU on a Raspberry Pi 4.</p>
+</section>
+
+<section id="transmit">
+  <h2>Section 3 &mdash; Transmit</h2>
+  <hr class="rule">
+  <p>Typed messages go out through Piper, an offline TTS engine with local ONNX voices (five are
+  bundled; speech rate adjusts from 0.70&times; to 1.50&times;, with a Test button to audition
+  before saving).</p>
+  <ul>
+    <li><strong>Three PTT modes</strong> &mdash; Manual (you key the radio), VOX (the app appends a
+    silence tail so the last syllable survives the hang dropout), or USB FTDI/serial (the app keys
+    PTT through an adapter's RTS or DTR line). VOX radios that clip the first word can be primed
+    with a 1&nbsp;kHz tone burst or a spoken priming word.</li>
+    <li><strong>TX audio conditioning</strong> &mdash; band-limits synthesized speech to the
+    300&ndash;3000&nbsp;Hz voice channel, compresses gently, normalizes to &minus;18&nbsp;dBFS, and
+    caps peaks at &minus;1&nbsp;dBFS so the voice modulates consistently without splatter.</li>
+    <li><strong>Watchdog and abort</strong> &mdash; a hard cap on transmission length (default
+    60&nbsp;s) cancels over-long messages before the radio is ever keyed; a synthesis timeout
+    abandons a stuck synthesis without keying; an Abort&nbsp;TX button (Esc) is the operator's kill
+    switch mid-transmission.</li>
+    <li><strong>Shorthand expansion</strong> &mdash; TTY glossary and CW/radio vernacular
+    (<code>GA</code>, <code>SKSK</code>, <code>73</code>, <code>QSL</code>, <code>QTH</code>&hellip;)
+    are rewritten to full words before speaking, so the receiver hears &ldquo;go ahead&rdquo;
+    rather than &ldquo;G&nbsp;A&rdquo;.</li>
+    <li><strong>Spoken-callsign formatting</strong> &mdash; digits are read one at a time
+    (&ldquo;WSLZ 2 3 3&rdquo;, never &ldquo;two hundred thirty-three&rdquo;).</li>
+    <li><strong>Quick messages</strong> &mdash; a configurable strip of one-click presets
+    (Alt+1&hellip;Alt+9), with <code>{N}</code>-style tokens that prompt for a value before
+    transmitting.</li>
+  </ul>
+</section>
+
+<section id="compliance">
+  <h2>Section 4 &mdash; Compliance</h2>
+  <hr class="rule">
+  <p>FCC Part&nbsp;95 station-ID rules are enforced by the message flow itself, not left to the
+  operator's memory:</p>
+  <ul>
+    <li>Messages targeting a specific station are automatically prefaced
+    <code>[Your call] [Your name] calling [Target]</code>.</li>
+    <li>The <strong>15-minute ID rule</strong> appends your callsign and name whenever more than 15
+    minutes have passed since the last identification &mdash; even on short messages.</li>
+    <li>A standalone <strong>&ldquo;This is&rdquo;</strong> button sends a one-click station ID
+    with the NATO-phonetic spelling and resets the timer.</li>
+    <li>A <strong>GMRS&nbsp;/&nbsp;FRS service toggle</strong> switches to unlicensed FRS
+    (Subpart&nbsp;B) operation, which has no callsign requirement &mdash; so every callsign
+    feature deliberately shuts off rather than transmitting IDs that don't apply.</li>
+    <li>A PG-13 <strong>profanity filter</strong> (default on) masks strong language in both
+    directions to stay inside Part&nbsp;95 obscenity expectations.</li>
+  </ul>
+  <p>From the README, verbatim: &ldquo;You are still responsible for legal operation. This app does
+  not replace a valid FCC GMRS license.&rdquo;</p>
+</section>
+
+<section id="install">
+  <h2>Section 5 &mdash; Installation</h2>
+  <hr class="rule">
+  <p>The <a href="https://github.com/Xpiatio/GMRS-TTY/releases/latest">release page</a> carries a
+  self-contained <code>.deb</code> (x86-64) that bundles Python wheels, the Whisper model, and five
+  Piper voices &mdash; no internet needed after the download.</p>
+  <table>
+    <caption>Table 5-1 &mdash; supported platforms</caption>
+    <thead>
+      <tr><th scope="col">Platform</th><th scope="col">Install method</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Debian 13 (trixie) / LMDE 7 / Ubuntu 24.10+</td><td>direct <code>apt install</code></td></tr>
+      <tr><td>Ubuntu 22.04 / 24.04, Mint 21&ndash;22, Pop!_OS</td><td><code>install.sh</code> from the release page (adds the deadsnakes PPA for Python 3.13)</td></tr>
+      <tr><td>Debian 12 (bookworm), Ubuntu 20.04</td><td>build from source</td></tr>
+    </tbody>
+  </table>
+<pre><code>sudo apt install ./gmrs-tty_1.9.0_amd64.deb
+gmrs-tty</code></pre>
+  <p>First run: open <strong>Settings &rarr; Configuration</strong> and set your callsign, name,
+  location, and voice.</p>
+  <h3>From source</h3>
+  <p>Five steps on any Linux with Python 3.11+: <code>pip install -r requirements.txt</code>, fetch
+  voices with <code>./scripts/fetch-voices.sh</code>, stage the Whisper model once with
+  <code>python bootstrap_models.py</code> on a connected machine, copy
+  <code>config.example.json</code> to <code>config.json</code>, and run <code>python main.py</code>.
+  For air-gapped targets, copy the <code>Models/</code> and <code>Voices/</code> directories along
+  with the source &mdash; nothing else is fetched at runtime. Full detail in the
+  <a href="https://github.com/Xpiatio/GMRS-TTY#getting-started-from-source">README</a> and the
+  <a href="USER_MANUAL.pdf">user manual</a>.</p>
+</section>
+
+<section id="specs">
+  <h2>Section 6 &mdash; Specifications</h2>
+  <hr class="rule">
+  <table class="spec-table">
+    <caption>Table 6-1 &mdash; general specifications</caption>
+    <tbody>
+      <tr><td>Runtime</td><td>Python 3.11+ (3.13 recommended), PySide6 / Qt</td></tr>
+      <tr><td>Speech-to-text</td><td>faster-whisper (CTranslate2), Silero VAD, offline</td></tr>
+      <tr><td>Text-to-speech</td><td>Piper, local ONNX voice models, offline</td></tr>
+      <tr><td>Audio interface</td><td>Any sound card feeding the radio &mdash; USB dongle, Signalink, Digirig</td></tr>
+      <tr><td>PTT hardware</td><td>None (manual / VOX), or a USB-serial FTDI adapter (RTS/DTR line)</td></tr>
+      <tr><td>Radio</td><td>Any GMRS or FRS HT, mobile, or SDR with an audio path</td></tr>
+      <tr><td>Reference target</td><td>Raspberry Pi 4 (waterfall budgeted under 10% CPU)</td></tr>
+      <tr><td>Network</td><td>Not required at runtime; FCC callsign lookup is opt-in when online</td></tr>
+      <tr><td>Accessibility</td><td>WCAG 2.1 Level AA; NVDA / JAWS / Orca / VoiceOver</td></tr>
+      <tr><td>License</td><td>MIT; bundled third-party models keep their own licenses (see <a href="https://github.com/Xpiatio/GMRS-TTY/blob/main/NOTICES.md">NOTICES</a> &mdash; the libritts voice is CC&nbsp;BY&nbsp;4.0)</td></tr>
+    </tbody>
+  </table>
+  <p>Roadmap: multi-arch Docker image (amd64 + arm64), parallel LoRa-mesh transmit
+  (Meshtastic / Meshcore), Bluetooth HT audio, hamlib CAT/CI-V rig control.</p>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <nav aria-label="Project links">
+      <a href="https://github.com/Xpiatio/GMRS-TTY">GitHub</a>
+      <a href="https://github.com/Xpiatio/GMRS-TTY/releases">Releases</a>
+      <a href="USER_MANUAL.pdf">User manual</a>
+      <a href="https://github.com/Xpiatio/GMRS-TTY/issues">Issues</a>
+    </nav>
+    <p>GMRS-TTY is MIT-licensed. Issues, feature requests, and pull requests are welcome.</p>
+    <p>You are still responsible for legal operation. This app does not replace a valid FCC GMRS license.</p>
+  </div>
+</footer>
+
+</body>
+</html>
